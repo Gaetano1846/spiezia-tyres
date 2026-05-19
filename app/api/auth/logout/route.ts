@@ -1,13 +1,8 @@
 import { NextResponse } from "next/server";
+import { clearCookies } from "@/lib/auth";
 
 export async function POST() {
   const res = NextResponse.json({ ok: true });
-  res.cookies.set("spiezia_session", "", {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    maxAge: 0,
-    path: "/",
-  });
+  for (const c of clearCookies()) res.headers.append("Set-Cookie", c);
   return res;
 }

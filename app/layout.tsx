@@ -1,26 +1,38 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Poppins, Montserrat } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/layout/Providers";
 
-const inter = Inter({
+const poppins = Poppins({
   subsets: ["latin"],
-  variable: "--font-inter",
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-poppins",
+  display: "swap",
+});
+
+const montserrat = Montserrat({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-montserrat",
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: {
-    default: "Spiezia Tyres — Gestionale",
-    template: "%s | Spiezia Tyres",
-  },
+  title: { default: "Spiezia Tyres — Gestionale", template: "%s | Spiezia Tyres" },
   robots: { index: false, follow: false },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="it" className={inter.variable}>
-      <body className="min-h-screen antialiased bg-[#F5F6FA] text-[#111]">
+    <html lang="it" className={`${poppins.variable} ${montserrat.variable}`}>
+      <body
+        className="min-h-screen antialiased"
+        style={{
+          fontFamily: "var(--font-montserrat), system-ui, sans-serif",
+          background: "var(--bg-primary)",
+          color: "var(--text-primary)",
+        }}
+      >
         <Providers>{children}</Providers>
       </body>
     </html>
