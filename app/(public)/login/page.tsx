@@ -10,12 +10,12 @@ export default function LoginPage() {
 
       {/* Background image con overlay scuro — uguale al login Flutter */}
       <Image
-        src="/login-bg-b2b.jpg"
+        src="/login-bg.png"
         alt=""
         fill
         className="object-cover"
         priority
-        quality={85}
+        unoptimized
       />
       <div className="absolute inset-0 bg-black/50" />
 

@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import AppShell from "@/components/layout/AppShell";
+import B2BShell from "@/components/layout/B2BShell";
 
 export default async function MagazzinoLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
   if (!session) redirect("/login");
-  if (session.Ruolo !== "Admin" && session.Ruolo !== "Magazziniere") redirect("/");
-  return <AppShell>{children}</AppShell>;
+  const ruolo = session.Ruolo?.toLowerCase() ?? "";
+  if (ruolo !== "admin" && ruolo !== "magazziniere") redirect("/");
+  return <B2BShell>{children}</B2BShell>;
 }

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
+import { FirebaseError } from "firebase/app";
 import { auth } from "@/lib/firebase";
 import toast from "react-hot-toast";
 import { Loader2, Eye, EyeOff } from "lucide-react";
@@ -35,10 +36,35 @@ export default function LoginForm() {
       const { Ruolo, CRM } = await res.json();
 
       if (CRM) router.replace("/dashboard");
-      else if (Ruolo === "Admin" || Ruolo === "Magazziniere") router.replace("/admin/ordini");
+      else if (Ruolo === "Admin") router.replace("/admin/ordini");
+      else if (Ruolo === "Magazziniere") router.replace("/magazzino");
       else router.replace("/");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Email o password errati";
+      if (err instanceof FirebaseError) console.error("[auth]", err.code, err.message);
+      let msg = "Email o password errati";
+      if (err instanceof FirebaseError) {
+        switch (err.code) {
+          case "auth/invalid-credential":
+          case "auth/wrong-password":
+          case "auth/user-not-found":
+          case "auth/invalid-email":
+            msg = "Email o password errati";
+            break;
+          case "auth/user-disabled":
+            msg = "Account disabilitato. Contatta l'amministratore.";
+            break;
+          case "auth/too-many-requests":
+            msg = "Troppi tentativi. Riprova tra qualche minuto.";
+            break;
+          case "auth/network-request-failed":
+            msg = "Errore di rete. Controlla la connessione.";
+            break;
+          default:
+            msg = `Errore di autenticazione (${err.code})`;
+        }
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
       toast.error(msg);
     } finally {
       setLoading(false);

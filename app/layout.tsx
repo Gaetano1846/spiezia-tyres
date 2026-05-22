@@ -20,6 +20,7 @@ const montserrat = Montserrat({
 export const metadata: Metadata = {
   title: { default: "Spiezia Tyres — Gestionale", template: "%s | Spiezia Tyres" },
   robots: { index: false, follow: false },
+  icons: { icon: "/favicon.png", apple: "/favicon.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

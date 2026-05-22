@@ -12,8 +12,8 @@ function isAdminConfigured(): boolean {
 export async function getSession(): Promise<SessionPayload | null> {
   const cookieStore = await cookies();
 
-  // ── Dev mode: Admin SDK non configurato → leggi cookie JSON semplice ──────
-  if (!isAdminConfigured()) {
+  // ── Dev locale: leggi sempre il cookie dev, nessuna verifica Firebase ──────
+  if (process.env.NODE_ENV === "development") {
     const raw = cookieStore.get(DEV_COOKIE)?.value;
     if (!raw) return null;
     try {
@@ -33,10 +33,13 @@ export async function getSession(): Promise<SessionPayload | null> {
     const userDoc = await adminDb().collection("users").doc(decoded.uid).get();
     if (!userDoc.exists) return null;
     const data = userDoc.data()!;
+    // Normalizza il Ruolo: prima lettera maiuscola (Firestore storico ha valori misti)
+    const rawRuolo = String(data.Ruolo ?? "Privato");
+    const normRuolo = (rawRuolo.charAt(0).toUpperCase() + rawRuolo.slice(1).toLowerCase()) as Ruolo;
     return {
       uid: decoded.uid,
       email: decoded.email ?? "",
-      Ruolo: (data.Ruolo as Ruolo) ?? "Privato",
+      Ruolo: normRuolo,
       CRM: Boolean(data.CRM),
     };
   } catch {
@@ -45,13 +48,14 @@ export async function getSession(): Promise<SessionPayload | null> {
 }
 
 export function isAdmin(s: SessionPayload | null): boolean {
-  return s?.Ruolo === "Admin";
+  return s?.Ruolo?.toLowerCase() === "admin";
 }
 export function isCRM(s: SessionPayload | null): boolean {
-  return Boolean(s?.CRM);
+  return Boolean(s?.CRM) || isAdmin(s);
 }
 export function isMagazzino(s: SessionPayload | null): boolean {
-  return s?.Ruolo === "Admin" || s?.Ruolo === "Magazziniere";
+  const r = s?.Ruolo?.toLowerCase() ?? "";
+  return r === "admin" || r === "magazziniere";
 }
 
 export function buildDevCookie(payload: SessionPayload): string {

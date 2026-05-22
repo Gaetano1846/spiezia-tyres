@@ -1,145 +1,215 @@
-import type { Metadata } from "next";
-import { Search, SlidersHorizontal, ShoppingCart, TrendingUp } from "lucide-react";
-import Card from "@/components/ui/Card";
-import Badge from "@/components/ui/Badge";
+"use client";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Image from "next/image";
+import { Search } from "lucide-react";
+import { collection, getDocs, query, limit } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import SearchableSelect from "@/components/ui/SearchableSelect";
 
-export const metadata: Metadata = { title: "Catalogo Pneumatici" };
-
-// Mock prodotti — in Fase 2 saranno da Algolia
-const prodotti = [
-  { id: "1", marca: "Michelin", modello: "Pilot Sport 5", misura: "225/45 R17", prezzo: 142.90, pfu: 3.41, stock: 8, stagione: "Estive", img: null },
-  { id: "2", marca: "Pirelli",  modello: "Cinturato P7",  misura: "205/55 R16", prezzo: 118.50, pfu: 3.05, stock: 12, stagione: "Estive", img: null },
-  { id: "3", marca: "Continental", modello: "WinterContact TS 870", misura: "215/60 R16", prezzo: 134.20, pfu: 3.05, stock: 4, stagione: "Invernali", img: null },
-  { id: "4", marca: "Bridgestone", modello: "Turanza T005",   misura: "225/45 R18", prezzo: 156.80, pfu: 3.80, stock: 6, stagione: "Estive", img: null },
-  { id: "5", marca: "Goodyear",    modello: "EfficientGrip 2",misura: "195/65 R15", prezzo: 98.40,  pfu: 2.68, stock: 20, stagione: "Estive", img: null },
-  { id: "6", marca: "Hankook",     modello: "Ventus S1 evo3", misura: "245/40 R18", prezzo: 167.30, pfu: 3.80, stock: 3, stagione: "Estive", img: null },
+const MARCHE = [
+  "Michelin","Pirelli","Continental","Bridgestone","Goodyear",
+  "Hankook","Yokohama","Dunlop","Falken","BFGoodrich","Toyo",
+  "Kumho","Starmaxx","Kormoran","Nexen","Apollo","Compasal",
 ];
 
-const stagioneBadge: Record<string, "brand" | "neutral" | "neutral"> = {
-  Estive: "brand",
-  Invernali: "neutral",
-  "4-Stagioni": "success" as never,
-};
+const INDICI_VELOCITA = ["P","Q","R","S","T","H","V","W","Y","Z"];
+const INDICI_CARICO = Array.from({ length: 50 }, (_, i) => String(60 + i));
 
-function formatEuro(n: number) {
-  return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
-}
+const STAGIONI = [
+  { key: "Estive",     icon: "🔥", label: "Estive" },
+  { key: "4-Stagioni", icon: "⚙️", label: "4 Stagioni" },
+  { key: "Invernali",  icon: "❄️", label: "Invernali" },
+] as const;
 
-export default function CatalogPage() {
+type PromoImg = { id: string; URL?: string; Immagine?: string; Ordine?: number };
+
+export default function HomePage() {
+  const router = useRouter();
+
+  const [cerca, setCerca] = useState("");
+  const [marchio, setMarchio] = useState("");
+  const [indiceVelocita, setIndiceVelocita] = useState("");
+  const [indiceCarico, setIndiceCarico] = useState("");
+  const [stagioni, setStagioni] = useState<string[]>([]);
+  const [promo, setPromo] = useState<PromoImg[]>([]);
+
+  useEffect(() => {
+    getDocs(query(collection(db, "Promo_Immagini"), limit(6)))
+      .then((snap) =>
+        setPromo(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PromoImg)))
+      )
+      .catch(() => {});
+  }, []);
+
+  function toggleStagione(s: string) {
+    setStagioni((prev) =>
+      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
+    );
+  }
+
+  function handleCerca() {
+    const params = new URLSearchParams();
+    if (cerca) params.set("q", cerca);
+    if (marchio) params.set("marca", marchio);
+    if (indiceVelocita) params.set("iv", indiceVelocita);
+    if (indiceCarico) params.set("ic", indiceCarico);
+    if (stagioni.length > 0) params.set("stagione", stagioni.join(","));
+    router.push(`/prodotti?${params.toString()}`);
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>
-            Catalogo Pneumatici
-          </h1>
-          <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-            {prodotti.length} prodotti disponibili
-          </p>
-        </div>
-        <button
-          className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold transition-colors"
-          style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
-        >
-          <ShoppingCart size={16} />
-          Carrello <span className="bg-[#FFC803] text-[#111] text-xs font-bold px-1.5 py-0.5 rounded-full">0</span>
-        </button>
-      </div>
+    <div>
+      {/* ── Hero + Search Widget ── */}
+      <div className="relative w-full" style={{ height: 520 }}>
+        <Image
+          src="/login-bg-b2b.jpg"
+          alt="Spiezia Tyres"
+          fill
+          className="object-cover"
+          priority
+          unoptimized
+        />
+        <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.52)" }} />
 
-      {/* Search + filtri */}
-      <Card padding="sm">
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
-            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
-            <input
-              placeholder="Cerca per misura (es. 205/55 R16) o marca…"
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none transition-colors"
-              style={{
-                background: "var(--bg-primary)",
-                border: "1px solid var(--border)",
-                fontFamily: "var(--font-montserrat)",
-                color: "var(--text-primary)",
-              }}
-            />
-          </div>
-          <button
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}
-          >
-            <SlidersHorizontal size={16} />
-            Filtri
-          </button>
-        </div>
-      </Card>
-
-      {/* Griglia prodotti */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {prodotti.map((p) => (
+        <div className="absolute inset-0 flex items-center justify-center px-4">
           <div
-            key={p.id}
-            className="rounded-2xl overflow-hidden cursor-pointer group transition-shadow hover:shadow-lg"
-            style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}
+            className="w-full rounded-2xl p-6"
+            style={{
+              maxWidth: 520,
+              background: "#fff",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
+            }}
           >
-            {/* Immagine placeholder */}
-            <div
-              className="h-44 flex items-center justify-center text-5xl"
-              style={{ background: "var(--bg-primary)" }}
+            <h2
+              className="text-lg font-bold mb-4"
+              style={{ fontFamily: "var(--font-poppins)", color: "#111" }}
             >
-              🔘
+              Ricerca
+            </h2>
+
+            {/* Riga 1: Cerca + Marchio */}
+            <div className="flex gap-3 mb-3">
+              <input
+                value={cerca}
+                onChange={(e) => setCerca(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCerca()}
+                placeholder="Cerca...."
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm outline-none"
+                style={{
+                  border: "1px solid #e5e7eb",
+                  fontFamily: "var(--font-montserrat)",
+                  color: "#111",
+                }}
+              />
+              <SearchableSelect
+                value={marchio}
+                onChange={setMarchio}
+                options={MARCHE}
+                placeholder="Marchio"
+                style={{ minWidth: 150 }}
+              />
             </div>
 
-            <div className="p-4">
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                    {p.marca}
-                  </p>
-                  <p className="text-sm font-semibold leading-tight" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
-                    {p.modello}
-                  </p>
-                </div>
-                <Badge variant={stagioneBadge[p.stagione] ?? "neutral"}>{p.stagione}</Badge>
-              </div>
+            {/* Riga 2: Indice Velocità + Indice Carico + Stagioni */}
+            <div className="flex gap-3 mb-5 items-center">
+              <SearchableSelect
+                value={indiceVelocita}
+                onChange={setIndiceVelocita}
+                options={INDICI_VELOCITA}
+                placeholder="Indice di Velocità"
+                style={{ flex: 1 }}
+              />
+              <SearchableSelect
+                value={indiceCarico}
+                onChange={setIndiceCarico}
+                options={INDICI_CARICO}
+                placeholder="Indice di Carico"
+                style={{ flex: 1 }}
+              />
 
-              <p className="text-xs mb-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                {p.misura}
-              </p>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-lg font-bold" style={{ fontFamily: "var(--font-poppins)" }}>
-                    {formatEuro(p.prezzo)}
-                  </p>
-                  <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                    + PFU {formatEuro(p.pfu)} · {p.stock} pz
-                  </p>
-                </div>
-                <button
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold transition-colors"
-                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-poppins)" }}
-                >
-                  <ShoppingCart size={13} /> Aggiungi
-                </button>
+              {/* Stagione toggle */}
+              <div className="flex gap-1.5 flex-shrink-0">
+                {STAGIONI.map((s) => {
+                  const active = stagioni.includes(s.key);
+                  return (
+                    <button
+                      key={s.key}
+                      onClick={() => toggleStagione(s.key)}
+                      title={s.label}
+                      className="w-10 h-10 rounded-full text-lg flex items-center justify-center transition-all"
+                      style={{
+                        border: `2px solid ${active ? "#FFC803" : "#e5e7eb"}`,
+                        background: active ? "#FFF8DC" : "#fff",
+                        boxShadow: active ? "0 0 0 1px #FFC803" : "none",
+                      }}
+                    >
+                      {s.icon}
+                    </button>
+                  );
+                })}
               </div>
             </div>
+
+            {/* Bottone Cerca */}
+            <button
+              onClick={handleCerca}
+              className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-bold transition-opacity hover:opacity-90"
+              style={{
+                background: "#FFC803",
+                color: "#111",
+                fontFamily: "var(--font-montserrat)",
+              }}
+            >
+              <Search size={16} />
+              Cerca
+            </button>
           </div>
-        ))}
+        </div>
       </div>
 
-      {/* Promo banner */}
-      <div
-        className="rounded-2xl p-6 flex items-center gap-5"
-        style={{ background: "linear-gradient(135deg, #111 0%, #292929 100%)", color: "#fff" }}
-      >
-        <TrendingUp size={40} style={{ color: "var(--brand)", flexShrink: 0 }} />
-        <div>
-          <p className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)" }}>
-            Promozioni attive
-          </p>
-          <p className="text-sm mt-0.5 text-white/60" style={{ fontFamily: "var(--font-montserrat)" }}>
-            Le tue promozioni personalizzate vengono applicate automaticamente al carrello.
-          </p>
+      {/* ── Contenuto sotto hero ── */}
+      <div className="px-5 py-8 space-y-8">
+
+        {/* Promo banners da Firestore */}
+        {promo.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {promo.slice(0, 3).map((p) => {
+              const src = p.URL ?? p.Immagine;
+              if (!src) return null;
+              return (
+                <div
+                  key={p.id}
+                  className="rounded-2xl overflow-hidden"
+                  style={{ border: "1px solid #e5e7eb", minHeight: 200 }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={src}
+                    alt="Promozione"
+                    className="w-full h-full object-cover"
+                    style={{ minHeight: 200 }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Brand distributor strip */}
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ border: "1px solid #e5e7eb" }}
+        >
+          <Image
+            src="/distributore.png"
+            alt="Spiezia Tyres — Distributore autorizzato"
+            width={1200}
+            height={250}
+            className="w-full"
+            style={{ maxHeight: 220, objectFit: "cover", objectPosition: "center" }}
+            unoptimized
+          />
         </div>
       </div>
     </div>

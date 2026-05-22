@@ -1,6 +1,20 @@
 import { NextResponse, type NextRequest } from "next/server";
+import https from "https";
 import type { Ruolo } from "@/lib/types";
 import { buildDevCookie, buildSessionCookie } from "@/lib/auth";
+
+// Node.js https rispetta NODE_TLS_REJECT_UNAUTHORIZED; native fetch (undici) no.
+function httpsGet(url: string, token: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { Authorization: `Bearer ${token}` } }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        try { resolve(JSON.parse(data)); } catch { reject(new Error("Invalid JSON")); }
+      });
+    }).on("error", reject);
+  });
+}
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -20,21 +34,20 @@ export async function POST(req: NextRequest) {
       const uid: string = decoded.user_id ?? decoded.sub ?? "";
       const email: string = decoded.email ?? "";
 
-      // Legge Ruolo + CRM da Firestore tramite REST (nessun Admin SDK)
+      // Legge Ruolo + CRM da Firestore tramite REST con https (rispetta NODE_TLS_REJECT_UNAUTHORIZED)
       const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!;
       const fsUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/users/${uid}`;
-      const fsRes = await fetch(fsUrl, {
-        headers: { Authorization: `Bearer ${idToken}` },
-      });
 
       let Ruolo: Ruolo = "Privato";
       let CRM = false;
 
-      if (fsRes.ok) {
-        const fsData = await fsRes.json();
+      try {
+        const fsData = await httpsGet(fsUrl, idToken) as { fields?: Record<string, { stringValue?: string; booleanValue?: boolean }> };
         const fields = fsData.fields ?? {};
         Ruolo = (fields.Ruolo?.stringValue as Ruolo) ?? "Privato";
         CRM = fields.CRM?.booleanValue ?? false;
+      } catch {
+        // Documento non trovato o rete — ruolo default
       }
 
       const sessionPayload = { uid, email, Ruolo, CRM };

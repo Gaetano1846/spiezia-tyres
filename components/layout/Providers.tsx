@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { Toaster } from "react-hot-toast";
 import { AuthProvider } from "@/components/layout/AuthProvider";
+import { CartProvider } from "@/components/layout/CartProvider";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -17,13 +18,15 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        {children}
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            style: { fontFamily: "var(--font-inter)", fontSize: "14px" },
-          }}
-        />
+        <CartProvider>
+          {children}
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              style: { fontFamily: "var(--font-inter)", fontSize: "14px" },
+            }}
+          />
+        </CartProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

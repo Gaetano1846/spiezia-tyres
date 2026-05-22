@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
-import type { AppUser } from "@/lib/types";
+import type { AppUser, SessionPayload } from "@/lib/types";
 
 type AuthCtx = {
   user: AppUser | null;
@@ -12,6 +12,40 @@ type AuthCtx = {
 };
 
 const AuthContext = createContext<AuthCtx>({ user: null, firebaseUser: null, loading: true });
+
+function normalizeRuolo(raw: unknown): string {
+  const s = String(raw ?? "Privato");
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+async function loadUserFromFirestore(uid: string, email: string): Promise<AppUser | null> {
+  const snap = await getDoc(doc(db, "users", uid));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return {
+    uid,
+    email,
+    ...data,
+    Ruolo: normalizeRuolo(data.Ruolo),
+    CRM: Boolean(data.CRM),
+  } as AppUser;
+}
+
+async function loadUserFromSession(): Promise<AppUser | null> {
+  try {
+    const res = await fetch("/api/auth/session");
+    if (!res.ok) return null;
+    const payload: SessionPayload = await res.json();
+    if (!payload?.uid) return null;
+    // Try to get the full Firestore doc; fall back to the session payload itself
+    const snap = await getDoc(doc(db, "users", payload.uid));
+    if (snap.exists()) return { uid: payload.uid, email: payload.email, ...snap.data() } as AppUser;
+    // Dev preset users (dev-admin, dev-crm, …) don't exist in Firestore — build from payload
+    return { uid: payload.uid, email: payload.email, Ruolo: payload.Ruolo, CRM: payload.CRM } as AppUser;
+  } catch {
+    return null;
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
@@ -22,14 +56,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       setFirebaseUser(fbUser);
       if (fbUser) {
-        const snap = await getDoc(doc(db, "users", fbUser.uid));
-        if (snap.exists()) {
-          setUser({ uid: fbUser.uid, email: fbUser.email ?? "", ...snap.data() } as AppUser);
-        }
+        const appUser = await loadUserFromFirestore(fbUser.uid, fbUser.email ?? "");
+        setUser(appUser);
+        setLoading(false);
       } else {
-        setUser(null);
+        // Firebase Auth has no session — try the server-side cookie (dev mode or prod session cookie)
+        const appUser = await loadUserFromSession();
+        setUser(appUser);
+        setLoading(false);
       }
-      setLoading(false);
     });
     return unsub;
   }, []);

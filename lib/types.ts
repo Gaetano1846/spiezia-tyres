@@ -2,7 +2,15 @@ import type { DocumentReference, Timestamp } from "firebase/firestore";
 
 // ─── Auth / Users ─────────────────────────────────────────────────────────────
 
-export type Ruolo = "Admin" | "Magazziniere" | "Gommista" | "Grossista" | "Privato" | "T24";
+export type Ruolo =
+  | "Admin"
+  | "Magazziniere"
+  | "Gommista"
+  | "Grossista"
+  | "Privato"
+  | "T24"
+  | "Rappresentante"
+  | "Impiegato";
 
 export type AppUser = {
   uid: string;
@@ -89,11 +97,14 @@ export type RigaCarrello = {
 export type Promozione = {
   id: string;
   Brand_Nome: string[];
+  Stagione?: string[];
+  Raggio?: string[];
   Clienti: DocumentReference[];
   Attiva: boolean;
   Scadenza: Timestamp;
   Fisso: boolean;
-  Sconto: number;
+  Importo?: number;
+  Sconto?: number; // legacy alias for Importo
 };
 
 // ─── Ordine ───────────────────────────────────────────────────────────────────
@@ -158,20 +169,31 @@ export type Ordine = {
 };
 
 // ─── Cliente ──────────────────────────────────────────────────────────────────
+// Campi reali su Firestore (schema Flutter originale)
 
 export type Cliente = {
   id: string;
-  Nome: string;
-  Cognome: string;
-  Email: string;
+  Nome?: string;              // nome persona fisica
+  Ragione_Sociale?: string;   // nome azienda
+  Azienda?: boolean;          // true = è un'azienda, false = persona fisica
+  Email?: string;
   Telefono?: string;
-  Azienda?: string;
-  PartitaIVA?: string;
-  CodiceFiscale?: string;
+  Via?: string;
+  Citta?: string;
+  CAP?: string;
+  Partita_Iva?: string;
+  Codice_Fiscale?: string;
+  PEC?: string;
+  Tipo?: string;              // "Privato" | "Gommista" | "Officina" | "Grossista" ecc.
+  B2B?: boolean;
   Fido?: number;
   Fido_Residuo?: number;
+  Paese?: string;
+  Source?: string;
+  Locale?: boolean;
+  Sede?: DocumentReference;
+  Metodo_di_Pagamento?: string;
   Note?: string;
-  DataCreazione?: Timestamp;
 };
 
 export type Veicolo = {
@@ -185,25 +207,30 @@ export type Veicolo = {
 };
 
 // ─── Preventivo ───────────────────────────────────────────────────────────────
+// Campi reali su Firestore (schema Flutter originale)
 
-export type PreventivoStato = "Bozza" | "Inviato" | "Accettato" | "Rifiutato" | "Scaduto";
+export type PneumaticoPrev = {
+  Marca?: string;
+  Modello?: string;
+  Misura?: string;
+  Quantita?: number;
+  PrezzoUnitario?: number;
+};
 
 export type Preventivo = {
   id: string;
-  Numero: string;
-  Cliente: DocumentReference;
+  ID?: number;                        // numero sequenziale (1, 2, 3 …)
+  Data?: string;                      // data come stringa "dd/MM/yyyy"
+  Data_Creazione?: Timestamp;
+  Data_Accettazione?: Timestamp;
+  Accettato?: boolean;
+  Operatore?: DocumentReference;
   Veicolo?: DocumentReference | null;
-  Stato: PreventivoStato;
-  Articoli: ArticoloOrdine[];
-  Servizi?: ServizioOrdine[];
-  Totale: number;
-  IVA: number;
-  PFU: number;
-  Note?: string;
-  DataCreazione: Timestamp;
-  DataScadenza?: Timestamp;
-  DataConversione?: Timestamp;
-  OrdineRef?: DocumentReference | null;
+  Sede?: DocumentReference | null;
+  PDF_URL?: string;
+  Pneumatici_Nuovi?: PneumaticoPrev[];
+  // Il cliente è il parent del parent (Clienti/{id}/Preventivo/{docId})
+  // Non è un campo nel documento — viene risolto via _clienteId
 };
 
 export type ServizioOrdine = {
@@ -211,6 +238,15 @@ export type ServizioOrdine = {
   Titolo: string;
   Prezzo: number;
   Quantita: number;
+};
+
+// ServiziStruct — embedded in Foglio_di_Lavoro.Servizi (actual Firestore schema)
+export type ServiziItem = {
+  Nome: string;
+  Quantita: number;
+  Selected: boolean;
+  Tipo: string;   // "Pneumatico" | "Veicolo"
+  Ordine: number;
 };
 
 // ─── Appuntamento ─────────────────────────────────────────────────────────────
@@ -240,41 +276,59 @@ export type Lotto = {
   Note?: string;
 };
 
+// PneumaticiStruct — embedded in Foglio_di_Lavoro (actual Firestore field names)
 export type Pneumatico = {
-  Marca: string;
-  Modello: string;
-  Misura: string;
-  Stagione: Stagione;
-  Quantita: number;
-  Stato?: string;
+  Titolo?: string;
+  Marca?: string;
+  Modello?: string;
+  Stagione?: string;
+  Quantita?: number;
+  Usura?: number;
+  Prezzo?: number;
+  KM_totali?: number;
+  Immagine?: string;
+  PFU?: number;
+  Prezzo_Totale?: number;
+  Misura?: string;  // extra field written by the create form (not in Flutter schema)
 };
 
 export type FoglioDiLavoro = {
   id: string;
-  Numero: string;
-  Cliente: DocumentReference;
-  Veicolo: DocumentReference;
+  ID?: number;                          // numeric foglio number
+  Cliente?: DocumentReference | null;
+  Veicolo?: DocumentReference | null;
   Operatore?: DocumentReference | null;
-  Sede: DocumentReference;
+  Accettatore?: DocumentReference | null;
+  Sede?: DocumentReference | null;
   Stato: FoglioStato;
-  DataCreazione: Timestamp;
+  DataOra?: Timestamp;                  // creation timestamp (primary)
+  Data_Creazione?: Timestamp;           // secondary date
   DataCompletamento?: Timestamp;
-  PneumaticiMontati?: Pneumatico[];
-  PneumaticiSmontati?: Pneumatico[];
-  Servizi?: ServizioOrdine[];
+  Pneumatici_Montati?: Pneumatico[];    // underscore naming from Flutter
+  Pneumatici_Smontati?: Pneumatico[];
+  Servizi?: ServiziItem[];
   Note?: string;
-  PDF?: string;
+  URL?: string;
 };
 
 // ─── Magazzino ────────────────────────────────────────────────────────────────
 
+export type LottoMagazzino = {
+  Quantita: number;
+  Prodotto_Ref: DocumentReference;
+};
+
 export type Gabbia = {
   id: string;
-  Posizione: string;
-  Sede: DocumentReference;
-  Pneumatici?: Pneumatico[];
-  Lotti?: Lotto[];
-  Note?: string;
+  ID: string;               // codice posizione, es. "A-1-3"
+  X?: number;
+  Y?: number;
+  Z?: number;
+  Sede?: DocumentReference;
+  QR_code?: string;
+  Gabbia?: boolean;
+  Prodotti?: LottoMagazzino[];       // array embedded con Quantita + Prodotto_Ref
+  Pneumatici_IN?: DocumentReference[]; // array di ref prodotti
 };
 
 // ─── Notifica ─────────────────────────────────────────────────────────────────
