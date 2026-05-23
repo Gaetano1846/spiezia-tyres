@@ -134,10 +134,9 @@ export async function searchProdotti(
     withFacets = false,
   } = params;
 
-  // Stock filter via numericFilters (array format = what Flutter uses, avoids 400)
-  // Larghezza/Altezza/Diametro are NOT configured as filterable in the Algolia index —
-  // they are returned in the hit payload and filtered client-side instead.
   const numericFilters: (string | string[])[] = [];
+
+  // Stock filter (OR across depots)
   if (soloDisponibili) {
     numericFilters.push([
       "Stock_Nola>=1",
@@ -155,43 +154,71 @@ export async function searchProdotti(
   if (marche.length > 0)   facetFilters.push(marche.map((m) => `Marca:${m}`));
   if (categoria)            facetFilters.push([`Categoria:${categoria}`]);
 
-  // Fetch more hits when size filters are active so client-side filtering has enough results
   const hasSizeFilter = !!(largezza || altezza || diametro);
-  const effectiveHitsPerPage = hasSizeFilter ? Math.max(hitsPerPage * 5, 200) : hitsPerPage;
 
-  const raw = (await algoliaClient.searchSingleIndex({
-    indexName: INDEX_NAME,
-    searchParams: {
-      query,
-      numericFilters: numericFilters.length > 0 ? numericFilters : undefined,
-      facetFilters: facetFilters.length > 0 ? facetFilters : undefined,
-      facets: withFacets ? ["Marca", "Stagione"] : undefined,
-      page: hasSizeFilter ? 0 : page,
-      hitsPerPage: effectiveHitsPerPage,
-    },
-  })) as unknown as AlgoliaRaw;
+  // Base search params
+  const baseParams = {
+    query,
+    numericFilters: numericFilters.length > 0 ? numericFilters : undefined,
+    facetFilters: facetFilters.length > 0 ? facetFilters : undefined,
+    facets: withFacets ? ["Marca", "Stagione"] : undefined,
+  };
 
-  let hits = (raw.hits ?? []) as ProdottoHit[];
+  if (!hasSizeFilter) {
+    // Normal paginated search — Algolia handles everything
+    const raw = (await algoliaClient.searchSingleIndex({
+      indexName: INDEX_NAME,
+      searchParams: { ...baseParams, page, hitsPerPage },
+    })) as unknown as AlgoliaRaw;
 
-  // Client-side size filtering (Larghezza/Altezza/Diametro not filterable in Algolia index)
-  if (largezza) hits = hits.filter((h) => h.Larghezza === Number(largezza));
-  if (altezza)  hits = hits.filter((h) => h.Altezza  === Number(altezza));
-  if (diametro) hits = hits.filter((h) => h.Diametro === Number(diametro));
-
-  // When size-filtering we re-page the client-side filtered results
-  const totalFiltered = hits.length;
-  if (hasSizeFilter) {
-    const start = page * hitsPerPage;
-    hits = hits.slice(start, start + hitsPerPage);
+    return {
+      hits: (raw.hits ?? []) as ProdottoHit[],
+      nbHits: raw.nbHits ?? 0,
+      nbPages: raw.nbPages ?? Math.ceil((raw.nbHits ?? 0) / hitsPerPage),
+      page: raw.page ?? 0,
+      facets: raw.facets,
+    };
   }
 
+  // Size filter active: Larghezza/Altezza/Diametro are not in numericAttributesForFiltering
+  // so we fetch up to 4 × 1000 hits in parallel then filter client-side.
+  const BULK = 1000; // Algolia max hitsPerPage
+  const first = (await algoliaClient.searchSingleIndex({
+    indexName: INDEX_NAME,
+    searchParams: { ...baseParams, page: 0, hitsPerPage: BULK },
+  })) as unknown as AlgoliaRaw;
+
+  let allHits: ProdottoHit[] = (first.hits ?? []) as ProdottoHit[];
+
+  if (first.nbPages > 1) {
+    const extraPages = Math.min(first.nbPages - 1, 3); // fetch up to 3 more pages (4000 total)
+    const extras = await Promise.all(
+      Array.from({ length: extraPages }, (_, i) =>
+        algoliaClient.searchSingleIndex({
+          indexName: INDEX_NAME,
+          searchParams: { ...baseParams, page: i + 1, hitsPerPage: BULK },
+        })
+      )
+    );
+    for (const p of extras) {
+      allHits = allHits.concat((p as unknown as AlgoliaRaw).hits as ProdottoHit[]);
+    }
+  }
+
+  // Client-side size filtering (exact numeric match)
+  if (largezza) allHits = allHits.filter((h) => Number(h.Larghezza) === Number(largezza));
+  if (altezza)  allHits = allHits.filter((h) => Number(h.Altezza)   === Number(altezza));
+  if (diametro) allHits = allHits.filter((h) => Number(h.Diametro)  === Number(diametro));
+
+  const totalFiltered = allHits.length;
+  const start = page * hitsPerPage;
+  const pageHits = allHits.slice(start, start + hitsPerPage);
+
   return {
-    hits,
-    nbHits: hasSizeFilter ? totalFiltered : (raw.nbHits ?? 0),
-    nbPages: hasSizeFilter
-      ? Math.ceil(totalFiltered / hitsPerPage)
-      : (raw.nbPages ?? Math.ceil((raw.nbHits ?? 0) / hitsPerPage)),
-    page: raw.page ?? 0,
-    facets: raw.facets,
+    hits: pageHits,
+    nbHits: totalFiltered,
+    nbPages: Math.ceil(totalFiltered / hitsPerPage),
+    page,
+    facets: first.facets,
   };
 }

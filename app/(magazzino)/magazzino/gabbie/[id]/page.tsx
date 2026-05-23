@@ -50,6 +50,21 @@ export default function GabbiaPage() {
   const [adding, setAdding] = useState(false);
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [prodottiCache, setProdottiCache] = useState<Record<string, {
+    Marca: string; Modello: string; misura: string; Stagione?: string; stockSede: number;
+  }>>({});
+
+  function stockFieldForSede(sedeName: string): string {
+    const n = sedeName.toLowerCase();
+    if (n.includes("nola 2") || n.includes("nola2")) return "Stock_Nola_2";
+    if (n.includes("nola")) return "Stock_Nola";
+    if (n.includes("volla")) return "Stock_Volla";
+    if (n.includes("roma")) return "Stock_Roma";
+    if (n.includes("portici")) return "Stock_Portici";
+    if (n.includes("ocp")) return "Stock_OCP";
+    return "Stock_Nola";
+  }
+
   async function reload() {
     const snap = await getDoc(doc(db, "Magazzino", id));
     if (!snap.exists()) return;
@@ -79,6 +94,34 @@ export default function GabbiaPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Risolve i Prodotto_Ref quando cambia la gabbia
+  useEffect(() => {
+    if (!gabbia?.Prodotti?.length) { setProdottiCache({}); return; }
+    const uniqueRefs = [
+      ...new Map(
+        gabbia.Prodotti.filter((l) => l.Prodotto_Ref).map((l) => [l.Prodotto_Ref.id, l.Prodotto_Ref])
+      ).values(),
+    ] as DocumentReference[];
+    const field = stockFieldForSede(gabbia.sedeName);
+    Promise.all(uniqueRefs.map((ref) => getDoc(ref))).then((snaps) => {
+      const cache: typeof prodottiCache = {};
+      for (const snap of snaps) {
+        if (snap.exists()) {
+          const d = snap.data() as Record<string, unknown>;
+          cache[snap.id] = {
+            Marca: (d.Marca as string) ?? "?",
+            Modello: (d.Modello as string) ?? "?",
+            misura: `${d.Larghezza ?? "?"}/${d.Altezza ?? "?"} R${d.Diametro ?? "?"}`,
+            Stagione: d.Stagione as string | undefined,
+            stockSede: ((d[field] as number) ?? 0),
+          };
+        }
+      }
+      setProdottiCache(cache);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gabbia]);
+
   // Algolia search con debounce
   useEffect(() => {
     if (!showModal) return;
@@ -87,7 +130,7 @@ export default function GabbiaPage() {
     debRef.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const r = await searchProdotti({ query: searchQuery, hitsPerPage: 12 });
+        const r = await searchProdotti({ query: searchQuery, hitsPerPage: 12, soloDisponibili: false });
         setSearchResults(r.hits);
       } catch {
         setSearchResults([]);
@@ -451,49 +494,70 @@ export default function GabbiaPage() {
             <div
               className="grid text-[10px] font-bold uppercase tracking-widest px-3 pb-2"
               style={{
-                gridTemplateColumns: "1fr 100px 60px",
+                gridTemplateColumns: "1fr auto 60px",
                 color: "#9ca3af",
                 fontFamily: "var(--font-montserrat)",
                 borderBottom: "1px solid #f3f4f6",
               }}
             >
               <span>Prodotto</span>
-              <span className="text-right">Quantità</span>
+              <span className="px-3">Qtà</span>
               <span />
             </div>
 
-            {prodotti.map((lotto, i) => (
-              <div
-                key={i}
-                className="grid items-center px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors"
-                style={{
-                  gridTemplateColumns: "1fr 100px 60px",
-                  background: i % 2 === 0 ? "#f9fafb" : "#fff",
-                }}
-              >
-                <span
-                  className="text-sm font-mono font-semibold truncate"
-                  style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}
+            {prodotti.map((lotto, i) => {
+              const pid = lotto.Prodotto_Ref?.id;
+              const info = pid ? prodottiCache[pid] : undefined;
+              return (
+                <div
+                  key={i}
+                  className="grid items-center px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors"
+                  style={{
+                    gridTemplateColumns: "1fr auto 60px",
+                    background: i % 2 === 0 ? "#f9fafb" : "#fff",
+                  }}
                 >
-                  {lotto.Prodotto_Ref?.id ?? "—"}
-                </span>
-                <span
-                  className="text-right text-sm font-black"
-                  style={{ color: "#111", fontFamily: "var(--font-poppins)" }}
-                >
-                  ×{lotto.Quantita ?? 0}
-                </span>
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => handleRemove(lotto)}
-                    className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold transition-colors hover:bg-red-100"
-                    style={{ background: "#FEE2E2", color: "#991B1B", border: "1px solid #FECACA" }}
+                  {/* Prodotto */}
+                  <div>
+                    {info ? (
+                      <>
+                        <p className="text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                          {info.Marca} {info.Modello}
+                        </p>
+                        <p className="text-xs mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                          {info.misura}{info.Stagione ? ` · ${info.Stagione}` : ""}
+                          {" · "}
+                          <span style={{ color: info.stockSede > 0 ? "#059669" : "#dc2626" }}>
+                            stock sede: {info.stockSede}
+                          </span>
+                        </p>
+                      </>
+                    ) : (
+                      <span className="font-mono text-xs animate-pulse" style={{ color: "#9ca3af" }}>
+                        {pid ?? "—"}
+                      </span>
+                    )}
+                  </div>
+                  {/* Quantità */}
+                  <span
+                    className="text-right text-sm font-black px-3"
+                    style={{ color: "#111", fontFamily: "var(--font-poppins)" }}
                   >
-                    <Trash2 size={11} /> Rimuovi
-                  </button>
+                    ×{lotto.Quantita ?? 0}
+                  </span>
+                  {/* Rimuovi */}
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => handleRemove(lotto)}
+                      className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold transition-colors hover:bg-red-100"
+                      style={{ background: "#FEE2E2", color: "#991B1B", border: "1px solid #FECACA" }}
+                    >
+                      <Trash2 size={11} /> Rimuovi
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
