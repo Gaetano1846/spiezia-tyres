@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
-  doc, getDoc, updateDoc, serverTimestamp, Timestamp,
+  doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
   ArrowLeft, Download, CheckCircle2, XCircle, Car, User, FileText, Wrench,
+  ShoppingCart, Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -113,8 +114,15 @@ function badgeVariant(stato: string): "success" | "warning" | "neutral" | "error
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+function generateNumeroOrdine(): string {
+  const year = new Date().getFullYear();
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `ORD-${year}-${rand}`;
+}
+
 export default function PreventivoDetailPage() {
   const params    = useParams();
+  const router    = useRouter();
   const clienteId = params.clienteId as string;
   const id        = params.id as string;
 
@@ -123,6 +131,7 @@ export default function PreventivoDetailPage() {
   const [veicoloInfo, setVeicoloInfo] = useState<VeicoloInfo | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [saving,      setSaving]      = useState(false);
+  const [converting,  setConverting]  = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -197,6 +206,54 @@ export default function PreventivoDetailPage() {
       toast.success("Preventivo rimesso in attesa");
     } catch { toast.error("Errore aggiornamento"); }
     finally { setSaving(false); }
+  }
+
+  async function handleConvertToOrder() {
+    if (!preventivo || converting) return;
+    setConverting(true);
+    try {
+      const arts = getArticoli(preventivo);
+      const servs = getServizi(preventivo);
+
+      const totArticoli = arts.reduce(
+        (s, a) => s + ((a.prezzoUnitario ?? 0)) * a.quantita,
+        0
+      );
+      const totServizi = servs.reduce((s, sv) => s + sv.prezzo * sv.quantita, 0);
+      const imponibile = totArticoli + totServizi;
+      const iva = imponibile * 0.22;
+
+      const articoliOrdine = arts.map((a) => ({
+        Prodotto: a.misura ?? "",
+        Titolo: a.modello ?? a.titolo ?? "",
+        Marca: a.marca ?? "",
+        Quantita: a.quantita,
+        PrezzoUnitario: a.prezzoUnitario ?? 0,
+        PFU: 0,
+      }));
+
+      const payload = {
+        Numero: generateNumeroOrdine(),
+        Cliente: doc(db, "Clienti", clienteId),
+        Source: "B2B",
+        Stato: "Confermato",
+        Articoli: articoliOrdine,
+        Totale: imponibile,
+        IVA: iva,
+        PFU: 0,
+        Note: preventivo.Note ?? preventivo.note ?? null,
+        DataCreazione: serverTimestamp(),
+      };
+
+      await addDoc(collection(db, "Ordini"), payload);
+      toast.success("Ordine creato con successo");
+      router.push("/ordini");
+    } catch (e) {
+      console.error(e);
+      toast.error("Errore nella creazione dell'ordine");
+    } finally {
+      setConverting(false);
+    }
   }
 
   // ── Loading ──────────────────────────────────────────────────────────────────
@@ -310,6 +367,20 @@ export default function PreventivoDetailPage() {
                 style={{ border: "1px solid #FEE2E2", background: "#FEF2F2", color: "#991B1B", fontFamily: "var(--font-montserrat)" }}
               >
                 <XCircle size={13} /> Annulla accettazione
+              </button>
+            )}
+            {isAccettato && (
+              <button
+                onClick={handleConvertToOrder}
+                disabled={converting}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl disabled:opacity-40"
+                style={{ background: "#1D4ED8", color: "#fff", fontFamily: "var(--font-montserrat)" }}
+              >
+                {converting
+                  ? <Loader2 size={13} className="animate-spin" />
+                  : <ShoppingCart size={13} />
+                }
+                Converti in Ordine
               </button>
             )}
           </div>

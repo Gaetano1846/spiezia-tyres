@@ -162,12 +162,16 @@ export async function searchProdotti(
     ]);
   }
 
+  // Filtri dimensione — usa numericFilters di Algolia (molto più efficiente)
+  // NOTA: Larghezza, Altezza, Diametro devono essere in numericAttributesForFiltering su Algolia dashboard
+  if (largezza) numericFilters.push(`Larghezza=${largezza}`);
+  if (altezza)  numericFilters.push(`Altezza=${altezza}`);
+  if (diametro) numericFilters.push(`Diametro=${diametro}`);
+
   const facetFilters: string[][] = [];
   if (stagioni.length > 0) facetFilters.push(stagioni.map((s) => `Stagione:${s}`));
   if (marche.length > 0)   facetFilters.push(marche.map((m) => `Marca:${m}`));
   if (categoria)            facetFilters.push([`Categoria:${categoria}`]);
-
-  const hasSizeFilter = !!(largezza || altezza || diametro);
 
   // Base search params
   const baseParams = {
@@ -177,61 +181,16 @@ export async function searchProdotti(
     facets: withFacets ? ["Marca", "Stagione"] : undefined,
   };
 
-  if (!hasSizeFilter) {
-    // Normal paginated search — Algolia handles everything
-    const raw = (await algoliaClient.searchSingleIndex({
-      indexName: INDEX_NAME,
-      searchParams: { ...baseParams, page, hitsPerPage },
-    })) as unknown as AlgoliaRaw;
-
-    return {
-      hits: (raw.hits ?? []) as ProdottoHit[],
-      nbHits: raw.nbHits ?? 0,
-      nbPages: raw.nbPages ?? Math.ceil((raw.nbHits ?? 0) / hitsPerPage),
-      page: raw.page ?? 0,
-      facets: raw.facets,
-    };
-  }
-
-  // Size filter active: Larghezza/Altezza/Diametro are not in numericAttributesForFiltering
-  // so we fetch up to 4 × 1000 hits in parallel then filter client-side.
-  const BULK = 1000; // Algolia max hitsPerPage
-  const first = (await algoliaClient.searchSingleIndex({
+  const raw = (await algoliaClient.searchSingleIndex({
     indexName: INDEX_NAME,
-    searchParams: { ...baseParams, page: 0, hitsPerPage: BULK },
+    searchParams: { ...baseParams, page, hitsPerPage },
   })) as unknown as AlgoliaRaw;
 
-  let allHits: ProdottoHit[] = (first.hits ?? []) as ProdottoHit[];
-
-  if (first.nbPages > 1) {
-    const extraPages = Math.min(first.nbPages - 1, 3); // fetch up to 3 more pages (4000 total)
-    const extras = await Promise.all(
-      Array.from({ length: extraPages }, (_, i) =>
-        algoliaClient.searchSingleIndex({
-          indexName: INDEX_NAME,
-          searchParams: { ...baseParams, page: i + 1, hitsPerPage: BULK },
-        })
-      )
-    );
-    for (const p of extras) {
-      allHits = allHits.concat((p as unknown as AlgoliaRaw).hits as ProdottoHit[]);
-    }
-  }
-
-  // Client-side size filtering (exact numeric match)
-  if (largezza) allHits = allHits.filter((h) => Number(h.Larghezza) === Number(largezza));
-  if (altezza)  allHits = allHits.filter((h) => Number(h.Altezza)   === Number(altezza));
-  if (diametro) allHits = allHits.filter((h) => Number(h.Diametro)  === Number(diametro));
-
-  const totalFiltered = allHits.length;
-  const start = page * hitsPerPage;
-  const pageHits = allHits.slice(start, start + hitsPerPage);
-
   return {
-    hits: pageHits,
-    nbHits: totalFiltered,
-    nbPages: Math.ceil(totalFiltered / hitsPerPage),
-    page,
-    facets: first.facets,
+    hits: (raw.hits ?? []) as ProdottoHit[],
+    nbHits: raw.nbHits ?? 0,
+    nbPages: raw.nbPages ?? Math.ceil((raw.nbHits ?? 0) / hitsPerPage),
+    page: raw.page ?? 0,
+    facets: raw.facets,
   };
 }

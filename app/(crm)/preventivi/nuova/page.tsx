@@ -5,889 +5,952 @@ import { useRouter } from "next/navigation";
 import {
   collection,
   getDocs,
-  doc,
   addDoc,
-  runTransaction,
   serverTimestamp,
-  Timestamp,
-  limit,
+  doc,
   query,
+  orderBy,
+  limit,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useAuth } from "@/components/layout/AuthProvider";
+import { nextCounter } from "@/lib/counters";
+import { algoliaClient, INDEX_NAME, formatMisura } from "@/lib/algolia";
+import type { ProdottoHit } from "@/lib/algolia";
+import type { Cliente, Veicolo, PneumaticoPrev } from "@/lib/types";
 import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  Plus,
-  Trash2,
-  X,
-  Search,
-  ChevronDown,
-  Loader2,
+  ArrowLeft, Plus, X, Search, Check, Loader2, Car, User, FileText,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-import type { Cliente, Veicolo } from "@/lib/types";
 
-type Articolo = {
-  id: number;
-  descrizione: string;
-  marca: string;
-  qta: number;
-  prezzoUnitario: number;
-  pfu: number;
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type RigaPneumatico = {
+  id: string; // local key
+  Marca: string;
+  Modello: string;
+  Misura: string;
+  Quantita: number;
+  PrezzoUnitario: string; // string per editing, poi parseFloat al salvataggio
 };
 
-const steps = ["Cliente & Veicolo", "Articoli", "Riepilogo"] as const;
+type AlgoliaRaw = {
+  hits: unknown[];
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function nomeCliente(c: Cliente): string {
+  if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale;
+  return c.Nome?.trim() || c.Ragione_Sociale || "—";
+}
+
+function euro(n: number): string {
+  return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+}
+
+function formatDate(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function genId(): string {
+  return Math.random().toString(36).slice(2, 9);
+}
+
+function rigaVuota(): RigaPneumatico {
+  return { id: genId(), Marca: "", Modello: "", Misura: "", Quantita: 1, PrezzoUnitario: "" };
+}
+
+// ─── Algolia Search Modal ──────────────────────────────────────────────────────
+
+function AlgoliaSearchModal({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (hit: ProdottoHit) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<ProdottoHit[]>([]);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!q.trim()) {
+      setHits([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const raw = (await algoliaClient.searchSingleIndex({
+          indexName: INDEX_NAME,
+          searchParams: { query: q, hitsPerPage: 20 },
+        })) as unknown as AlgoliaRaw;
+        setHits((raw.hits ?? []) as ProdottoHit[]);
+      } catch {
+        setHits([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.4)" }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-2xl w-full max-w-lg mx-4 overflow-hidden"
+        style={{
+          background: "#fff",
+          border: "1px solid var(--border)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center gap-3 p-4"
+          style={{ borderBottom: "1px solid var(--border)" }}
+        >
+          <Search size={16} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Cerca pneumatico (marca, misura, modello…)"
+            className="flex-1 text-sm outline-none bg-transparent"
+            style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
+          />
+          <button onClick={onClose} style={{ color: "var(--text-muted)" }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Results */}
+        <div className="max-h-80 overflow-y-auto">
+          {loading && (
+            <div className="flex justify-center py-8">
+              <Loader2
+                size={20}
+                className="animate-spin"
+                style={{ color: "var(--text-muted)" }}
+              />
+            </div>
+          )}
+          {!loading && hits.length === 0 && q.trim() && (
+            <p
+              className="text-sm text-center py-8"
+              style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+            >
+              Nessun risultato per &ldquo;{q}&rdquo;
+            </p>
+          )}
+          {!loading && !q.trim() && (
+            <p
+              className="text-sm text-center py-8"
+              style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+            >
+              Inizia a digitare per cercare…
+            </p>
+          )}
+          {hits.map((hit) => (
+            <button
+              key={hit.objectID}
+              onClick={() => onSelect(hit)}
+              className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#F8F9FB] transition-colors"
+              style={{ borderBottom: "1px solid var(--border)" }}
+            >
+              <div className="flex-1 min-w-0">
+                <p
+                  className="text-sm font-semibold truncate"
+                  style={{
+                    color: "var(--text-primary)",
+                    fontFamily: "var(--font-montserrat)",
+                  }}
+                >
+                  {hit.Marca} {hit.Modello}
+                </p>
+                <p
+                  className="text-xs mt-0.5"
+                  style={{
+                    color: "var(--text-secondary)",
+                    fontFamily: "var(--font-montserrat)",
+                  }}
+                >
+                  {formatMisura(hit)} · {hit.Stagione}
+                </p>
+              </div>
+              <span
+                className="text-sm font-bold shrink-0"
+                style={{ color: "var(--brand)", fontFamily: "var(--font-poppins)" }}
+              >
+                {euro(hit.Prezzo_Gommista || hit.Prezzo || 0)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function NuovoPreventivoPage() {
   const router = useRouter();
+  const { user } = useAuth();
 
-  // Step state
-  const [step, setStep] = useState(0);
+  // ── Step 1: Cliente + Veicolo ────────────────────────────────────────────────
 
-  // Step 0 — Cliente & Veicolo
   const [clienti, setClienti] = useState<Cliente[]>([]);
-  const [clientiLoading, setClientiLoading] = useState(true);
+  const [loadingClienti, setLoadingClienti] = useState(true);
   const [clienteSearch, setClienteSearch] = useState("");
-  const [clienteId, setClienteId] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
-  const comboRef = useRef<HTMLDivElement>(null);
+  const [clienteFocus, setClienteFocus] = useState(false);
+  const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
+
   const [veicoli, setVeicoli] = useState<Veicolo[]>([]);
-  const [veicoliLoading, setVeicoliLoading] = useState(false);
-  const [veicoloId, setVeicoloId] = useState("");
-  const [km, setKm] = useState("");
+  const [loadingVeicoli, setLoadingVeicoli] = useState(false);
+  const [selectedVeicolo, setSelectedVeicolo] = useState<Veicolo | null>(null);
 
-  // Step 1 — Articoli
-  const [articoli, setArticoli] = useState<Articolo[]>([
-    { id: 1, descrizione: "", marca: "", qta: 1, prezzoUnitario: 0, pfu: 0 },
-  ]);
+  // ── Step 2: Pneumatici ──────────────────────────────────────────────────────
 
-  // Step 2 — Riepilogo
+  const [righe, setRighe] = useState<RigaPneumatico[]>([rigaVuota()]);
+  const [algoliaModalFor, setAlgoliaModalFor] = useState<string | null>(null);
+
+  // ── Step 3: Note ────────────────────────────────────────────────────────────
+
   const [note, setNote] = useState("");
-  const [scadenza, setScadenza] = useState("");
+
+  // ── Saving ──────────────────────────────────────────────────────────────────
+
   const [saving, setSaving] = useState(false);
 
-  // ── Load Clienti (no orderBy → avoids missing-field exclusion) ───────────
+  // ── Load clienti ────────────────────────────────────────────────────────────
+
   useEffect(() => {
     const fetchClienti = async () => {
+      setLoadingClienti(true);
       try {
-        const snap = await getDocs(query(collection(db, "Clienti"), limit(500)));
-        const list: Cliente[] = snap.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Omit<Cliente, "id">) }))
-          .sort((a, b) => {
-            const na = (a.Azienda && a.Ragione_Sociale ? a.Ragione_Sociale : a.Nome) ?? "";
-            const nb = (b.Azienda && b.Ragione_Sociale ? b.Ragione_Sociale : b.Nome) ?? "";
-            return na.localeCompare(nb, "it");
-          });
-        setClienti(list);
-      } catch (err) {
-        console.error(err);
-        toast.error("Errore nel caricamento dei clienti");
+        const q = query(collection(db, "Clienti"), orderBy("Nome"), limit(500));
+        const snap = await getDocs(q);
+        setClienti(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente)));
+      } catch {
+        toast.error("Errore nel caricamento clienti");
       } finally {
-        setClientiLoading(false);
+        setLoadingClienti(false);
       }
     };
     fetchClienti();
   }, []);
 
-  // Chiudi dropdown su click fuori
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (comboRef.current && !comboRef.current.contains(e.target as Node)) {
-        setShowDropdown(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  // ── Load veicoli when cliente selected ──────────────────────────────────────
 
-  // ── Load Veicoli when cliente changes ─────────────────────────────────────
   useEffect(() => {
-    if (!clienteId) {
+    if (!selectedCliente) {
       setVeicoli([]);
-      setVeicoloId("");
+      setSelectedVeicolo(null);
       return;
     }
     const fetchVeicoli = async () => {
-      setVeicoliLoading(true);
+      setLoadingVeicoli(true);
       try {
         const snap = await getDocs(
-          collection(db, "Clienti", clienteId, "Veicolo")
+          collection(db, "Clienti", selectedCliente.id, "Veicolo")
         );
-        const list: Veicolo[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Veicolo, "id">),
-        }));
-        setVeicoli(list);
-      } catch (err) {
-        console.error(err);
-        toast.error("Errore nel caricamento dei veicoli");
+        setVeicoli(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
+      } catch {
+        setVeicoli([]);
       } finally {
-        setVeicoliLoading(false);
+        setLoadingVeicoli(false);
       }
     };
     fetchVeicoli();
-  }, [clienteId]);
+    setSelectedVeicolo(null);
+  }, [selectedCliente]);
 
-  // ── Derived values ────────────────────────────────────────────────────────
-  function clienteLabel(c: Cliente): string {
-    return (c.Azienda && c.Ragione_Sociale ? c.Ragione_Sociale : c.Nome) ?? "—";
-  }
+  // ── Cliente dropdown filter ──────────────────────────────────────────────────
 
-  const clientiFiltrati = clienti.filter((c) => {
-    if (!clienteSearch.trim()) return true;
-    const q = clienteSearch.toLowerCase();
-    return (
-      c.Nome?.toLowerCase().includes(q) ||
-      c.Ragione_Sociale?.toLowerCase().includes(q) ||
-      c.Email?.toLowerCase().includes(q) ||
-      c.Telefono?.toLowerCase().includes(q)
-    );
+  const filteredClienti = clienti.filter((c) => {
+    if (!clienteSearch) return true;
+    const nome = nomeCliente(c);
+    return [nome, c.Telefono ?? "", c.Email ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(clienteSearch.toLowerCase());
   });
 
-  const clienteSelezionato = clienti.find((c) => c.id === clienteId) ?? null;
-  const veicoloSelezionato = veicoli.find((v) => v.id === veicoloId) ?? null;
+  function handleSelectCliente(c: Cliente) {
+    setSelectedCliente(c);
+    setClienteSearch(nomeCliente(c));
+    setClienteFocus(false);
+  }
 
-  const totaleNetto = articoli.reduce(
-    (acc, a) => acc + a.qta * a.prezzoUnitario,
-    0
-  );
-  const totalePFU = articoli.reduce((acc, a) => acc + a.qta * a.pfu, 0);
-  const iva = (totaleNetto + totalePFU) * 0.22;
-  const totaleFinale = totaleNetto + totalePFU + iva;
+  function handleClearCliente() {
+    setSelectedCliente(null);
+    setClienteSearch("");
+    setVeicoli([]);
+    setSelectedVeicolo(null);
+  }
 
-  // ── Articoli helpers ──────────────────────────────────────────────────────
-  const addArticolo = () =>
-    setArticoli((prev) => [
-      ...prev,
-      { id: Date.now(), descrizione: "", marca: "", qta: 1, prezzoUnitario: 0, pfu: 0 },
-    ]);
+  // ── Righe pneumatici ────────────────────────────────────────────────────────
 
-  const removeArticolo = (id: number) =>
-    setArticoli((prev) => prev.filter((a) => a.id !== id));
-
-  const updateArticolo = (
-    id: number,
-    field: keyof Articolo,
+  function updateRiga(
+    id: string,
+    field: keyof Omit<RigaPneumatico, "id">,
     value: string | number
-  ) =>
-    setArticoli((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, [field]: value } : a))
+  ) {
+    setRighe((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
     );
+  }
 
-  // ── Save ──────────────────────────────────────────────────────────────────
-  const handleConferma = async () => {
-    if (!clienteId) {
+  function removeRiga(id: string) {
+    setRighe((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  function addRiga() {
+    setRighe((prev) => [...prev, rigaVuota()]);
+  }
+
+  function handleAlgoliaSelect(hit: ProdottoHit) {
+    if (!algoliaModalFor) return;
+    setRighe((prev) =>
+      prev.map((r) =>
+        r.id === algoliaModalFor
+          ? {
+              ...r,
+              Marca: hit.Marca,
+              Modello: hit.Modello,
+              Misura: formatMisura(hit),
+              PrezzoUnitario: String(hit.Prezzo_Gommista || hit.Prezzo || ""),
+            }
+          : r
+      )
+    );
+    setAlgoliaModalFor(null);
+  }
+
+  // ── Totale ──────────────────────────────────────────────────────────────────
+
+  const subtotale = righe.reduce((acc, r) => {
+    const prezzo = parseFloat(r.PrezzoUnitario.replace(",", ".")) || 0;
+    return acc + prezzo * (r.Quantita || 0);
+  }, 0);
+
+  // ── Salvataggio ─────────────────────────────────────────────────────────────
+
+  async function handleSave() {
+    if (!selectedCliente) {
       toast.error("Seleziona un cliente");
       return;
     }
+    if (righe.length === 0) {
+      toast.error("Aggiungi almeno un pneumatico");
+      return;
+    }
+
     setSaving(true);
     try {
-      // 1. Generate Numero via transaction on Counters/preventivi
-      const counterRef = doc(db, "Counters", "preventivi");
-      let numero = "";
-      await runTransaction(db, async (tx) => {
-        const counterSnap = await tx.get(counterRef);
-        const current: number = counterSnap.exists()
-          ? (counterSnap.data().ultimo as number) ?? 0
-          : 0;
-        const next = current + 1;
-        tx.set(counterRef, { ultimo: next }, { merge: true });
-        numero = `PRE-${String(next).padStart(4, "0")}`;
-      });
+      // Sede: prendi dall'utente loggato, usa "default" come fallback
+      let sedeId = "default";
+      const sedeRef = user?.Sede;
+      if (sedeRef && typeof sedeRef === "object" && "id" in sedeRef) {
+        sedeId = (sedeRef as { id: string }).id;
+      } else if (user?.SedeNome) {
+        sedeId = user.SedeNome;
+      }
 
-      // 2. Build document
-      const clienteRef = doc(db, "Clienti", clienteId);
-      const veicoloRef =
-        veicoloId
-          ? doc(db, "Clienti", clienteId, "Veicolo", veicoloId)
-          : undefined;
+      const numero = await nextCounter("Preventivo", sedeId);
 
-      const articoliPersisted = articoli.map((a) => ({
-        Prodotto: "",
-        Titolo: a.descrizione,
-        Marca: a.marca,
-        Quantita: a.qta,
-        PrezzoUnitario: a.prezzoUnitario,
-        PFU: a.pfu,
+      const pneumaticiNuovi: PneumaticoPrev[] = righe.map((r) => ({
+        Marca: r.Marca || undefined,
+        Modello: r.Modello || undefined,
+        Misura: r.Misura || undefined,
+        Quantita: r.Quantita,
+        PrezzoUnitario: parseFloat(r.PrezzoUnitario.replace(",", ".")) || 0,
       }));
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const docData: Record<string, any> = {
-        Numero: numero,
-        Cliente: clienteRef,
-        Stato: "Bozza",
-        Articoli: articoliPersisted,
-        Servizi: [],
-        Totale: totaleFinale,
-        IVA: iva,
-        PFU: totalePFU,
-        Note: note,
-        DataCreazione: serverTimestamp(),
+      const veicoloRef = selectedVeicolo
+        ? doc(db, "Clienti", selectedCliente.id, "Veicolo", selectedVeicolo.id)
+        : null;
+
+      const payload: Record<string, unknown> = {
+        ID: numero,
+        Data: formatDate(new Date()),
+        Data_Creazione: serverTimestamp(),
+        Pneumatici_Nuovi: pneumaticiNuovi,
+        Note: note.trim() || null,
+        Accettato: false,
+        Stato: "In attesa",
       };
+      if (veicoloRef) payload.Veicolo = veicoloRef;
 
-      if (veicoloRef) docData.Veicolo = veicoloRef;
-      if (scadenza) docData.DataScadenza = Timestamp.fromDate(new Date(scadenza));
+      const docRef = await addDoc(
+        collection(db, "Clienti", selectedCliente.id, "Preventivo"),
+        payload
+      );
 
-      // 3. Save to Clienti/{clienteId}/Preventivo
-      const prevRef = collection(db, "Clienti", clienteId, "Preventivo");
-      const newDoc = await addDoc(prevRef, docData);
-
-      toast.success(`Preventivo ${numero} creato`);
-      router.push(`/preventivi/${clienteId}/${newDoc.id}`);
-    } catch (err) {
-      console.error(err);
-      toast.error("Errore nel salvataggio del preventivo");
+      toast.success(`Preventivo #${numero} creato`);
+      router.push(`/preventivi/${selectedCliente.id}/${docRef.id}`);
+    } catch (e) {
+      console.error(e);
+      toast.error("Errore nella creazione del preventivo");
+    } finally {
       setSaving(false);
     }
-  };
+  }
 
-  // ── Shared input style ────────────────────────────────────────────────────
+  // ── Shared input style ───────────────────────────────────────────────────────
+
   const inputStyle: React.CSSProperties = {
     background: "var(--bg-primary)",
     border: "1px solid var(--border)",
     fontFamily: "var(--font-montserrat)",
     color: "var(--text-primary)",
     outline: "none",
+    borderRadius: 12,
+    fontSize: 14,
+    padding: "8px 12px",
+    width: "100%",
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
-  return (
-    <div className="space-y-6 max-w-3xl mx-auto">
-      {/* Breadcrumb */}
-      <div
-        className="flex items-center gap-2 text-sm"
-        style={{
-          fontFamily: "var(--font-montserrat)",
-          color: "var(--text-secondary)",
-        }}
-      >
-        <Link href="/preventivi" className="hover:underline">
-          Preventivi
-        </Link>
-        <span>/</span>
-        <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-          Nuovo
-        </span>
-      </div>
+  // ── Render ───────────────────────────────────────────────────────────────────
 
-      <div className="flex items-center justify-between">
+  return (
+    <div className="max-w-3xl mx-auto space-y-6">
+      {/* ── Back link ── */}
+      <Link
+        href="/preventivi"
+        className="inline-flex items-center gap-1.5 text-sm font-medium"
+        style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}
+      >
+        <ArrowLeft size={15} /> Preventivi
+      </Link>
+
+      {/* ── Title ── */}
+      <div>
         <h1
           className="text-2xl font-bold"
-          style={{
-            fontFamily: "var(--font-poppins)",
-            color: "var(--text-primary)",
-          }}
+          style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}
         >
           Nuovo preventivo
         </h1>
+        <p
+          className="text-sm mt-1"
+          style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}
+        >
+          Compila i campi e salva per creare il preventivo
+        </p>
       </div>
 
-      {/* Steps indicator */}
-      <div className="flex items-center gap-2">
-        {steps.map((s, i) => (
-          <div key={s} className="flex items-center gap-2">
-            <div
-              className="flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold"
-              style={{
-                background:
-                  i < step
-                    ? "#249689"
-                    : i === step
-                    ? "var(--brand)"
-                    : "var(--border)",
-                color: i <= step ? "#111" : "var(--text-muted)",
-                fontFamily: "var(--font-montserrat)",
-              }}
-            >
-              {i < step ? <Check size={12} /> : i + 1}
-            </div>
-            <span
-              className="text-xs font-semibold hidden sm:block"
-              style={{
-                color:
-                  i === step ? "var(--text-primary)" : "var(--text-muted)",
-                fontFamily: "var(--font-montserrat)",
-              }}
-            >
-              {s}
-            </span>
-            {i < steps.length - 1 && (
-              <div
-                className="w-8 h-px mx-1"
-                style={{ background: "var(--border)" }}
-              />
-            )}
-          </div>
-        ))}
-      </div>
-
+      {/* ── Sezione 1: Cliente e Veicolo ── */}
       <Card>
-        {/* ── STEP 0: Cliente & Veicolo ───────────────────────────────────── */}
-        {step === 0 && (
-          <div className="space-y-5">
-            <h2
-              className="font-bold text-base"
-              style={{ fontFamily: "var(--font-poppins)" }}
+        <div className="flex items-center gap-2 mb-4">
+          <User size={16} style={{ color: "var(--text-muted)" }} />
+          <h2
+            className="font-bold text-base"
+            style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}
+          >
+            Cliente e veicolo
+          </h2>
+        </div>
+
+        <div className="space-y-4">
+          {/* Cliente searchable dropdown */}
+          <div>
+            <label
+              className="block text-xs font-semibold uppercase tracking-wider mb-1.5"
+              style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
             >
-              Cliente & Veicolo
-            </h2>
+              Cliente *
+            </label>
+            <div className="relative">
+              <div className="relative">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  style={{ color: "var(--text-muted)" }}
+                />
+                <input
+                  type="text"
+                  value={clienteSearch}
+                  onChange={(e) => {
+                    setClienteSearch(e.target.value);
+                    if (
+                      selectedCliente &&
+                      e.target.value !== nomeCliente(selectedCliente)
+                    ) {
+                      setSelectedCliente(null);
+                    }
+                  }}
+                  onFocus={() => setClienteFocus(true)}
+                  onBlur={() => setTimeout(() => setClienteFocus(false), 180)}
+                  placeholder={
+                    loadingClienti
+                      ? "Caricamento clienti…"
+                      : "Cerca per nome, telefono…"
+                  }
+                  disabled={loadingClienti}
+                  style={{
+                    ...inputStyle,
+                    paddingLeft: 36,
+                    paddingRight: selectedCliente ? 36 : 12,
+                  }}
+                />
+                {selectedCliente && (
+                  <button
+                    type="button"
+                    onClick={handleClearCliente}
+                    className="absolute right-3 top-1/2 -translate-y-1/2"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
 
-            {/* Combobox cercabile cliente */}
-            <div className="space-y-2" ref={comboRef}>
-              <label
-                className="text-xs font-semibold uppercase tracking-wider"
-                style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
-              >
-                Cliente *
-              </label>
-
-              {clientiLoading ? (
-                <div className="flex items-center gap-2 text-sm py-2.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                  <Loader2 size={14} className="animate-spin" />
-                  Caricamento clienti…
-                </div>
-              ) : (
-                <div className="relative">
-                  {/* Input */}
-                  <div className="relative">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
-                    <input
-                      type="text"
-                      value={clienteId ? clienteLabel(clienteSelezionato!) : clienteSearch}
-                      readOnly={!!clienteId}
-                      onChange={(e) => {
-                        setClienteSearch(e.target.value);
-                        setClienteId("");
-                        setVeicoloId("");
-                        setShowDropdown(true);
-                      }}
-                      onFocus={() => { if (!clienteId) setShowDropdown(true); }}
-                      placeholder="Cerca per nome, ragione sociale, email…"
-                      className="w-full pl-9 pr-9 py-2.5 rounded-xl text-sm"
-                      style={{ ...inputStyle, cursor: clienteId ? "default" : "text" }}
-                    />
-                    {clienteId ? (
-                      <button
-                        onClick={() => { setClienteId(""); setClienteSearch(""); setVeicoloId(""); setShowDropdown(false); }}
-                        className="absolute right-3 top-1/2 -translate-y-1/2"
-                      >
-                        <X size={14} style={{ color: "var(--text-muted)" }} />
-                      </button>
-                    ) : clienteSearch ? (
-                      <button
-                        onClick={() => { setClienteSearch(""); setShowDropdown(false); }}
-                        className="absolute right-3 top-1/2 -translate-y-1/2"
-                      >
-                        <X size={14} style={{ color: "var(--text-muted)" }} />
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {/* Dropdown risultati */}
-                  {showDropdown && !clienteId && (
-                    <div
-                      className="absolute z-30 w-full mt-1 rounded-xl overflow-hidden"
-                      style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 280, overflowY: "auto" }}
+              {/* Dropdown list */}
+              {clienteFocus && !selectedCliente && filteredClienti.length > 0 && (
+                <div
+                  className="absolute z-30 w-full mt-1 rounded-xl overflow-hidden"
+                  style={{
+                    background: "#fff",
+                    border: "1px solid var(--border)",
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
+                    maxHeight: 240,
+                    overflowY: "auto",
+                  }}
+                >
+                  {filteredClienti.slice(0, 40).map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onMouseDown={() => handleSelectCliente(c)}
+                      className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-[#F8F9FB] transition-colors"
+                      style={{ borderBottom: "1px solid var(--border)" }}
                     >
-                      {clientiFiltrati.length === 0 ? (
-                        <div className="px-4 py-3 text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                          Nessun cliente trovato
-                        </div>
-                      ) : (
-                        clientiFiltrati.slice(0, 50).map((c) => (
-                          <button
-                            key={c.id}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setClienteId(c.id);
-                              setClienteSearch("");
-                              setVeicoloId("");
-                              setShowDropdown(false);
+                      <div>
+                        <p
+                          className="text-sm font-semibold"
+                          style={{
+                            color: "var(--text-primary)",
+                            fontFamily: "var(--font-montserrat)",
+                          }}
+                        >
+                          {nomeCliente(c)}
+                        </p>
+                        {c.Telefono && (
+                          <p
+                            className="text-xs"
+                            style={{
+                              color: "var(--text-muted)",
+                              fontFamily: "var(--font-montserrat)",
                             }}
-                            className="w-full text-left px-4 py-2.5 transition-colors hover:bg-[#FFF8DC]"
-                            style={{ fontFamily: "var(--font-montserrat)", borderBottom: "1px solid var(--border)" }}
                           >
-                            <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                              {clienteLabel(c)}
-                            </p>
-                            {c.Email && (
-                              <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{c.Email}</p>
-                            )}
-                          </button>
-                        ))
+                            {c.Telefono}
+                          </p>
+                        )}
+                      </div>
+                      {c.Tipo && (
+                        <span
+                          className="text-xs px-2 py-0.5 rounded-full"
+                          style={{
+                            background: "var(--bg-secondary)",
+                            color: "var(--text-secondary)",
+                            fontFamily: "var(--font-montserrat)",
+                          }}
+                        >
+                          {c.Tipo}
+                        </span>
                       )}
-                    </div>
-                  )}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
 
-            {/* Veicolo select — shown when cliente is selected */}
-            {clienteId && (
-              <div className="space-y-2">
-                <label
-                  className="text-xs font-semibold uppercase tracking-wider"
+            {selectedCliente && (
+              <p
+                className="mt-1.5 text-xs flex items-center gap-1"
+                style={{ color: "#249689", fontFamily: "var(--font-montserrat)" }}
+              >
+                <Check size={12} /> Cliente selezionato
+              </p>
+            )}
+          </div>
+
+          {/* Veicolo picker */}
+          {selectedCliente && (
+            <div>
+              <label
+                className="block text-xs font-semibold uppercase tracking-wider mb-1.5"
+                style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+              >
+                Veicolo{" "}
+                <span style={{ fontWeight: 400, textTransform: "none" }}>
+                  (opzionale)
+                </span>
+              </label>
+              {loadingVeicoli ? (
+                <div
+                  className="flex items-center gap-2 text-sm py-2"
+                  style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <Loader2 size={14} className="animate-spin" /> Caricamento
+                  veicoli…
+                </div>
+              ) : veicoli.length === 0 ? (
+                <p
+                  className="text-sm py-2"
                   style={{
                     color: "var(--text-muted)",
                     fontFamily: "var(--font-montserrat)",
                   }}
                 >
-                  Veicolo
-                </label>
-                {veicoliLoading ? (
-                  <div
-                    className="flex items-center gap-2 text-sm py-2"
-                    style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
-                  >
-                    <Loader2 size={14} className="animate-spin" />
-                    Caricamento veicoli...
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <select
-                      value={veicoloId}
-                      onChange={(e) => setVeicoloId(e.target.value)}
-                      className="w-full px-4 py-2.5 rounded-xl text-sm appearance-none pr-9"
-                      style={inputStyle}
-                    >
-                      <option value="">Seleziona veicolo...</option>
-                      {veicoli.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.Targa} — {v.Marca} {v.Modello}
-                          {v.Anno ? ` (${v.Anno})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown
-                      size={15}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                      style={{ color: "var(--text-muted)" }}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Chilometraggio */}
-            <div className="space-y-2">
-              <label
-                className="text-xs font-semibold uppercase tracking-wider"
-                style={{
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-montserrat)",
-                }}
-              >
-                Chilometraggio
-              </label>
-              <input
-                type="number"
-                value={km}
-                onChange={(e) => setKm(e.target.value)}
-                placeholder="es. 45000"
-                className="w-full px-4 py-2.5 rounded-xl text-sm"
-                style={inputStyle}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* ── STEP 1: Articoli ────────────────────────────────────────────── */}
-        {step === 1 && (
-          <div className="space-y-5">
-            <h2
-              className="font-bold text-base"
-              style={{ fontFamily: "var(--font-poppins)" }}
-            >
-              Articoli
-            </h2>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                    {[
-                      "Descrizione",
-                      "Marca",
-                      "Qtà",
-                      "Prezzo unit.",
-                      "PFU",
-                      "Totale",
-                      "",
-                    ].map((h) => (
-                      <th
-                        key={h}
-                        className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
+                  Nessun veicolo registrato per questo cliente
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {veicoli.map((v) => {
+                    const isSelected = selectedVeicolo?.id === v.id;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedVeicolo(isSelected ? null : v)
+                        }
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors"
                         style={{
-                          color: "var(--text-muted)",
+                          border: `1px solid ${isSelected ? "var(--brand)" : "var(--border)"}`,
+                          background: isSelected ? "var(--brand)" : "#fff",
+                          color: isSelected ? "#111" : "var(--text-primary)",
                           fontFamily: "var(--font-montserrat)",
+                          fontWeight: 600,
                         }}
                       >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {articoli.map((a) => (
-                    <tr
-                      key={a.id}
-                      style={{ borderBottom: "1px solid var(--border)" }}
-                    >
-                      <td className="px-2 py-2">
-                        <input
-                          type="text"
-                          value={a.descrizione}
-                          onChange={(e) =>
-                            updateArticolo(a.id, "descrizione", e.target.value)
-                          }
-                          placeholder="Descrizione articolo o servizio"
-                          className="w-full px-3 py-1.5 rounded-lg text-sm"
-                          style={inputStyle}
-                        />
-                      </td>
-                      <td className="px-2 py-2 w-28">
-                        <input
-                          type="text"
-                          value={a.marca}
-                          onChange={(e) =>
-                            updateArticolo(a.id, "marca", e.target.value)
-                          }
-                          placeholder="Marca"
-                          className="w-full px-3 py-1.5 rounded-lg text-sm"
-                          style={inputStyle}
-                        />
-                      </td>
-                      <td className="px-2 py-2 w-16">
-                        <input
-                          type="number"
-                          min={1}
-                          value={a.qta}
-                          onChange={(e) =>
-                            updateArticolo(
-                              a.id,
-                              "qta",
-                              Number(e.target.value)
-                            )
-                          }
-                          className="w-full px-3 py-1.5 rounded-lg text-sm text-center"
-                          style={inputStyle}
-                        />
-                      </td>
-                      <td className="px-2 py-2 w-28">
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          value={a.prezzoUnitario}
-                          onChange={(e) =>
-                            updateArticolo(
-                              a.id,
-                              "prezzoUnitario",
-                              Number(e.target.value)
-                            )
-                          }
-                          className="w-full px-3 py-1.5 rounded-lg text-sm"
-                          style={inputStyle}
-                        />
-                      </td>
-                      <td className="px-2 py-2 w-24">
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          value={a.pfu}
-                          onChange={(e) =>
-                            updateArticolo(
-                              a.id,
-                              "pfu",
-                              Number(e.target.value)
-                            )
-                          }
-                          className="w-full px-3 py-1.5 rounded-lg text-sm"
-                          style={inputStyle}
-                        />
-                      </td>
-                      <td
-                        className="px-2 py-2 font-semibold w-24 whitespace-nowrap"
-                        style={{
-                          fontFamily: "var(--font-montserrat)",
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        € {(a.qta * a.prezzoUnitario).toFixed(2)}
-                      </td>
-                      <td className="px-2 py-2 w-8">
-                        {articoli.length > 1 && (
-                          <button
-                            onClick={() => removeArticolo(a.id)}
-                            style={{ color: "var(--text-muted)" }}
+                        <Car size={13} />
+                        {v.Targa}
+                        {(v.Marca || v.Modello) && (
+                          <span
+                            style={{
+                              fontWeight: 400,
+                              fontSize: 12,
+                              color: isSelected ? "#333" : "var(--text-muted)",
+                            }}
                           >
-                            <Trash2 size={14} />
-                          </button>
+                            {[v.Marca, v.Modello].filter(Boolean).join(" ")}
+                          </span>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <button
-              onClick={addArticolo}
-              className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl"
-              style={{
-                border: "1px solid var(--border)",
-                color: "var(--text-primary)",
-                fontFamily: "var(--font-montserrat)",
-              }}
-            >
-              <Plus size={14} />
-              Aggiungi riga
-            </button>
-
-            <div className="flex justify-end">
-              <div
-                className="text-right space-y-1 min-w-[200px]"
-                style={{ fontFamily: "var(--font-montserrat)" }}
-              >
-                <p
-                  className="text-sm"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Netto:{" "}
-                  <strong>€ {totaleNetto.toFixed(2)}</strong>
-                </p>
-                <p
-                  className="text-sm"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  PFU:{" "}
-                  <strong>€ {totalePFU.toFixed(2)}</strong>
-                </p>
-                <p
-                  className="text-sm"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  IVA 22%:{" "}
-                  <strong>€ {iva.toFixed(2)}</strong>
-                </p>
-                <p
-                  className="text-base font-bold"
-                  style={{
-                    fontFamily: "var(--font-poppins)",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  Totale: € {totaleFinale.toFixed(2)}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── STEP 2: Riepilogo ───────────────────────────────────────────── */}
-        {step === 2 && (
-          <div className="space-y-5">
-            <h2
-              className="font-bold text-base"
-              style={{ fontFamily: "var(--font-poppins)" }}
-            >
-              Riepilogo
-            </h2>
-
-            {/* Summary card */}
-            <div
-              className="rounded-xl p-4 space-y-2"
-              style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <div
-                className="flex justify-between text-sm"
-                style={{ fontFamily: "var(--font-montserrat)" }}
-              >
-                <span style={{ color: "var(--text-muted)" }}>Cliente</span>
-                <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                  {clienteSelezionato ? clienteLabel(clienteSelezionato) : "—"}
-                </span>
-              </div>
-              {veicoloSelezionato && (
-                <div
-                  className="flex justify-between text-sm"
-                  style={{ fontFamily: "var(--font-montserrat)" }}
-                >
-                  <span style={{ color: "var(--text-muted)" }}>Veicolo</span>
-                  <span
-                    style={{ color: "var(--text-primary)", fontWeight: 600 }}
-                  >
-                    {veicoloSelezionato.Targa} — {veicoloSelezionato.Marca}{" "}
-                    {veicoloSelezionato.Modello}
-                  </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-              <div
-                className="flex justify-between text-sm"
-                style={{ fontFamily: "var(--font-montserrat)" }}
-              >
-                <span style={{ color: "var(--text-muted)" }}>Articoli</span>
-                <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                  {articoli.length}
-                </span>
-              </div>
-
-              <div
-                className="pt-2 mt-2 space-y-1"
-                style={{ borderTop: "1px solid var(--border)" }}
-              >
-                <div
-                  className="flex justify-between text-sm"
-                  style={{ fontFamily: "var(--font-montserrat)" }}
-                >
-                  <span style={{ color: "var(--text-muted)" }}>Netto</span>
-                  <span style={{ color: "var(--text-primary)" }}>
-                    € {totaleNetto.toFixed(2)}
-                  </span>
-                </div>
-                <div
-                  className="flex justify-between text-sm"
-                  style={{ fontFamily: "var(--font-montserrat)" }}
-                >
-                  <span style={{ color: "var(--text-muted)" }}>PFU</span>
-                  <span style={{ color: "var(--text-primary)" }}>
-                    € {totalePFU.toFixed(2)}
-                  </span>
-                </div>
-                <div
-                  className="flex justify-between text-sm"
-                  style={{ fontFamily: "var(--font-montserrat)" }}
-                >
-                  <span style={{ color: "var(--text-muted)" }}>IVA 22%</span>
-                  <span style={{ color: "var(--text-primary)" }}>
-                    € {iva.toFixed(2)}
-                  </span>
-                </div>
-                <div
-                  className="flex justify-between text-base font-bold"
-                  style={{ fontFamily: "var(--font-poppins)" }}
-                >
-                  <span style={{ color: "var(--text-primary)" }}>
-                    Totale (IVA incl.)
-                  </span>
-                  <span style={{ color: "var(--text-primary)" }}>
-                    € {totaleFinale.toFixed(2)}
-                  </span>
-                </div>
-              </div>
             </div>
+          )}
+        </div>
+      </Card>
 
-            {/* Scadenza */}
-            <div className="space-y-2">
-              <label
-                className="text-xs font-semibold uppercase tracking-wider"
-                style={{
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-montserrat)",
-                }}
-              >
-                Scadenza preventivo
-              </label>
-              <input
-                type="date"
-                value={scadenza}
-                onChange={(e) => setScadenza(e.target.value)}
-                className="px-4 py-2.5 rounded-xl text-sm"
-                style={inputStyle}
-              />
-            </div>
-
-            {/* Note */}
-            <div className="space-y-2">
-              <label
-                className="text-xs font-semibold uppercase tracking-wider"
-                style={{
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-montserrat)",
-                }}
-              >
-                Note interne
-              </label>
-              <textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={4}
-                placeholder="Aggiungi note o condizioni particolari..."
-                className="w-full rounded-xl p-3 text-sm resize-none"
-                style={inputStyle}
-              />
-            </div>
+      {/* ── Sezione 2: Pneumatici ── */}
+      <Card>
+        <div className="flex items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2">
+            <FileText size={16} style={{ color: "var(--text-muted)" }} />
+            <h2
+              className="font-bold text-base"
+              style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}
+            >
+              Pneumatici
+            </h2>
           </div>
-        )}
-
-        {/* ── Navigation ──────────────────────────────────────────────────── */}
-        <div
-          className="flex justify-between mt-6 pt-4"
-          style={{ borderTop: "1px solid var(--border)" }}
-        >
           <button
-            onClick={() => setStep((s) => Math.max(0, s - 1))}
-            disabled={step === 0}
-            className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl disabled:opacity-40"
+            type="button"
+            onClick={addRiga}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
             style={{
+              background: "var(--bg-secondary)",
               border: "1px solid var(--border)",
               color: "var(--text-primary)",
               fontFamily: "var(--font-montserrat)",
             }}
           >
-            <ArrowLeft size={14} />
-            Indietro
+            <Plus size={13} /> Aggiungi
           </button>
+        </div>
 
-          {step < steps.length - 1 ? (
-            <button
-              onClick={() =>
-                setStep((s) => Math.min(steps.length - 1, s + 1))
-              }
-              disabled={step === 0 && !clienteId}
-              className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl disabled:opacity-40"
+        <div className="space-y-3">
+          {righe.map((riga, idx) => (
+            <div
+              key={riga.id}
+              className="rounded-xl p-3"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+            >
+              {/* Row header */}
+              <div className="flex items-center justify-between mb-3">
+                <span
+                  className="text-xs font-semibold"
+                  style={{
+                    color: "var(--text-muted)",
+                    fontFamily: "var(--font-montserrat)",
+                  }}
+                >
+                  Pneumatico {idx + 1}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAlgoliaModalFor(riga.id)}
+                    className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg"
+                    style={{
+                      border: "1px solid var(--border)",
+                      background: "#fff",
+                      color: "var(--text-secondary)",
+                      fontFamily: "var(--font-montserrat)",
+                    }}
+                  >
+                    <Search size={11} /> Cerca catalogo
+                  </button>
+                  {righe.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeRiga(riga.id)}
+                      className="flex items-center justify-center w-6 h-6 rounded-lg"
+                      style={{
+                        background: "#FEF2F2",
+                        color: "#991B1B",
+                        border: "1px solid #FEE2E2",
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Fields grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <div className="col-span-1">
+                  <label
+                    className="block text-xs mb-1"
+                    style={{
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-montserrat)",
+                    }}
+                  >
+                    Marca
+                  </label>
+                  <input
+                    type="text"
+                    value={riga.Marca}
+                    onChange={(e) => updateRiga(riga.id, "Marca", e.target.value)}
+                    placeholder="Pirelli"
+                    style={inputStyle}
+                  />
+                </div>
+                <div className="sm:col-span-2 col-span-1">
+                  <label
+                    className="block text-xs mb-1"
+                    style={{
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-montserrat)",
+                    }}
+                  >
+                    Modello
+                  </label>
+                  <input
+                    type="text"
+                    value={riga.Modello}
+                    onChange={(e) => updateRiga(riga.id, "Modello", e.target.value)}
+                    placeholder="Cinturato P7"
+                    style={inputStyle}
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label
+                    className="block text-xs mb-1"
+                    style={{
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-montserrat)",
+                    }}
+                  >
+                    Misura
+                  </label>
+                  <input
+                    type="text"
+                    value={riga.Misura}
+                    onChange={(e) => updateRiga(riga.id, "Misura", e.target.value)}
+                    placeholder="205/55 R16"
+                    style={inputStyle}
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label
+                    className="block text-xs mb-1"
+                    style={{
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-montserrat)",
+                    }}
+                  >
+                    Qtà
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={riga.Quantita}
+                    onChange={(e) =>
+                      updateRiga(
+                        riga.id,
+                        "Quantita",
+                        Math.max(1, parseInt(e.target.value) || 1)
+                      )
+                    }
+                    style={inputStyle}
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <label
+                    className="block text-xs mb-1"
+                    style={{
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-montserrat)",
+                    }}
+                  >
+                    Prezzo unit. (€)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={riga.PrezzoUnitario}
+                    onChange={(e) =>
+                      updateRiga(riga.id, "PrezzoUnitario", e.target.value)
+                    }
+                    placeholder="0.00"
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Add row button (bottom) */}
+        <button
+          type="button"
+          onClick={addRiga}
+          className="mt-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F8F9FB]"
+          style={{
+            border: "1.5px dashed var(--border)",
+            color: "var(--text-muted)",
+            fontFamily: "var(--font-montserrat)",
+          }}
+        >
+          <Plus size={14} /> Aggiungi pneumatico
+        </button>
+      </Card>
+
+      {/* ── Sezione 3: Note ── */}
+      <Card>
+        <h2
+          className="font-bold text-base mb-4"
+          style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}
+        >
+          Note
+        </h2>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={4}
+          placeholder="Aggiungi note libere per questo preventivo…"
+          style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }}
+        />
+      </Card>
+
+      {/* ── Sezione 4: Totale ── */}
+      <Card>
+        <div className="flex justify-end">
+          <div
+            className="w-full max-w-xs space-y-1.5 text-sm"
+            style={{ fontFamily: "var(--font-montserrat)" }}
+          >
+            <div className="flex justify-between">
+              <span style={{ color: "var(--text-secondary)" }}>Subtotale</span>
+              <span className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                {euro(subtotale)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span style={{ color: "var(--text-secondary)" }}>IVA 22%</span>
+              <span style={{ color: "var(--text-secondary)" }}>
+                {euro(subtotale * 0.22)}
+              </span>
+            </div>
+            <div
+              className="flex justify-between pt-2 text-base font-bold"
               style={{
-                background: "var(--brand)",
-                color: "#111",
-                fontFamily: "var(--font-montserrat)",
+                borderTop: "1px solid var(--border)",
+                fontFamily: "var(--font-poppins)",
+                color: "var(--text-primary)",
               }}
             >
-              Avanti
-              <ArrowRight size={14} />
-            </button>
-          ) : (
-            <button
-              onClick={handleConferma}
-              disabled={saving}
-              className="flex items-center gap-2 text-sm font-semibold px-5 py-2 rounded-xl disabled:opacity-60"
-              style={{
-                background: "var(--brand)",
-                color: "#111",
-                fontFamily: "var(--font-montserrat)",
-              }}
-            >
-              {saving ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  Salvataggio...
-                </>
-              ) : (
-                <>
-                  <Check size={14} />
-                  Conferma preventivo
-                </>
-              )}
-            </button>
-          )}
+              <span>Totale IVA incl.</span>
+              <span>{euro(subtotale * 1.22)}</span>
+            </div>
+          </div>
         </div>
       </Card>
+
+      {/* ── Actions ── */}
+      <div className="flex items-center justify-between gap-3 pb-8">
+        <Link
+          href="/preventivi"
+          className="text-sm font-medium px-4 py-2 rounded-xl"
+          style={{
+            border: "1px solid var(--border)",
+            color: "var(--text-secondary)",
+            fontFamily: "var(--font-montserrat)",
+            background: "#fff",
+          }}
+        >
+          Annulla
+        </Link>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving || !selectedCliente}
+          className="flex items-center gap-2 text-sm font-bold px-6 py-2.5 rounded-xl disabled:opacity-40 transition-opacity"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+        >
+          {saving ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <Check size={16} />
+          )}
+          {saving ? "Salvataggio…" : "Salva preventivo"}
+        </button>
+      </div>
+
+      {/* ── Algolia search modal ── */}
+      {algoliaModalFor && (
+        <AlgoliaSearchModal
+          onSelect={handleAlgoliaSelect}
+          onClose={() => setAlgoliaModalFor(null)}
+        />
+      )}
     </div>
   );
 }

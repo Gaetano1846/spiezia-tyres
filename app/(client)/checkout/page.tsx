@@ -1,14 +1,15 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, serverTimestamp, doc, getDoc, getDocs } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
-import { Check, Package, Loader2, ShoppingBag, AlertTriangle, ChevronDown } from "lucide-react";
+import { Check, Package, Loader2, ShoppingBag, AlertTriangle, ChevronDown, Search, X, UserCheck } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Link from "next/link";
 import toast from "react-hot-toast";
+import type { Cliente } from "@/lib/types";
 
 const metodiPagamento = [
   { id: "bonifico",  label: "Bonifico bancario" },
@@ -139,6 +140,232 @@ function AddressFormSection({ title, data, onChange }: {
   );
 }
 
+// ─── SearchableClienteDropdown ────────────────────────────────────────────────
+
+type ClienteSearchResult = Cliente & { id: string };
+
+function clienteDisplayName(c: ClienteSearchResult): string {
+  return c.Ragione_Sociale ?? c.Nome ?? c.Telefono ?? c.id;
+}
+
+function SearchableClienteDropdown({
+  value,
+  onChange,
+}: {
+  value: ClienteSearchResult | null;
+  onChange: (c: ClienteSearchResult | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [results, setResults] = useState<ClienteSearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchClienti = useCallback(async (text: string, after: QueryDocumentSnapshot | null = null) => {
+    setLoading(true);
+    try {
+      const col = collection(db, "Clienti");
+      const PAGE = 10;
+      let q;
+      if (text.trim() === "") {
+        q = after
+          ? query(col, orderBy("Ragione_Sociale"), startAfter(after), limit(PAGE))
+          : query(col, orderBy("Ragione_Sociale"), limit(PAGE));
+      } else {
+        // Search client-side among a reasonable subset: fetch up to 200, filter locally
+        q = query(col, orderBy("Ragione_Sociale"), limit(200));
+      }
+      const snap = await getDocs(q);
+      let docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ClienteSearchResult));
+      if (text.trim() !== "") {
+        const t = text.toLowerCase();
+        docs = docs.filter((c) =>
+          (c.Ragione_Sociale ?? "").toLowerCase().includes(t) ||
+          (c.Nome ?? "").toLowerCase().includes(t) ||
+          (c.Telefono ?? "").toLowerCase().includes(t)
+        );
+      }
+      if (after) {
+        setResults((prev) => [...prev, ...docs]);
+      } else {
+        setResults(docs);
+      }
+      const last = snap.docs[snap.docs.length - 1] ?? null;
+      setLastDoc(last);
+      setHasMore(snap.docs.length === PAGE && text.trim() === "");
+    } catch {
+      // silently fail
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Debounce search
+  useEffect(() => {
+    if (!open) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchClienti(searchText, null);
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchText, open, fetchClienti]);
+
+  // Open dropdown and focus input
+  function handleOpen() {
+    setOpen(true);
+    setSearchText("");
+    setLastDoc(null);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
+  // Close when clicking outside
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  function selectCliente(c: ClienteSearchResult) {
+    onChange(c);
+    setOpen(false);
+  }
+
+  function clearCliente(e: React.MouseEvent) {
+    e.stopPropagation();
+    onChange(null);
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <label className="block text-xs font-semibold mb-1" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+        Seleziona cliente<span className="text-red-500 ml-0.5">*</span>
+      </label>
+
+      {/* Trigger */}
+      <button
+        type="button"
+        onClick={handleOpen}
+        className="w-full px-3 py-2.5 rounded-xl text-sm text-left flex items-center gap-2 transition-all"
+        style={{
+          background: "var(--bg-primary)",
+          border: "1px solid var(--border)",
+          fontFamily: "var(--font-montserrat)",
+          color: value ? "var(--text-primary)" : "var(--text-muted)",
+        }}
+      >
+        <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+        <span className="flex-1 truncate">
+          {value ? clienteDisplayName(value) : "Cerca per nome, ragione sociale o telefono…"}
+        </span>
+        {value && (
+          <span
+            onClick={clearCliente}
+            className="flex items-center p-0.5 rounded hover:opacity-70 cursor-pointer"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <X size={14} />
+          </span>
+        )}
+        {!value && <ChevronDown size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          className="absolute z-50 mt-1 w-full rounded-xl shadow-lg overflow-hidden"
+          style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border)",
+            maxHeight: "280px",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* Search input */}
+          <div className="p-2 border-b" style={{ borderColor: "var(--border)" }}>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: "var(--bg-primary)" }}>
+              <Search size={13} style={{ color: "var(--text-muted)" }} />
+              <input
+                ref={inputRef}
+                type="text"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="Cerca…"
+                className="flex-1 text-sm outline-none bg-transparent"
+                style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}
+              />
+              {searchText && (
+                <button onClick={() => setSearchText("")} style={{ color: "var(--text-muted)" }}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Results */}
+          <div className="overflow-y-auto flex-1">
+            {loading && results.length === 0 && (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 size={18} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+              </div>
+            )}
+            {!loading && results.length === 0 && (
+              <div className="py-6 text-center text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                Nessun cliente trovato
+              </div>
+            )}
+            {results.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => selectCliente(c)}
+                className="w-full text-left px-4 py-3 text-sm hover:opacity-80 transition-opacity border-b last:border-b-0"
+                style={{
+                  borderColor: "var(--border)",
+                  fontFamily: "var(--font-montserrat)",
+                  color: "var(--text-primary)",
+                  background: value?.id === c.id ? "rgba(255,200,3,0.08)" : "transparent",
+                }}
+              >
+                <div className="font-semibold truncate">{clienteDisplayName(c)}</div>
+                {c.Telefono && (
+                  <div className="text-xs mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
+                    {c.Telefono}
+                  </div>
+                )}
+              </button>
+            ))}
+            {hasMore && (
+              <button
+                type="button"
+                onClick={() => fetchClienti(searchText, lastDoc)}
+                disabled={loading}
+                className="w-full py-2 text-xs font-semibold"
+                style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+              >
+                {loading ? <Loader2 size={14} className="animate-spin mx-auto" /> : "Carica altri…"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 type SavedAddress = AddressForm & { id: string; label?: string };
 
 export default function CheckoutPage() {
@@ -153,6 +380,11 @@ export default function CheckoutPage() {
   const [submitting, setSubmitting] = useState(false);
   const [fidoBlocked, setFidoBlocked] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+
+  // Admin mode state
+  const isAdmin = user?.Ruolo === "Admin";
+  const [ordinaPerCliente, setOrdinaPerCliente] = useState(false);
+  const [clienteSelezionato, setClienteSelezionato] = useState<(Cliente & { id: string }) | null>(null);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -235,7 +467,8 @@ export default function CheckoutPage() {
         PartitaIVA: data.partitaIva || undefined,
       });
 
-      await addDoc(collection(db, "Ordini"), {
+      // Build order document
+      const orderData: Record<string, unknown> = {
         Utente: doc(db, "users", user.uid),
         Source: "B2B",
         Stato: "In attesa di pagamento",
@@ -259,7 +492,15 @@ export default function CheckoutPage() {
         IndirizzoFatturazione: addr(fatturazione),
         IndirizzoSpedizione: spedizioneDiv ? addr(spedizione) : addr(fatturazione),
         DataCreazione: serverTimestamp(),
-      });
+      };
+
+      // Admin mode: attach cliente reference and track creator
+      if (isAdmin && ordinaPerCliente && clienteSelezionato) {
+        orderData.Cliente = doc(db, "Clienti", clienteSelezionato.id);
+        orderData.createdBy = user.uid;
+      }
+
+      await addDoc(collection(db, "Ordini"), orderData);
 
       clear();
       toast.success("Ordine confermato!");
@@ -278,6 +519,18 @@ export default function CheckoutPage() {
         <h3 className="text-base font-bold mb-4" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
           Riepilogo ordine
         </h3>
+        {/* Admin: cliente selezionato badge */}
+        {isAdmin && ordinaPerCliente && clienteSelezionato && (
+          <div
+            className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg"
+            style={{ background: "rgba(255,200,3,0.10)", border: "1px solid rgba(255,200,3,0.3)" }}
+          >
+            <UserCheck size={14} style={{ color: "#FFC803", flexShrink: 0 }} />
+            <span className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+              Per: {clienteDisplayName(clienteSelezionato)}
+            </span>
+          </div>
+        )}
         <div className="space-y-3 mb-4">
           {items.map((item) => (
             <div key={item.id} className="flex items-start gap-3">
@@ -336,17 +589,89 @@ export default function CheckoutPage() {
           <h2 className="text-lg font-bold mb-5" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
             Dati cliente
           </h2>
-          <div className="p-4 rounded-xl" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>
-            <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-              Utente
-            </p>
-            <p className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
-              {user?.email}
-            </p>
-            {user?.Ruolo && (
-              <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                {user.Ruolo}
+          <div className="space-y-4">
+            {/* Logged-in user info */}
+            <div className="p-4 rounded-xl" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>
+              <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                Utente
               </p>
+              <p className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
+                {user?.email}
+              </p>
+              {user?.Ruolo && (
+                <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  {user.Ruolo}
+                </p>
+              )}
+            </div>
+
+            {/* Admin-only: ordine per conto di un cliente */}
+            {isAdmin && (
+              <div
+                className="rounded-xl overflow-hidden"
+                style={{ border: "1px solid var(--border)" }}
+              >
+                {/* Header / toggle row */}
+                <div
+                  className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
+                  style={{ background: "var(--bg-primary)" }}
+                  onClick={() => {
+                    setOrdinaPerCliente((v) => !v);
+                    if (ordinaPerCliente) setClienteSelezionato(null);
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={ordinaPerCliente}
+                    onChange={() => {}}
+                    className="w-4 h-4 accent-yellow-400 cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                      Ordine per conto di un cliente
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                      Visibile solo agli amministratori
+                    </p>
+                  </div>
+                  {ordinaPerCliente && clienteSelezionato && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: "rgba(255,200,3,0.15)" }}>
+                      <UserCheck size={12} style={{ color: "#FFC803" }} />
+                      <span className="text-xs font-semibold max-w-[120px] truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                        {clienteDisplayName(clienteSelezionato)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Expanded: cliente search */}
+                {ordinaPerCliente && (
+                  <div className="px-4 pb-4 pt-3" style={{ background: "var(--bg-secondary)", borderTop: "1px solid var(--border)" }}>
+                    <SearchableClienteDropdown
+                      value={clienteSelezionato}
+                      onChange={setClienteSelezionato}
+                    />
+                    {clienteSelezionato && (
+                      <div
+                        className="mt-3 p-3 rounded-lg flex items-center gap-3"
+                        style={{ background: "rgba(255,200,3,0.08)", border: "1px solid rgba(255,200,3,0.25)" }}
+                      >
+                        <UserCheck size={18} style={{ color: "#FFC803", flexShrink: 0 }} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
+                            {clienteDisplayName(clienteSelezionato)}
+                          </p>
+                          {clienteSelezionato.Telefono && (
+                            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                              {clienteSelezionato.Telefono}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </Card>
@@ -447,6 +772,24 @@ export default function CheckoutPage() {
             Conferma ordine
           </h2>
           <div className="space-y-5">
+            {/* Admin: riepilogo cliente selezionato */}
+            {isAdmin && ordinaPerCliente && clienteSelezionato && (
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  Ordine per cliente
+                </p>
+                <div
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl"
+                  style={{ background: "rgba(255,200,3,0.08)", border: "1px solid rgba(255,200,3,0.25)" }}
+                >
+                  <UserCheck size={15} style={{ color: "#FFC803" }} />
+                  <span className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                    {clienteDisplayName(clienteSelezionato)}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div>
               <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                 Indirizzo fatturazione
@@ -517,6 +860,29 @@ export default function CheckoutPage() {
     return null;
   }
 
+  // Navigation: step 0 advance requires cliente selected if admin mode is active
+  function handleNext() {
+    if (step === 0 && isAdmin && ordinaPerCliente && !clienteSelezionato) {
+      toast.error("Seleziona un cliente prima di procedere");
+      return;
+    }
+    if (step === 1) {
+      const f = fatturazione;
+      if (!f.nome.trim() || !f.via.trim() || !f.citta.trim() || !f.cap.trim()) {
+        toast.error("Compila i campi obbligatori dell'indirizzo di fatturazione");
+        return;
+      }
+      if (spedizioneDiv) {
+        const s = spedizione;
+        if (!s.nome.trim() || !s.via.trim() || !s.citta.trim() || !s.cap.trim()) {
+          toast.error("Compila i campi obbligatori dell'indirizzo di spedizione");
+          return;
+        }
+      }
+    }
+    setStep((s) => s + 1);
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
       <h1 className="text-2xl font-bold mb-6" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
@@ -544,24 +910,7 @@ export default function CheckoutPage() {
             )}
             {step < 3 ? (
               <button
-                onClick={() => {
-                  if (step === 1) {
-                    // Validate required address fields
-                    const f = fatturazione;
-                    if (!f.nome.trim() || !f.via.trim() || !f.citta.trim() || !f.cap.trim()) {
-                      toast.error("Compila i campi obbligatori dell'indirizzo di fatturazione");
-                      return;
-                    }
-                    if (spedizioneDiv) {
-                      const s = spedizione;
-                      if (!s.nome.trim() || !s.via.trim() || !s.citta.trim() || !s.cap.trim()) {
-                        toast.error("Compila i campi obbligatori dell'indirizzo di spedizione");
-                        return;
-                      }
-                    }
-                  }
-                  setStep((s) => s + 1);
-                }}
+                onClick={handleNext}
                 className="px-6 py-2.5 rounded-full text-sm font-semibold transition-opacity hover:opacity-90"
                 style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
               >
