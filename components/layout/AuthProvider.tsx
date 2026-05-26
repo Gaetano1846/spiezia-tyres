@@ -22,12 +22,23 @@ async function loadUserFromFirestore(uid: string, email: string): Promise<AppUse
   const snap = await getDoc(doc(db, "users", uid));
   if (!snap.exists()) return null;
   const data = snap.data();
+
+  let SedeNome: string | undefined;
+  if (data.Sede && typeof data.Sede === "object" && "path" in data.Sede) {
+    try {
+      const sedeSnap = await getDoc(data.Sede);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (sedeSnap.exists()) SedeNome = (sedeSnap.data() as any)?.Nome as string | undefined;
+    } catch { /* sede non disponibile */ }
+  }
+
   return {
     uid,
     email,
     ...data,
     Ruolo: normalizeRuolo(data.Ruolo),
     CRM: Boolean(data.CRM),
+    ...(SedeNome ? { SedeNome } : {}),
   } as AppUser;
 }
 

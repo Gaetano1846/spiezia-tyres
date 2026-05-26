@@ -213,7 +213,7 @@ export default function CarrelloPage() {
                 style={{ background: "rgba(255,200,3,0.1)", fontFamily: "var(--font-montserrat)" }}
               >
                 <Tag size={14} style={{ color: "var(--brand)", flexShrink: 0 }} />
-                <span style={{ color: "var(--text-secondary)" }}>Promozioni applicate automaticamente</span>
+                <span style={{ color: "var(--text-secondary)" }}>I prezzi mostrati sono già il tuo prezzo personalizzato</span>
               </div>
 
               <div className="mt-5 space-y-3">

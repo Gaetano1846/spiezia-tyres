@@ -1,17 +1,19 @@
 "use client";
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Phone, MessageCircle, Mail, Bell, ShoppingCart, Menu, Search, X } from "lucide-react";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
 
 type ModalTipo = "cerchi" | "camere";
 
 const CATEGORIA_MAP: Record<ModalTipo, string> = {
-  cerchi: "Cerchi",
-  camere: "Camere D'Aria",
+  cerchi: "Categoria_Prodotti/Cerchi Autocarro",
+  camere: "Categoria_Prodotti/Camere D Aria",
 };
 
 type Props = {
@@ -28,6 +30,15 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
     tipo: null,
     misura: "",
   });
+
+  // Conteggio notifiche non viste (stream real-time come Flutter)
+  const [notifCount, setNotifCount] = useState(0);
+  useEffect(() => {
+    if (!user?.uid) return;
+    const q = query(collection(db, "Notifiche"), where("Visto", "==", false));
+    const unsub = onSnapshot(q, (snap) => setNotifCount(snap.size), () => setNotifCount(0));
+    return unsub;
+  }, [user?.uid]);
 
   const ruolo = user?.Ruolo?.toLowerCase() ?? "";
   const isAdmin = ruolo === "admin";
@@ -79,12 +90,14 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
           <div className="flex items-center gap-3" style={{ color: "#111" }}>
             <Link href="/notifiche" className="relative p-0.5">
               <Bell size={14} />
-              <span
-                className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[8px] font-bold flex items-center justify-center"
-                style={{ background: "#111", color: "#FFC803" }}
-              >
-                0
-              </span>
+              {notifCount > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[8px] font-bold flex items-center justify-center"
+                  style={{ background: "#111", color: "#FFC803" }}
+                >
+                  {notifCount > 9 ? "9+" : notifCount}
+                </span>
+              )}
             </Link>
             <span className="font-bold">V.2.0.0</span>
           </div>
@@ -124,9 +137,9 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
               Ricerca Avanzata:
             </span>
 
-            {/* Pneumatici — naviga direttamente */}
+            {/* Pneumatici — naviga direttamente (categoria vuota = pneumatici) */}
             <Link
-              href="/prodotti?categoria=Pneumatici"
+              href="/prodotti"
               className="text-xs font-semibold px-3 py-1.5 rounded-full transition-colors hover:bg-[#FFC803] hover:text-[#111]"
               style={{
                 border: "1.5px solid #FFC803",
@@ -167,22 +180,51 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
           {/* Destra: Fido/Residuo + Logo + Carrello */}
           <div className="flex items-center gap-4 flex-shrink-0">
 
-            {/* Fido / Residuo — solo CRM/Admin */}
-            {hasCRM && (
+            {/* Fido / Fido_Residuo — visibile se l'utente ha un fido impostato */}
+            {user?.Fido != null && user.Fido > 0 && (
               <div className="hidden md:flex flex-col gap-1">
                 <div
                   className="flex items-center gap-2 px-3 py-1 rounded-lg text-xs"
                   style={{ border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
                 >
                   <span className="font-bold" style={{ color: "#22c55e" }}>$</span>
-                  <span>Fido: <strong>€0</strong></span>
+                  <span>
+                    Fido:{" "}
+                    <strong>
+                      {user.Fido.toLocaleString("it-IT", { style: "currency", currency: "EUR" })}
+                    </strong>
+                  </span>
                 </div>
                 <div
                   className="flex items-center gap-2 px-3 py-1 rounded-lg text-xs"
                   style={{ border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
                 >
-                  <span className="font-bold" style={{ color: "#9ca3af" }}>$</span>
-                  <span>Residuo: <strong>€0</strong></span>
+                  <span
+                    className="font-bold"
+                    style={{
+                      color:
+                        user.Fido_Residuo != null && user.Fido_Residuo < user.Fido * 0.2
+                          ? "#EF4444"
+                          : "#9ca3af",
+                    }}
+                  >
+                    $
+                  </span>
+                  <span
+                    style={{
+                      color:
+                        user.Fido_Residuo != null && user.Fido_Residuo < user.Fido * 0.2
+                          ? "#EF4444"
+                          : "inherit",
+                    }}
+                  >
+                    Residuo:{" "}
+                    <strong>
+                      {user.Fido_Residuo != null
+                        ? user.Fido_Residuo.toLocaleString("it-IT", { style: "currency", currency: "EUR" })
+                        : "—"}
+                    </strong>
+                  </span>
                 </div>
               </div>
             )}

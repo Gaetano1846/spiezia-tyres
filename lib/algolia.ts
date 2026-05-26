@@ -27,6 +27,7 @@ export type ProdottoHit = {
   SKU?: string;
   Label?: string;
   CAI?: string;
+  Prezzo?: number;           // campo generico — usato come ultimo fallback
   Prezzo_Gommista: number;
   Prezzo_Grossista: number;
   Prezzo_Privato: number;
@@ -50,23 +51,35 @@ type AlgoliaRaw = {
 };
 
 export function prezzoPerRuolo(hit: ProdottoHit, ruolo: Ruolo | undefined): number {
-  switch (ruolo) {
-    case "Grossista": return Number(hit.Prezzo_Grossista) || 0;
-    case "Privato":   return Number(hit.Prezzo_Privato)   || 0;
-    case "T24":       return Number(hit.Prezzo_T24)       || 0;
-    default:          return Number(hit.Prezzo_Gommista)  || 0;
-  }
+  // Catena fallback identica a Flutter:
+  // 1. Prezzo specifico per ruolo
+  // 2. Prezzo_Gommista (default trade)
+  // 3. Prezzo (campo generico su Firestore)
+  const specifico = (() => {
+    switch (ruolo) {
+      case "Grossista": return Number(hit.Prezzo_Grossista);
+      case "Privato":   return Number(hit.Prezzo_Privato);
+      case "T24":       return Number(hit.Prezzo_T24);
+      default:          return Number(hit.Prezzo_Gommista);
+    }
+  })();
+  if (specifico > 0) return specifico;
+  const gommista = Number(hit.Prezzo_Gommista);
+  if (gommista > 0) return gommista;
+  return Number(hit.Prezzo) || 0;
 }
 
 export function stockTotale(hit: ProdottoHit): number {
-  return (
+  const fisico =
     (hit.Stock_Nola ?? 0) +
     (hit.Stock_Nola_2 ?? 0) +
     (hit.Stock_Volla ?? 0) +
     (hit.Stock_Roma ?? 0) +
     (hit.Stock_Portici ?? 0) +
-    (hit.Stock_OCP ?? 0)
-  );
+    (hit.Stock_OCP ?? 0);
+  // T24 dropship: includi solo se >= 16 unità minime del canale
+  const t24 = (hit.Stock_T24 ?? 0) >= 16 ? hit.Stock_T24 : 0;
+  return fisico + t24;
 }
 
 export function formatMisura(hit: ProdottoHit): string {

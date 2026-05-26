@@ -14,10 +14,10 @@ export default function RecuperaPasswordPage() {
       <div className="relative z-10 w-full max-w-[380px]">
         <div className="flex justify-center mb-8">
           <Image
-            src="/logo-spiezia.png"
+            src="/logo-lion.png"
             alt="Spiezia Tyres"
-            width={200}
-            height={60}
+            width={120}
+            height={120}
             className="object-contain drop-shadow-xl"
           />
         </div>

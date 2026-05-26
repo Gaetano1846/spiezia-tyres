@@ -16,6 +16,7 @@ import {
   pfuEffettivo,
   type ProdottoHit,
 } from "@/lib/algolia";
+import { CONTRIBUTO_LOGISTICO_UNIT } from "@/lib/cart";
 
 type Stagione = "Estive" | "Invernali" | "4-Stagioni";
 
@@ -106,7 +107,7 @@ export default function ProdottiPage() {
         categoria: categoria || undefined,
         soloDisponibili: true,
         page: pg,
-        hitsPerPage: 40,
+        hitsPerPage: 50,
       });
 
       // Arricchisci con dati Firestore (prezzi, stock, PFU)
@@ -115,12 +116,19 @@ export default function ProdottiPage() {
       );
       const enriched: ProdottoHit[] = r.hits.map((hit, i) => {
         const fsDoc = firestoreDocs[i];
-        return fsDoc.exists()
-          ? ({ ...hit, ...fsDoc.data() } as ProdottoHit)
-          : hit;
+        if (!fsDoc.exists()) return hit;
+        // Firestore ha la verità su prezzi e stock; Algolia è l'indice di ricerca.
+        // Non sovrascrivere campi Algolia con null/undefined da Firestore.
+        const fsData = fsDoc.data() as Record<string, unknown>;
+        const merged: Record<string, unknown> = { ...hit };
+        for (const [k, v] of Object.entries(fsData)) {
+          if (v !== null && v !== undefined) merged[k] = v;
+        }
+        return merged as ProdottoHit;
       });
 
       setHits(enriched);
+      // nbHits viene aggiornato dopo il filtro prezzi nel render via sortedHits
       setNbHits(r.nbHits);
       setNbPages(r.nbPages);
       setPage(r.page);
@@ -151,17 +159,12 @@ export default function ProdottiPage() {
 
   function handleAdd(hit: ProdottoHit) {
     const prezzo = prezzoPerRuolo(hit, user?.Ruolo);
+    const pfu = pfuEffettivo(hit);
     const stock = stockTotale(hit);
     const qty = getQty(hit.objectID);
     add({ id: hit.objectID, marca: hit.Marca, modello: hit.Modello,
           misura: formatMisura(hit), stagione: hit.Stagione,
-          prezzo, pfu: pfuEffettivo(hit), stockMax: stock });
-    // add è per 1 unità — se qty > 1 chiamiamo più volte (il provider fa merge)
-    for (let i = 1; i < qty; i++) {
-      add({ id: hit.objectID, marca: hit.Marca, modello: hit.Modello,
-            misura: formatMisura(hit), stagione: hit.Stagione,
-            prezzo, pfu: pfuEffettivo(hit), stockMax: stock });
-    }
+          prezzo, pfu, stockMax: stock, quantita: qty });
     toast.success(`${qty} × ${hit.Marca} ${hit.Modello} aggiunto`);
     setQuantities((p) => ({ ...p, [hit.objectID]: 4 }));
   }
@@ -193,14 +196,30 @@ export default function ProdottiPage() {
     { label: "Camere D'Aria", value: "Categoria_Prodotti/Camere D Aria" },
   ];
 
+  const isPneumatici = categoria === "";
+  const isCerchi     = categoria.includes("Cerchi");
+
   const activeFilters = [
-    ...(largezza  ? [`L:${largezza}`]  : []),
-    ...(altezza   ? [`A:${altezza}`]   : []),
-    ...(diametro  ? [`R${diametro}`]   : []),
-    ...stagioni,
+    ...(isPneumatici && largezza  ? [`L:${largezza}`]  : []),
+    ...(isPneumatici && altezza   ? [`A:${altezza}`]   : []),
+    ...((isPneumatici || isCerchi) && diametro ? [`R${diametro}`] : []),
+    ...(isPneumatici ? stagioni : []),
     ...marche,
     ...(categoria ? [CATEGORIE.find((c) => c.value === categoria)?.label ?? categoria] : []),
   ];
+
+  function handleSetCategoria(value: string) {
+    setCategoria(value);
+    if (value !== "") {
+      // Reset pneumatici-only filters when switching to Cerchi / Camere
+      setMisuraRapida(""); setLargezza(""); setAltezza(""); setStagioni([]);
+    }
+    if (!value.includes("Cerchi")) {
+      // Reset cerchi-only filters when switching away from Cerchi
+      setDiametro("");
+    }
+    setPage(0);
+  }
 
   return (
     <div className="px-5 py-5 space-y-4">
@@ -215,7 +234,7 @@ export default function ProdottiPage() {
           return (
             <button
               key={c.label}
-              onClick={() => setCategoria(c.value)}
+              onClick={() => handleSetCategoria(c.value)}
               className="px-4 py-1.5 rounded-full text-xs font-semibold transition-colors"
               style={{
                 background: active ? "#FFC803" : "transparent",
@@ -277,52 +296,69 @@ export default function ProdottiPage() {
         {showFiltri && (
           <div className="px-4 pb-4 pt-1 border-t" style={{ borderColor: "#f3f4f6" }}>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="md:col-span-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Misura rapida</label>
-                <input value={misuraRapida} onChange={(e) => handleMisuraRapida(e.target.value)}
-                  placeholder="es. 205/55 R16" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
-                  style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Larghezza</label>
-                <input type="number" value={largezza} onChange={(e) => setLargezza(e.target.value)}
-                  placeholder="es. 205" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
-                  style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Altezza</label>
-                <input type="number" value={altezza} onChange={(e) => setAltezza(e.target.value)}
-                  placeholder="es. 55" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
-                  style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Diametro</label>
-                <select value={diametro} onChange={(e) => setDiametro(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl text-sm outline-none"
-                  style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}>
-                  <option value="">Tutti</option>
-                  {[13,14,15,16,17,18,19,20,21,22].map((d) => <option key={d} value={d}>R{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Stagione</label>
-                <div className="flex flex-col gap-1">
-                  {(["Estive","Invernali","4-Stagioni"] as Stagione[]).map((s) => {
-                    const active = stagioni.includes(s);
-                    return (
-                      <button key={s} onClick={() => setStagioni((p) => p.includes(s) ? p.filter((x) => x !== s) : [...p, s])}
-                        className="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors text-left"
-                        style={{ background: active ? STAGIONE_BTN[s].active : "#f9fafb", color: active ? STAGIONE_BTN[s].text : "#374151", border: `1px solid ${active ? STAGIONE_BTN[s].active : "#e5e7eb"}`, fontFamily: "var(--font-montserrat)" }}>
-                        {s}
-                      </button>
-                    );
-                  })}
+
+              {/* ── PNEUMATICI only ── */}
+              {isPneumatici && (
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Misura rapida</label>
+                  <input value={misuraRapida} onChange={(e) => handleMisuraRapida(e.target.value)}
+                    placeholder="es. 205/55 R16" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
                 </div>
-              </div>
+              )}
+              {isPneumatici && (
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Larghezza</label>
+                  <input type="number" value={largezza} onChange={(e) => setLargezza(e.target.value)}
+                    placeholder="es. 205" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
+                </div>
+              )}
+              {isPneumatici && (
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Altezza</label>
+                  <input type="number" value={altezza} onChange={(e) => setAltezza(e.target.value)}
+                    placeholder="es. 55" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
+                </div>
+              )}
+
+              {/* ── Diametro: Pneumatici + Cerchi ── */}
+              {(isPneumatici || isCerchi) && (
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Diametro</label>
+                  <select value={diametro} onChange={(e) => setDiametro(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}>
+                    <option value="">Tutti</option>
+                    {[13,14,15,16,17,18,19,20,21,22].map((d) => <option key={d} value={d}>R{d}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* ── Stagione: Pneumatici only ── */}
+              {isPneumatici && (
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Stagione</label>
+                  <div className="flex flex-col gap-1">
+                    {(["Estive","Invernali","4-Stagioni"] as Stagione[]).map((s) => {
+                      const active = stagioni.includes(s);
+                      return (
+                        <button key={s} onClick={() => setStagioni((p) => p.includes(s) ? p.filter((x) => x !== s) : [...p, s])}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors text-left"
+                          style={{ background: active ? STAGIONE_BTN[s].active : "#f9fafb", color: active ? STAGIONE_BTN[s].text : "#374151", border: `1px solid ${active ? STAGIONE_BTN[s].active : "#e5e7eb"}`, fontFamily: "var(--font-montserrat)" }}>
+                          {s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Marca: tutti ── */}
               {marcheList.length > 0 && (
                 <div className="md:col-span-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Marca</label>
-                  {/* brand search */}
                   <input
                     value={marcaSearch}
                     onChange={(e) => setMarcaSearch(e.target.value)}
@@ -383,23 +419,26 @@ export default function ProdottiPage() {
       ) : (
         <>
           <div className="rounded-2xl overflow-hidden" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
-            {/* Intestazione colonne */}
-            <div className="hidden lg:grid px-4 py-2 text-[9px] font-bold uppercase tracking-widest"
+            {/* Intestazione colonne — stile Flutter: header scuro */}
+            <div className="hidden xl:grid px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider"
               style={{
-                gridTemplateColumns: "120px 1fr 32px 90px 70px 52px 52px 100px 110px",
-                background: "#f9fafb",
-                borderBottom: "1px solid #e5e7eb",
-                color: "#9ca3af",
+                gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
+                background: "#111",
+                borderBottom: "1px solid #333",
+                color: "#fff",
                 fontFamily: "var(--font-montserrat)",
-                gap: "12px",
+                gap: "8px",
               }}>
               <span>Marca</span>
               <span>Prodotto</span>
               <span className="text-center">S.</span>
               <span className="text-right">Prezzo</span>
               <span className="text-right">PFU</span>
+              <span className="text-right">P. Finito</span>
               <span className="text-center">Nola</span>
+              <span className="text-center">Napoli</span>
               <span className="text-center">Roma</span>
+              <span className="text-center">48/72</span>
               <span className="text-center">Qtà</span>
               <span></span>
             </div>
@@ -407,29 +446,35 @@ export default function ProdottiPage() {
             {/* Righe prodotto */}
             {sortedHits.map((hit, idx) => {
               const prezzo = prezzoPerRuolo(hit, user?.Ruolo);
-              const stockNola = (hit.Stock_Nola ?? 0) + (hit.Stock_Nola_2 ?? 0);
-              const stockRoma = (hit.Stock_Volla ?? 0) + (hit.Stock_Roma ?? 0) + (hit.Stock_Portici ?? 0);
+              const pfu = pfuEffettivo(hit);
+              const prezzoFinito = parseFloat(((prezzo + CONTRIBUTO_LOGISTICO_UNIT + pfu) * 1.22).toFixed(2));
+              const stockNola   = (hit.Stock_Nola ?? 0) + (hit.Stock_Nola_2 ?? 0);
+              const stockNapoli = (hit.Stock_Volla ?? 0) + (hit.Stock_Portici ?? 0) + (hit.Stock_OCP ?? 0);
+              const stockRoma   = hit.Stock_Roma ?? 0;
+              const stockT24    = hit.Stock_T24 ?? 0;
               const stock = stockTotale(hit);
               const qty = getQty(hit.objectID);
               const esaurito = stock === 0;
+              const senzaPrezzo = prezzo === 0;
 
               return (
                 <div
                   key={hit.objectID}
-                  className="flex lg:grid items-center gap-3 px-4 py-3 transition-colors hover:bg-[#FFFDF0]"
+                  className="flex xl:grid items-center gap-2 px-4 py-2.5 transition-colors hover:bg-[#FFFDF0]"
                   style={{
-                    gridTemplateColumns: "120px 1fr 32px 90px 70px 52px 52px 100px 110px",
+                    gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
                     borderBottom: idx < sortedHits.length - 1 ? "1px solid #f3f4f6" : "none",
                     opacity: esaurito ? 0.5 : 1,
-                    gap: "12px",
+                    gap: "8px",
+                    background: senzaPrezzo ? "rgba(249,250,251,0.6)" : undefined,
                   }}
                 >
                   {/* Marca */}
-                  <div className="hidden lg:block">
+                  <div className="hidden xl:block">
                     {hit.Immagine ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={hit.Immagine} alt={hit.Marca}
-                        className="h-8 max-w-[110px] object-contain"
+                        className="h-8 max-w-[100px] object-contain"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                     ) : (
                       <span className="text-xs font-bold uppercase" style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}>
@@ -438,9 +483,9 @@ export default function ProdottiPage() {
                     )}
                   </div>
 
-                  {/* Prodotto — mobile: mostra tutto */}
+                  {/* Prodotto */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold uppercase lg:hidden" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                    <p className="text-xs font-bold uppercase xl:hidden" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
                       {hit.Marca}
                     </p>
                     <p className="text-sm font-semibold truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
@@ -451,35 +496,63 @@ export default function ProdottiPage() {
                       {hit.Indice_Carico && hit.Indice_Velocita
                         ? ` ${hit.Indice_Carico}${hit.Indice_Velocita}` : ""}
                     </p>
+                    {/* Prezzo finito visibile solo su mobile (colonne nascoste su xl) */}
+                    {senzaPrezzo ? (
+                      <p className="text-xs font-semibold xl:hidden mt-0.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                        Prezzo su richiesta
+                      </p>
+                    ) : (
+                      <p className="text-sm font-black xl:hidden mt-0.5" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                        {euro(prezzoFinito)}
+                        <span className="text-[10px] font-normal ml-1" style={{ color: "#9ca3af" }}>IVA incl.</span>
+                      </p>
+                    )}
                   </div>
 
                   {/* Stagione icon */}
-                  <div className="hidden lg:flex items-center justify-center">
+                  <div className="hidden xl:flex items-center justify-center">
                     <StagioneIcon stagione={hit.Stagione} />
                   </div>
 
-                  {/* Prezzo */}
-                  <div className="hidden lg:block text-right">
-                    <p className="text-sm font-black" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
-                      {euro(prezzo)}
+                  {/* Prezzo netto */}
+                  <div className="hidden xl:block text-right">
+                    <p className="text-xs font-semibold" style={{ color: senzaPrezzo ? "#9ca3af" : "#374151", fontFamily: "var(--font-poppins)" }}>
+                      {senzaPrezzo ? "N/D" : euro(prezzo)}
                     </p>
                   </div>
 
                   {/* PFU */}
-                  <div className="hidden lg:block text-right">
-                    <p className="text-xs font-semibold" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-                      {euro(pfuEffettivo(hit))}
+                  <div className="hidden xl:block text-right">
+                    <p className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                      {euro(pfu)}
+                    </p>
+                  </div>
+
+                  {/* Prezzo Finito (contributo logistico + IVA 22% inclusi) */}
+                  <div className="hidden xl:block text-right">
+                    <p className="text-sm font-black" style={{ color: senzaPrezzo ? "#9ca3af" : "#111", fontFamily: "var(--font-poppins)" }}>
+                      {senzaPrezzo ? "N/D" : euro(prezzoFinito)}
                     </p>
                   </div>
 
                   {/* Stock Nola */}
-                  <div className="hidden lg:flex justify-center">
-                    <StockPill value={stockNola} color="rgba(238,139,96,0.7)" />
+                  <div className="hidden xl:flex justify-center">
+                    <StockPill value={stockNola} color="rgba(238,139,96,0.85)" />
                   </div>
 
-                  {/* Stock Roma/Volla */}
-                  <div className="hidden lg:flex justify-center">
-                    <StockPill value={stockRoma} color="rgba(255,200,3,0.6)" />
+                  {/* Stock Napoli (Volla + Portici + OCP) */}
+                  <div className="hidden xl:flex justify-center">
+                    <StockPill value={stockNapoli} color="rgba(238,139,96,0.85)" />
+                  </div>
+
+                  {/* Stock Roma */}
+                  <div className="hidden xl:flex justify-center">
+                    <StockPill value={stockRoma} color="rgba(255,200,3,0.75)" />
+                  </div>
+
+                  {/* Stock T24 dropship 48/72h */}
+                  <div className="hidden xl:flex justify-center">
+                    <StockPill value={stockT24} color="rgba(99,179,237,0.75)" />
                   </div>
 
                   {/* Quantità */}
@@ -502,14 +575,19 @@ export default function ProdottiPage() {
                     </div>
                   </div>
 
-                  {/* Add to cart */}
+                  {/* Aggiungi al carrello */}
                   <button
-                    onClick={() => handleAdd(hit)}
-                    disabled={esaurito}
-                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-opacity hover:opacity-80 disabled:opacity-30 flex-shrink-0"
-                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", minWidth: 100 }}>
+                    onClick={() => !senzaPrezzo && handleAdd(hit)}
+                    disabled={esaurito || senzaPrezzo}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-opacity hover:opacity-80 disabled:opacity-40 flex-shrink-0"
+                    style={{
+                      background: senzaPrezzo ? "#e5e7eb" : "#FFC803",
+                      color: senzaPrezzo ? "#9ca3af" : "#111",
+                      fontFamily: "var(--font-montserrat)",
+                      minWidth: 90,
+                    }}>
                     <ShoppingCart size={12} />
-                    {esaurito ? "Esaurito" : "Aggiungi"}
+                    {esaurito ? "Esaurito" : senzaPrezzo ? "Su richiesta" : "Aggiungi"}
                   </button>
                 </div>
               );

@@ -209,7 +209,9 @@ export default function OrdinePage() {
           </h1>
           <Badge variant={statoVariant[ordine.Stato] ?? "neutral"}>{ordine.Stato}</Badge>
           <span className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-            {formatData(ordine.DataCreazione)}
+            {/* DataCreazione = Next.js; DataOra = Flutter legacy */}
+            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+            {formatData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp)}
           </span>
         </div>
       </div>

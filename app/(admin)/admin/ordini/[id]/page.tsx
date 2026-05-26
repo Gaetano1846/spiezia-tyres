@@ -309,7 +309,8 @@ export default function OrdineAdminDetailPage() {
         </div>
 
         <p className="text-xs mt-1.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-          Creato il {fmtData(ordine.DataCreazione)}
+          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+          Creato il {fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp)}
           {ordine.eBay_OrderID && ` · eBay ID: ${ordine.eBay_OrderID}`}
           {ordine.Amazon_MarketplaceID && ` · Amazon: ${ordine.Amazon_MarketplaceID}`}
           {ordine.WC_OrderNumber && ` · WC: #${ordine.WC_OrderNumber}`}

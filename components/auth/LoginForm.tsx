@@ -3,7 +3,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
-import { auth } from "@/lib/firebase";
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 import toast from "react-hot-toast";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
@@ -35,9 +36,17 @@ export default function LoginForm() {
 
       const { Ruolo, CRM } = await res.json();
 
-      if (CRM) router.replace("/dashboard");
-      else if (Ruolo === "Admin") router.replace("/admin/ordini");
+      // Aggiorna lastLogin su Firestore (usato da admin clienti → "Ultimo accesso")
+      try {
+        await updateDoc(doc(db, "users", credential.user.uid), {
+          lastLogin: serverTimestamp(),
+        });
+      } catch { /* non bloccare il login se il doc non esiste */ }
+
+      // Admin va sempre all'area admin, indipendentemente dal flag CRM
+      if (Ruolo === "Admin") router.replace("/admin/ordini");
       else if (Ruolo === "Magazziniere") router.replace("/magazzino");
+      else if (CRM) router.replace("/dashboard");
       else router.replace("/");
     } catch (err: unknown) {
       if (err instanceof FirebaseError) console.error("[auth]", err.code, err.message);

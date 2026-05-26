@@ -492,17 +492,11 @@ export default function GabbiaPage() {
         ) : (
           <div className="space-y-2">
             <div
-              className="grid text-[10px] font-bold uppercase tracking-widest px-3 pb-2"
-              style={{
-                gridTemplateColumns: "1fr auto 60px",
-                color: "#9ca3af",
-                fontFamily: "var(--font-montserrat)",
-                borderBottom: "1px solid #f3f4f6",
-              }}
+              className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest px-3 pb-2"
+              style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)", borderBottom: "1px solid #f3f4f6" }}
             >
               <span>Prodotto</span>
-              <span className="px-3">Qtà</span>
-              <span />
+              <span>Qtà</span>
             </div>
 
             {prodotti.map((lotto, i) => {
@@ -511,17 +505,14 @@ export default function GabbiaPage() {
               return (
                 <div
                   key={i}
-                  className="grid items-center px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors"
-                  style={{
-                    gridTemplateColumns: "1fr auto 60px",
-                    background: i % 2 === 0 ? "#f9fafb" : "#fff",
-                  }}
+                  className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors gap-4"
+                  style={{ background: i % 2 === 0 ? "#f9fafb" : "#fff" }}
                 >
                   {/* Prodotto */}
-                  <div>
+                  <div className="flex-1 min-w-0">
                     {info ? (
                       <>
-                        <p className="text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                        <p className="text-sm font-bold truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
                           {info.Marca} {info.Modello}
                         </p>
                         <p className="text-xs mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
@@ -538,18 +529,17 @@ export default function GabbiaPage() {
                       </span>
                     )}
                   </div>
-                  {/* Quantità */}
-                  <span
-                    className="text-right text-sm font-black px-3"
-                    style={{ color: "#111", fontFamily: "var(--font-poppins)" }}
-                  >
-                    ×{lotto.Quantita ?? 0}
-                  </span>
-                  {/* Rimuovi */}
-                  <div className="flex justify-end">
+                  {/* Quantità + Rimuovi */}
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span
+                      className="text-sm font-bold whitespace-nowrap"
+                      style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}
+                    >
+                      {lotto.Quantita ?? 0} pz
+                    </span>
                     <button
                       onClick={() => handleRemove(lotto)}
-                      className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold transition-colors hover:bg-red-100"
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors hover:bg-red-100 whitespace-nowrap"
                       style={{ background: "#FEE2E2", color: "#991B1B", border: "1px solid #FECACA" }}
                     >
                       <Trash2 size={11} /> Rimuovi

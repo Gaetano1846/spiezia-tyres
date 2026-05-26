@@ -26,8 +26,9 @@ function formatEuro(n: number) {
 }
 
 function formatData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT");
+  if (!ts) return "—";
+  const toDate = typeof ts.toDate === "function" ? ts.toDate() : new Date((ts as { seconds: number }).seconds * 1000);
+  return toDate.toLocaleDateString("it-IT");
 }
 
 export default function OrdiniPage() {
@@ -50,8 +51,11 @@ export default function OrdiniPage() {
         const data = snap.docs
           .map((d) => ({ id: d.id, ...d.data() } as Ordine))
           .sort((a, b) => {
-            const ta = (a.DataCreazione as Timestamp)?.seconds ?? 0;
-            const tb = (b.DataCreazione as Timestamp)?.seconds ?? 0;
+            // DataCreazione = Next.js field; DataOra = Flutter legacy field
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ta = ((a as any).DataCreazione ?? (a as any).DataOra)?.seconds ?? 0;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const tb = ((b as any).DataCreazione ?? (b as any).DataOra)?.seconds ?? 0;
             return tb - ta;
           });
         setOrdini(data);
@@ -177,7 +181,8 @@ export default function OrdiniPage() {
                   </span>
                 </div>
                 <span className="text-sm" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                  {formatData(o.DataCreazione as Timestamp)}
+                  {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                  {formatData(((o as any).DataCreazione ?? (o as any).DataOra) as Timestamp)}
                 </span>
                 <Badge variant={statoVariant[o.Stato] ?? "neutral"}>{o.Stato}</Badge>
                 <div>

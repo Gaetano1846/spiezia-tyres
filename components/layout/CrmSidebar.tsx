@@ -7,14 +7,16 @@ import { useAuth } from "@/components/layout/AuthProvider";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import toast from "react-hot-toast";
-import { LayoutDashboard, Users, FileText, Wrench, LogOut, ArrowLeft } from "lucide-react";
+import { LayoutDashboard, Users, FileText, Wrench, LogOut, ArrowLeft, Calendar, Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/dashboard",       label: "Dashboard",       icon: LayoutDashboard },
   { href: "/clienti",         label: "Clienti",         icon: Users },
   { href: "/preventivi",      label: "Preventivi",      icon: FileText },
+  { href: "/appuntamenti",    label: "Appuntamenti",    icon: Calendar },
   { href: "/fogli-di-lavoro", label: "Fogli di Lavoro", icon: Wrench },
+  { href: "/notifiche",       label: "Notifiche",       icon: Bell },
 ];
 
 export default function CrmSidebar() {
@@ -59,9 +61,11 @@ export default function CrmSidebar() {
         >
           {initial}
         </div>
-        <p className="text-xs font-medium mb-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-          Nola
-        </p>
+        {user?.SedeNome && (
+          <p className="text-xs font-medium mb-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+            {user.SedeNome}
+          </p>
+        )}
         <p className="text-base font-bold leading-tight text-center" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
           {user?.Ruolo ?? "CRM"}
         </p>

@@ -544,7 +544,24 @@ export default function CheckoutPage() {
             )}
             {step < 3 ? (
               <button
-                onClick={() => setStep((s) => s + 1)}
+                onClick={() => {
+                  if (step === 1) {
+                    // Validate required address fields
+                    const f = fatturazione;
+                    if (!f.nome.trim() || !f.via.trim() || !f.citta.trim() || !f.cap.trim()) {
+                      toast.error("Compila i campi obbligatori dell'indirizzo di fatturazione");
+                      return;
+                    }
+                    if (spedizioneDiv) {
+                      const s = spedizione;
+                      if (!s.nome.trim() || !s.via.trim() || !s.citta.trim() || !s.cap.trim()) {
+                        toast.error("Compila i campi obbligatori dell'indirizzo di spedizione");
+                        return;
+                      }
+                    }
+                  }
+                  setStep((s) => s + 1);
+                }}
                 className="px-6 py-2.5 rounded-full text-sm font-semibold transition-opacity hover:opacity-90"
                 style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
               >

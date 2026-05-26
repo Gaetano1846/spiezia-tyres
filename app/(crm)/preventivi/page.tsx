@@ -6,7 +6,7 @@ import {
   type DocumentReference, type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Search, Plus, Eye, FileText, X } from "lucide-react";
+import { Search, Plus, Eye, FileText, X, Pencil } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
@@ -204,7 +204,7 @@ export default function PreventiviPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["Numero", "Cliente", "Data", "Accettazione", "Pezzi", "Stato", ""].map((h) => (
+                  {["Numero", "Cliente", "Data", "Accettazione", "Pezzi", "Stato", "Azioni"].map((h) => (
                     <th
                       key={h}
                       className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
@@ -237,22 +237,36 @@ export default function PreventiviPage() {
                       {prev.Data_Accettazione ? formatData(prev.Data_Accettazione) : "—"}
                     </td>
                     <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {prev.Pneumatici_Nuovi?.length
-                        ? `${prev.Pneumatici_Nuovi.reduce((s, p) => s + (p.Quantita ?? 0), 0)} pz`
-                        : "—"}
+                      {(() => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const raw = prev as any;
+                        const src = raw.Pneumatici_Nuovi?.length ? raw.Pneumatici_Nuovi : raw.Articoli ?? [];
+                        const tot = src.reduce((s: number, p: any) => s + (p.Quantita ?? p.quantita ?? p.qta ?? 0), 0);
+                        return tot > 0 ? `${tot} pz` : "—";
+                      })()}
                     </td>
                     <td className="px-2 py-3">
                       <Badge variant={statoVariant[s]}>{s}</Badge>
                     </td>
                     <td className="px-2 py-3">
-                      <Link
-                        href={`/preventivi/${prev._clienteId}/${prev.id}`}
-                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
-                        style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
-                      >
-                        <Eye size={13} />
-                        Visualizza
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/preventivi/${prev._clienteId}/${prev.id}`}
+                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
+                          style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                        >
+                          <Eye size={13} />
+                          Visualizza
+                        </Link>
+                        <Link
+                          href={`/preventivi/${prev._clienteId}/${prev.id}/modifica`}
+                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                        >
+                          <Pencil size={13} />
+                          Modifica
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                   );

@@ -19,6 +19,7 @@ export type AppUser = {
   Ruolo: Ruolo;
   CRM: boolean;
   Sede?: DocumentReference | null;
+  SedeNome?: string;            // nome sede risolto (es. "Nola", "Roma")
   Reparto?: DocumentReference | null;
   Mansione?: DocumentReference | null;
   Fido?: number;
