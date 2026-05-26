@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+// Public paths: accessible without authentication
 const PUBLIC_PATHS = ["/login", "/recupera-password"];
 
+// Paths that require CRM or Admin role
 const CRM_PATHS = [
   "/dashboard",
   "/clienti",
@@ -13,11 +15,13 @@ const CRM_PATHS = [
 const ADMIN_PATHS = ["/admin"];
 const MAGAZZINO_PATHS = ["/magazzino"];
 
+// Check either session cookie (prod or dev). Auth verification (signature check) happens
+// server-side in getSession(). Here we only need presence for routing decisions.
 function getSessionCookie(req: NextRequest): string | undefined {
-  if (process.env.NODE_ENV === "development") {
-    return req.cookies.get("spiezia_dev_session")?.value;
-  }
-  return req.cookies.get("spiezia_session")?.value;
+  return (
+    req.cookies.get("spiezia_session")?.value ||
+    req.cookies.get("spiezia_dev_session")?.value
+  );
 }
 
 function getRoleData(req: NextRequest): { Ruolo: string; CRM: boolean } | null {
@@ -33,10 +37,14 @@ function getRoleData(req: NextRequest): { Ruolo: string; CRM: boolean } | null {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // ── Public paths ────────────────────────────────────────────────────────────
+  // Already authenticated → redirect away from login. Not authenticated → pass through.
+  // Unauthenticated access to protected routes is handled by server-side layouts
+  // (getSession() + redirect("/login")) — this avoids RSC navigation 404 issues
+  // that occur when middleware redirects mid-client-navigation in Next.js 16.
   const isPublic = PUBLIC_PATHS.some(
     (p) => pathname === p || pathname.startsWith(p + "/"),
   );
-
   if (isPublic) {
     if (getSessionCookie(req)) {
       return NextResponse.redirect(new URL("/", req.url));
@@ -44,12 +52,9 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // ── Role-based routing (only for authenticated sessions) ────────────────────
   const session = getSessionCookie(req);
-  if (!session) {
-    const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("redirect", pathname);
-    return NextResponse.redirect(loginUrl);
-  }
+  if (!session) return NextResponse.next(); // layout will redirect to /login
 
   const role = getRoleData(req);
   const ruolo = role?.Ruolo?.toLowerCase() ?? "";
@@ -77,6 +82,7 @@ export function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon\\.ico|icons|images|fonts|.*\\..*).*)",
+    // Skip Next.js internals and static files. Page routes always have no dot in the path.
+    "/((?!api|_next/static|_next/image|favicon\\.ico|.*\\..*).*)",
   ],
 };
