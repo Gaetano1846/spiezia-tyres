@@ -11,13 +11,13 @@ import { db } from "@/lib/firebase";
 import {
   ArrowLeft, Pencil, Car, FileText, Calendar, StickyNote,
   Plus, Eye, Phone, Mail, Building2, CreditCard, AlertCircle,
-  X, Check,
+  X, Check, ShoppingBag, Wrench,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import type { Cliente, Preventivo, Veicolo, Appuntamento } from "@/lib/types";
+import type { Cliente, Preventivo, Veicolo, Appuntamento, Ordine, FoglioStato } from "@/lib/types";
 
 const appStatoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
   Completato:  "success",
@@ -26,8 +26,16 @@ const appStatoVariant: Record<string, "success" | "brand" | "neutral" | "error">
   Annullato:   "error",
 };
 
-type Tab = "Veicoli" | "Preventivi" | "Appuntamenti" | "Note";
-const TABS: Tab[] = ["Veicoli", "Preventivi", "Appuntamenti", "Note"];
+type Tab = "Veicoli" | "Preventivi" | "Appuntamenti" | "Ordini" | "FogliDiLavoro" | "Note";
+const TABS: Tab[] = ["Veicoli", "Preventivi", "Appuntamenti", "Ordini", "FogliDiLavoro", "Note"];
+
+type FoglioRow = {
+  id: string;
+  Numero?: number | string;
+  Stato: FoglioStato;
+  DataOra?: Timestamp;
+  Data_Creazione?: Timestamp;
+};
 
 function fmtData(ts: Timestamp | null | undefined): string {
   if (!ts?.toDate) return "—";
@@ -81,6 +89,8 @@ export default function ClienteDetailPage() {
   const [veicoli,      setVeicoli]      = useState<Veicolo[]>([]);
   const [preventivi,   setPreventivi]   = useState<PrevWithClienteId[]>([]);
   const [appuntamenti, setAppuntamenti] = useState<Appuntamento[]>([]);
+  const [ordini,       setOrdini]       = useState<Ordine[]>([]);
+  const [fogli,        setFogli]        = useState<FoglioRow[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [activeTab,    setActiveTab]    = useState<Tab>("Veicoli");
   const [nota,         setNota]         = useState("");
@@ -111,12 +121,23 @@ export default function ClienteDetailPage() {
 
         const clienteRef = doc(db, "Clienti", id) as DocumentReference;
 
-        const [veicoliSnap, preventiviSnap, appSnap] = await Promise.all([
+        const [veicoliSnap, preventiviSnap, appSnap, ordiniSnap, fogliSnap] = await Promise.all([
           getDocs(collection(db, "Clienti", id, "Veicolo")),
           getDocs(query(collection(db, "Clienti", id, "Preventivo"), orderBy("DataCreazione", "desc"), limit(50))),
           getDocs(query(
             collection(db, "Appuntamenti"),
             where("Cliente", "==", clienteRef),
+            limit(50),
+          )),
+          getDocs(query(
+            collection(db, "Ordini"),
+            where("Cliente", "==", clienteRef),
+            limit(50),
+          )),
+          getDocs(query(
+            collection(db, "Foglio_di_Lavoro"),
+            where("Cliente", "==", clienteRef),
+            orderBy("DataOra", "desc"),
             limit(50),
           )),
         ]);
@@ -131,6 +152,24 @@ export default function ClienteDetailPage() {
           appSnap.docs
             .map((d) => ({ id: d.id, ...d.data() } as Appuntamento))
             .sort((a, b) => ((b.DataOra as Timestamp)?.seconds ?? 0) - ((a.DataOra as Timestamp)?.seconds ?? 0))
+        );
+        setOrdini(
+          ordiniSnap.docs
+            .map((d) => ({ id: d.id, ...d.data() } as Ordine))
+            .sort((a, b) => {
+              const ta = (a.DataCreazione as Timestamp)?.seconds ?? 0;
+              const tb = (b.DataCreazione as Timestamp)?.seconds ?? 0;
+              return tb - ta;
+            })
+        );
+        setFogli(
+          fogliSnap.docs.map((d) => ({
+            id: d.id,
+            Numero: d.data().Numero,
+            Stato: (d.data().Stato ?? "In attesa") as FoglioStato,
+            DataOra: d.data().DataOra as Timestamp | undefined,
+            Data_Creazione: d.data().Data_Creazione as Timestamp | undefined,
+          }))
         );
       } catch (e) {
         toast.error("Errore nel caricamento cliente");
@@ -286,13 +325,26 @@ export default function ClienteDetailPage() {
     Veicoli:      Car,
     Preventivi:   FileText,
     Appuntamenti: Calendar,
+    Ordini:       ShoppingBag,
+    FogliDiLavoro: Wrench,
     Note:         StickyNote,
+  };
+
+  const tabLabels: Record<Tab, string> = {
+    Veicoli:      "Veicoli",
+    Preventivi:   "Preventivi",
+    Appuntamenti: "Appuntamenti",
+    Ordini:       "Ordini",
+    FogliDiLavoro: "Fogli",
+    Note:         "Note",
   };
 
   const tabCounts: Record<Tab, number | undefined> = {
     Veicoli:      veicoli.length,
     Preventivi:   preventivi.length,
     Appuntamenti: appuntamenti.length,
+    Ordini:       ordini.length,
+    FogliDiLavoro: fogli.length,
     Note:         undefined,
   };
 
@@ -601,7 +653,7 @@ export default function ClienteDetailPage() {
                 }}
               >
                 <Icon size={14} />
-                {tab}
+                {tabLabels[tab]}
                 {count !== undefined && (
                   <span
                     className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
@@ -777,6 +829,129 @@ export default function ClienteDetailPage() {
                           </td>
                           <td className="px-2 py-3">
                             <Badge variant={appStatoVariant[a.Stato] ?? "neutral"}>{a.Stato}</Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ORDINI */}
+          {activeTab === "Ordini" && (
+            <div>
+              <p className="text-sm font-medium mb-4" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                {ordini.length} ordini
+              </p>
+              {ordini.length === 0 ? (
+                <div className="text-center py-10" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  <ShoppingBag size={28} className="mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">Nessun ordine registrato</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                        {["Numero", "Data", "Totale", "Stato", ""].map((h) => (
+                          <th key={h} className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ordini.map((o) => {
+                        const ordineStato = (o.Stato ?? "—") as string;
+                        return (
+                          <tr key={o.id} className="hover:bg-[#F1F4F8] transition-colors" style={{ borderBottom: "1px solid var(--border)" }}>
+                            <td className="px-2 py-3 font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                              {o.Numero ?? `#${o.id.slice(0, 6).toUpperCase()}`}
+                            </td>
+                            <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                              {fmtData(o.DataCreazione as Timestamp)}
+                            </td>
+                            <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                              {euro(o.Totale as number)}
+                            </td>
+                            <td className="px-2 py-3">
+                              <Badge variant="neutral">{ordineStato}</Badge>
+                            </td>
+                            <td className="px-2 py-3">
+                              <Link
+                                href={`/ordini/${o.id}`}
+                                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                                style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}
+                              >
+                                <Eye size={13} /> Apri
+                              </Link>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* FOGLI DI LAVORO */}
+          {activeTab === "FogliDiLavoro" && (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-medium" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                  {fogli.length} fogli di lavoro
+                </p>
+                <Link
+                  href="/fogli-di-lavoro/nuovo"
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl"
+                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <Plus size={13} /> Nuovo foglio
+                </Link>
+              </div>
+              {fogli.length === 0 ? (
+                <div className="text-center py-10" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  <Wrench size={28} className="mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">Nessun foglio di lavoro</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                        {["Numero", "Data", "Stato", ""].map((h) => (
+                          <th key={h} className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fogli.map((f) => (
+                        <tr key={f.id} className="hover:bg-[#F1F4F8] transition-colors" style={{ borderBottom: "1px solid var(--border)" }}>
+                          <td className="px-2 py-3 font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                            {f.Numero != null ? `#${f.Numero}` : `#${f.id.slice(0, 6).toUpperCase()}`}
+                          </td>
+                          <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                            {fmtData((f.DataOra ?? f.Data_Creazione) as Timestamp)}
+                          </td>
+                          <td className="px-2 py-3">
+                            <Badge variant={f.Stato === "Completato" ? "success" : f.Stato === "In lavorazione" ? "brand" : "neutral"}>
+                              {f.Stato}
+                            </Badge>
+                          </td>
+                          <td className="px-2 py-3">
+                            <Link
+                              href={`/fogli-di-lavoro/${f.id}`}
+                              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                              style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}
+                            >
+                              <Eye size={13} /> Apri
+                            </Link>
                           </td>
                         </tr>
                       ))}

@@ -7,11 +7,20 @@ import {
   Timestamp, doc, serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ArrowLeft, Search } from "lucide-react";
+import { ArrowLeft, Search, Plus, X } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 import type { Cliente, Veicolo, Sede, Appuntamento } from "@/lib/types";
+
+type OperatoreItem = { id: string; displayName?: string; email?: string; Nome?: string; Cognome?: string };
+type PneumaticoRow = { Marca: string; Misura: string; Stagione: string; Quantita: number };
+
+function nomeOperatore(o: OperatoreItem): string {
+  if (o.Nome || o.Cognome) return `${o.Nome ?? ""} ${o.Cognome ?? ""}`.trim();
+  return o.displayName || o.email || o.id;
+}
+const emptyPneumatico = (): PneumaticoRow => ({ Marca: "", Misura: "", Stagione: "Estive", Quantita: 4 });
 
 function nomeCliente(c: Cliente): string {
   if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale;
@@ -25,6 +34,7 @@ export default function ModificaAppuntamentoPage() {
   const [loading, setLoading] = useState(true);
   const [sedi, setSedi] = useState<Sede[]>([]);
   const [clienti, setClienti] = useState<Cliente[]>([]);
+  const [operatori, setOperatori] = useState<OperatoreItem[]>([]);
   const [clienteSearch, setClienteSearch] = useState("");
   const [clienteSelezionato, setClienteSelezionato] = useState<Cliente | null>(null);
   const [veicoliCliente, setVeicoliCliente] = useState<Veicolo[]>([]);
@@ -34,16 +44,19 @@ export default function ModificaAppuntamentoPage() {
   const [sedeId, setSedeId] = useState("");
   const [veicoloId, setVeicoloId] = useState("");
   const [servizio, setServizio] = useState("");
+  const [operatoreId, setOperatoreId] = useState("");
+  const [pneumatici, setPneumatici] = useState<PneumaticoRow[]>([]);
   const [note, setNote] = useState("");
   const [stato, setStato] = useState("Programmato");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
-      const [appSnap, sediSnap, clientiSnap] = await Promise.all([
+      const [appSnap, sediSnap, clientiSnap, usersSnap] = await Promise.all([
         getDoc(doc(db, "Appuntamenti", id)),
         getDocs(collection(db, "Sede")),
         getDocs(query(collection(db, "Clienti"), orderBy("Nome"))),
+        getDocs(query(collection(db, "users"), orderBy("Nome"))),
       ]);
 
       if (!appSnap.exists()) {
@@ -55,9 +68,13 @@ export default function ModificaAppuntamentoPage() {
       const app = { id: appSnap.id, ...appSnap.data() } as Appuntamento;
       const allSedi = sediSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Sede));
       const allClienti = clientiSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente));
+      const allOps = usersSnap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as OperatoreItem & { CRM?: boolean }))
+        .filter((u) => u.CRM === true);
 
       setSedi(allSedi);
       setClienti(allClienti);
+      setOperatori(allOps);
 
       // Pre-popola stato
       setStato(app.Stato ?? "Programmato");
@@ -81,6 +98,24 @@ export default function ModificaAppuntamentoPage() {
       // Servizio
       const servizi = app.Servizi as Array<{ Titolo?: string }> | undefined;
       if (servizi?.[0]?.Titolo) setServizio(servizi[0].Titolo);
+
+      // Operatore
+      const operatoreRef = app.Operatore as { id?: string; path?: string } | null | undefined;
+      if (operatoreRef) {
+        const oid = operatoreRef.id ?? operatoreRef.path?.split("/").pop() ?? "";
+        if (oid) setOperatoreId(oid);
+      }
+
+      // Pneumatici
+      const pneumRaw = (app as Record<string, unknown>).Pneumatici as PneumaticoRow[] | undefined;
+      if (Array.isArray(pneumRaw) && pneumRaw.length > 0) {
+        setPneumatici(pneumRaw.map((p) => ({
+          Marca: p.Marca ?? "",
+          Misura: p.Misura ?? "",
+          Stagione: p.Stagione ?? "Estive",
+          Quantita: p.Quantita ?? 4,
+        })));
+      }
 
       // Cliente
       const clienteRef = app.Cliente as { id?: string; path?: string } | null | undefined;
@@ -110,6 +145,12 @@ export default function ModificaAppuntamentoPage() {
       setLoading(false);
     });
   }, [id, router]);
+
+  function addPneumatico() { setPneumatici((p) => [...p, emptyPneumatico()]); }
+  function removePneumatico(idx: number) { setPneumatici((p) => p.filter((_, i) => i !== idx)); }
+  function updatePneumatico(idx: number, field: keyof PneumaticoRow, value: string | number) {
+    setPneumatici((p) => p.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+  }
 
   const clientiFiltrati = clienti
     .filter((c) => {
@@ -148,6 +189,9 @@ export default function ModificaAppuntamentoPage() {
         ? [{ Titolo: servizio.trim(), Prezzo: 0, Quantita: 1 }]
         : [];
       payload.Note = note.trim() || null;
+      payload.Operatore = operatoreId ? doc(db, "users", operatoreId) : null;
+      const pneumaticiValidi = pneumatici.filter((p) => p.Marca.trim() && p.Misura.trim());
+      payload.Pneumatici = pneumaticiValidi.length > 0 ? pneumaticiValidi : null;
 
       await updateDoc(doc(db, "Appuntamenti", id), payload);
       toast.success("Appuntamento aggiornato");
@@ -289,6 +333,19 @@ export default function ModificaAppuntamentoPage() {
               </select>
             </div>
 
+            {/* Operatore */}
+            {operatori.length > 0 && (
+              <div>
+                <label className="block text-sm font-semibold mb-1.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>Operatore</label>
+                <select value={operatoreId} onChange={(e) => setOperatoreId(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl text-sm"
+                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: operatoreId ? "var(--text-primary)" : "var(--text-muted)", outline: "none" }}>
+                  <option value="">— Nessun operatore —</option>
+                  {operatori.map((o) => <option key={o.id} value={o.id}>{nomeOperatore(o)}</option>)}
+                </select>
+              </div>
+            )}
+
             {/* Veicolo */}
             {clienteSelezionato && veicoliCliente.length > 0 && (
               <div>
@@ -311,6 +368,61 @@ export default function ModificaAppuntamentoPage() {
                 placeholder="Es. Cambio pneumatici, Revisione…"
                 className="w-full px-4 py-2.5 rounded-xl text-sm"
                 style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }} />
+            </div>
+
+            {/* Pneumatici */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-semibold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>Pneumatici</label>
+                <button type="button" onClick={addPneumatico}
+                  className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  <Plus size={12} /> Aggiungi
+                </button>
+              </div>
+              {pneumatici.length === 0 ? (
+                <p className="text-xs px-3 py-2 rounded-lg" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)", border: "1px dashed var(--border)" }}>
+                  Nessun pneumatico aggiunto
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {pneumatici.map((p, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-4">
+                        <input type="text" value={p.Marca} onChange={(e) => updatePneumatico(idx, "Marca", e.target.value)}
+                          placeholder="Marca" className="w-full px-3 py-2 rounded-lg text-xs"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }} />
+                      </div>
+                      <div className="col-span-3">
+                        <input type="text" value={p.Misura} onChange={(e) => updatePneumatico(idx, "Misura", e.target.value)}
+                          placeholder="205/55R16" className="w-full px-3 py-2 rounded-lg text-xs"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }} />
+                      </div>
+                      <div className="col-span-3">
+                        <select value={p.Stagione} onChange={(e) => updatePneumatico(idx, "Stagione", e.target.value)}
+                          className="w-full px-2 py-2 rounded-lg text-xs"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }}>
+                          <option value="Estive">Estive</option>
+                          <option value="Invernali">Invernali</option>
+                          <option value="4 Stagioni">4 Stagioni</option>
+                        </select>
+                      </div>
+                      <div className="col-span-1">
+                        <input type="number" value={p.Quantita} min={1} max={20}
+                          onChange={(e) => updatePneumatico(idx, "Quantita", Number(e.target.value))}
+                          className="w-full px-2 py-2 rounded-lg text-xs text-center"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }} />
+                      </div>
+                      <div className="col-span-1 flex justify-center">
+                        <button type="button" onClick={() => removePneumatico(idx)}
+                          className="p-1 rounded-lg hover:bg-red-50 transition-colors">
+                          <X size={14} style={{ color: "#EF4444" }} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Note */}
