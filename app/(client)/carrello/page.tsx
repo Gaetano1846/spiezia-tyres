@@ -1,12 +1,12 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Package, Plus, Minus, X, Tag, ShoppingCart, Percent } from "lucide-react";
+import { Package, Plus, Minus, X, Tag, ShoppingCart, Percent, Truck } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import { useCart } from "@/components/layout/CartProvider";
 import { useAuth } from "@/components/layout/AuthProvider";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 function stagioneBadge(stagione: string) {
@@ -18,12 +18,28 @@ function stagioneBadge(stagione: string) {
 export default function CarrelloPage() {
   const { user } = useAuth();
   const { items, itemsConSconto, remove, update, totals, totalsConSconto, refreshPromo } = useCart();
+  const [showLogisticaPopup, setShowLogisticaPopup] = useState(false);
 
   // Carica promozioni utente al mount (se non già caricate dal PromoLoader)
   useEffect(() => {
     if (user?.uid) refreshPromo(user.uid);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
+
+  // Mostra popup contributo logistico la prima volta (utentiAvvisati)
+  useEffect(() => {
+    if (!user?.uid || (user as Record<string, unknown>).utentiAvvisati) return;
+    setShowLogisticaPopup(true);
+  }, [user]);
+
+  async function dismissLogisticaPopup() {
+    setShowLogisticaPopup(false);
+    if (user?.uid) {
+      try {
+        await updateDoc(doc(db, "users", user.uid), { utentiAvvisati: true });
+      } catch { /* non bloccante */ }
+    }
+  }
 
   // Stock check: riduce qty se lo stock è diminuito dal momento dell'aggiunta
   useEffect(() => {
@@ -46,28 +62,67 @@ export default function CarrelloPage() {
 
   const haSconto = totalsConSconto.scontoTotale > 0;
 
-  if (items.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-32 gap-4">
-        <ShoppingCart size={56} style={{ color: "var(--text-muted)" }} />
-        <p
-          className="text-lg font-semibold"
-          style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}
-        >
-          Il carrello è vuoto
+  const logisticaModal = showLogisticaPopup && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.55)" }}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+        style={{ background: "#fff", boxShadow: "0 24px 64px rgba(0,0,0,0.18)" }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(255,200,3,0.15)" }}>
+            <Truck size={20} style={{ color: "var(--brand)" }} />
+          </div>
+          <h2 className="text-base font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+            Contributo logistico
+          </h2>
+        </div>
+        <p className="text-sm leading-relaxed" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
+          Ai prezzi mostrati viene aggiunto un <strong>contributo logistico di € 0,95</strong> per ogni pneumatico, a copertura dei costi di gestione e trasporto.
         </p>
-        <Link
-          href="/"
-          className="px-6 py-2.5 rounded-full text-sm font-semibold transition-opacity hover:opacity-90"
+        <p className="text-xs" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-muted)" }}>
+          Questo importo è incluso nel totale del carrello e non verrà addebitato separatamente.
+        </p>
+        <button
+          onClick={dismissLogisticaPopup}
+          className="w-full py-3 rounded-full text-sm font-bold transition-opacity hover:opacity-90"
           style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
         >
-          Vai al catalogo
-        </Link>
+          Ho capito
+        </button>
       </div>
+    </div>
+  );
+
+  if (items.length === 0) {
+    return (
+      <>
+        {logisticaModal}
+        <div className="flex flex-col items-center justify-center py-32 gap-4">
+          <ShoppingCart size={56} style={{ color: "var(--text-muted)" }} />
+          <p
+            className="text-lg font-semibold"
+            style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}
+          >
+            Il carrello è vuoto
+          </p>
+          <Link
+            href="/"
+            className="px-6 py-2.5 rounded-full text-sm font-semibold transition-opacity hover:opacity-90"
+            style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          >
+            Vai al catalogo
+          </Link>
+        </div>
+      </>
     );
   }
 
   return (
+    <>
+      {logisticaModal}
     <div className="p-6 max-w-6xl mx-auto">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         <div className="lg:col-span-2 space-y-4">
@@ -301,5 +356,6 @@ export default function CarrelloPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

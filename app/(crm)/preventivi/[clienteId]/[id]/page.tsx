@@ -8,7 +8,7 @@ import {
 import { db } from "@/lib/firebase";
 import {
   ArrowLeft, Download, CheckCircle2, XCircle, Car, User, FileText, Wrench,
-  ShoppingCart, Loader2,
+  ShoppingCart, Loader2, Printer,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -338,6 +338,15 @@ export default function PreventivoDetailPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/preventivi/${clienteId}/${id}/stampa`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl"
+              style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+            >
+              <Printer size={13} /> Stampa / PDF
+            </Link>
             {preventivo.PDF_URL && (
               <a
                 href={preventivo.PDF_URL}
@@ -346,7 +355,7 @@ export default function PreventivoDetailPage() {
                 className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl"
                 style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
               >
-                <Download size={13} /> PDF
+                <Download size={13} /> PDF salvato
               </a>
             )}
             {!isAccettato && (

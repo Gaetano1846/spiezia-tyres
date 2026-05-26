@@ -1,13 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   collection, collectionGroup, getDocs, getDoc, query, where,
   type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { searchProdotti, stockTotale, formatMisura, type ProdottoHit } from "@/lib/algolia";
-import { QrCode, Camera, Search, Car, Package, Loader2, AlertCircle } from "lucide-react";
+import { QrCode, Camera, Search, Car, Package, Loader2, AlertCircle, CameraOff } from "lucide-react";
+
+// BarcodeDetector is available in Chromium (Chrome 83+, Edge 83+, Android WebView)
+declare global {
+  interface BarcodeDetectorOptions { formats?: string[]; }
+  interface BarcodeDetectorResult { rawValue: string; format: string; }
+  class BarcodeDetector {
+    constructor(options?: BarcodeDetectorOptions);
+    detect(source: HTMLVideoElement | HTMLCanvasElement | ImageBitmap): Promise<BarcodeDetectorResult[]>;
+    static getSupportedFormats(): Promise<string[]>;
+  }
+}
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import Link from "next/link";
@@ -86,16 +97,122 @@ async function cercaInMagazzino(prodottoId: string): Promise<GabbiaMatch[]> {
 
 export default function ScannerPage() {
   const [tab, setTab] = useState<"scansiona" | "manuale">("scansiona");
-  const [cameraAttiva, setCameraAttiva] = useState(false);
+  const [cameraAttiva, setCameraAttiva]       = useState(false);
+  const [cameraError,  setCameraError]         = useState("");
+  const [barcodeSupported, setBarcodeSupported] = useState<boolean | null>(null);
+  const [scannedValue, setScannedValue]         = useState("");
+
+  const videoRef    = useRef<HTMLVideoElement>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
+  const scanLoopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detectorRef = useRef<BarcodeDetector | null>(null);
+
+  // Feature detection on mount
+  useEffect(() => {
+    setBarcodeSupported(typeof window !== "undefined" && "BarcodeDetector" in window);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function stopCamera() {
+    if (scanLoopRef.current) clearTimeout(scanLoopRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  }
+
+  const runScanLoop = useCallback(async () => {
+    const video    = videoRef.current;
+    const detector = detectorRef.current;
+    if (!video || !detector || !streamRef.current) return;
+
+    try {
+      const results = await detector.detect(video);
+      if (results.length > 0) {
+        const code = results[0].rawValue;
+        setScannedValue(code);
+        // Stop camera and trigger search with scanned code
+        stopCamera();
+        setCameraAttiva(false);
+        setQueryEan(code);
+        // search is triggered via the effect below
+        setDoSearch(true);
+        return;
+      }
+    } catch { /* ignora frame errors */ }
+
+    scanLoopRef.current = setTimeout(runScanLoop, 400);
+  }, []);
+
+  async function startCamera() {
+    setCameraError("");
+    setScannedValue("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      if (!detectorRef.current) {
+        detectorRef.current = new BarcodeDetector({
+          formats: ["ean_13", "ean_8", "code_128", "code_39", "qr_code", "upc_a", "upc_e"],
+        });
+      }
+
+      scanLoopRef.current = setTimeout(runScanLoop, 600);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("Permission") || msg.includes("NotAllowed")) {
+        setCameraError("Accesso alla fotocamera negato. Controlla i permessi del browser.");
+      } else if (msg.includes("NotFound") || msg.includes("Requested device not found")) {
+        setCameraError("Nessuna fotocamera trovata su questo dispositivo.");
+      } else {
+        setCameraError("Impossibile avviare la fotocamera: " + msg);
+      }
+      setCameraAttiva(false);
+    }
+  }
+
+  function toggleCamera() {
+    if (cameraAttiva) {
+      stopCamera();
+      setCameraAttiva(false);
+    } else {
+      setCameraAttiva(true);
+      startCamera();
+    }
+  }
 
   // EAN / nome prodotto
   const [query_ean, setQueryEan]           = useState("");
+  const [doSearch, setDoSearch]             = useState(false);
   const [loadingEan, setLoadingEan]         = useState(false);
   const [prodottiEan, setProdottiEan]       = useState<ProdottoHit[]>([]);
   const [selectedProd, setSelectedProd]     = useState<ProdottoHit | null>(null);
   const [gabbieMatch, setGabbieMatch]       = useState<GabbiaMatch[]>([]);
   const [loadingGabbie, setLoadingGabbie]   = useState(false);
   const [eanNotFound, setEanNotFound]       = useState(false);
+
+  // Triggered by barcode scan — switch to manual tab and search
+  useEffect(() => {
+    if (!doSearch || !query_ean) return;
+    setDoSearch(false);
+    setTab("manuale");
+    handleEanSearch();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doSearch, query_ean]);
 
   // Targa
   const [targa, setTarga]                   = useState("");
@@ -230,56 +347,118 @@ export default function ScannerPage() {
       {tab === "scansiona" && (
         <Card padding="md">
           <div className="flex flex-col items-center gap-5">
-            <div
-              className="relative flex items-center justify-center rounded-2xl overflow-hidden"
-              style={{
-                width: 300,
-                height: 300,
-                background: cameraAttiva ? "#111" : "var(--bg-primary)",
-                border: `3px solid ${cameraAttiva ? "var(--brand)" : "var(--border)"}`,
-              }}
-            >
-              {!cameraAttiva ? (
-                <div className="flex flex-col items-center gap-3">
-                  <QrCode size={80} style={{ color: "var(--text-muted)" }} />
-                  <p className="text-sm text-center px-6" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                    Attiva la fotocamera per scansionare un barcode EAN
-                  </p>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-3">
-                  <QrCode size={80} className="animate-pulse" style={{ color: "var(--brand)" }} />
-                  <p className="text-sm text-center" style={{ color: "#fff", fontFamily: "var(--font-montserrat)" }}>
-                    Scansione in corso…
-                  </p>
-                </div>
-              )}
-              {cameraAttiva && (
-                <>
-                  <div className="absolute top-3 left-3 w-8 h-8 border-t-4 border-l-4 rounded-tl-lg" style={{ borderColor: "var(--brand)" }} />
-                  <div className="absolute top-3 right-3 w-8 h-8 border-t-4 border-r-4 rounded-tr-lg" style={{ borderColor: "var(--brand)" }} />
-                  <div className="absolute bottom-3 left-3 w-8 h-8 border-b-4 border-l-4 rounded-bl-lg" style={{ borderColor: "var(--brand)" }} />
-                  <div className="absolute bottom-3 right-3 w-8 h-8 border-b-4 border-r-4 rounded-br-lg" style={{ borderColor: "var(--brand)" }} />
-                </>
-              )}
-            </div>
 
-            <button
-              onClick={() => setCameraAttiva((v) => !v)}
-              className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold"
-              style={{
-                background: cameraAttiva ? "#F3F4F6" : "var(--brand)",
-                color: cameraAttiva ? "var(--text-primary)" : "#111",
-                fontFamily: "var(--font-montserrat)",
-              }}
-            >
-              <Camera size={16} />
-              {cameraAttiva ? "Disattiva fotocamera" : "Attiva fotocamera"}
-            </button>
+            {/* BarcodeDetector not supported */}
+            {barcodeSupported === false && (
+              <div className="w-full rounded-xl p-4 flex flex-col items-center gap-3 text-center"
+                style={{ background: "#FEF2F2", border: "1px solid #FCA5A5" }}>
+                <CameraOff size={32} style={{ color: "#EF4444" }} />
+                <p className="text-sm font-semibold" style={{ color: "#991B1B", fontFamily: "var(--font-montserrat)" }}>
+                  Scansione fotocamera non supportata su questo browser.
+                </p>
+                <p className="text-xs" style={{ color: "#B91C1C", fontFamily: "var(--font-montserrat)" }}>
+                  Usa Chrome o Edge su Android/Windows. Oppure usa la ricerca manuale qui sotto.
+                </p>
+              </div>
+            )}
 
-            <p className="text-xs text-center" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-              Integrazione barcode scanner in arrivo. Usa la ricerca manuale nel frattempo.
-            </p>
+            {/* BarcodeDetector supported */}
+            {barcodeSupported !== false && (
+              <>
+                {/* Viewfinder */}
+                <div
+                  className="relative rounded-2xl overflow-hidden"
+                  style={{
+                    width: "100%", maxWidth: 340, aspectRatio: "1/1",
+                    background: "#111",
+                    border: `3px solid ${cameraAttiva ? "var(--brand)" : "var(--border)"}`,
+                  }}
+                >
+                  {/* Video element — always rendered, hidden when inactive */}
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video
+                    ref={videoRef}
+                    playsInline
+                    muted
+                    style={{
+                      width: "100%", height: "100%",
+                      objectFit: "cover",
+                      display: cameraAttiva ? "block" : "none",
+                    }}
+                  />
+
+                  {/* Inactive placeholder */}
+                  {!cameraAttiva && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                      <QrCode size={70} style={{ color: "#6b7280" }} />
+                      <p className="text-xs text-center px-6" style={{ color: "#9CA3AF", fontFamily: "var(--font-montserrat)" }}>
+                        Attiva la fotocamera per scansionare un barcode EAN o QR
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Scanning overlay */}
+                  {cameraAttiva && (
+                    <>
+                      <div className="absolute inset-0 pointer-events-none">
+                        <div className="absolute top-4 left-4 w-8 h-8 border-t-4 border-l-4 rounded-tl-lg" style={{ borderColor: "var(--brand)" }} />
+                        <div className="absolute top-4 right-4 w-8 h-8 border-t-4 border-r-4 rounded-tr-lg" style={{ borderColor: "var(--brand)" }} />
+                        <div className="absolute bottom-4 left-4 w-8 h-8 border-b-4 border-l-4 rounded-bl-lg" style={{ borderColor: "var(--brand)" }} />
+                        <div className="absolute bottom-4 right-4 w-8 h-8 border-b-4 border-r-4 rounded-br-lg" style={{ borderColor: "var(--brand)" }} />
+                        <div
+                          className="absolute left-8 right-8 h-0.5 animate-pulse"
+                          style={{ top: "50%", background: "var(--brand)", opacity: 0.8 }}
+                        />
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 py-2 text-center"
+                        style={{ background: "rgba(0,0,0,0.5)" }}>
+                        <p className="text-xs font-semibold" style={{ color: "#fff", fontFamily: "var(--font-montserrat)" }}>
+                          Scansione in corso…
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Scanned value confirmation */}
+                {scannedValue && !cameraAttiva && (
+                  <div className="w-full rounded-xl px-4 py-3 flex items-center gap-3"
+                    style={{ background: "#F0FDF4", border: "1px solid #BBF7D0" }}>
+                    <QrCode size={18} style={{ color: "#10B981", flexShrink: 0 }} />
+                    <div style={{ fontFamily: "var(--font-montserrat)" }}>
+                      <p className="text-xs font-semibold" style={{ color: "#065F46" }}>Barcode rilevato</p>
+                      <p className="text-sm font-bold font-mono" style={{ color: "#065F46" }}>{scannedValue}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Camera error */}
+                {cameraError && (
+                  <div className="w-full rounded-xl px-4 py-3 flex items-center gap-3"
+                    style={{ background: "#FEF2F2", border: "1px solid #FCA5A5" }}>
+                    <AlertCircle size={18} style={{ color: "#EF4444", flexShrink: 0 }} />
+                    <p className="text-sm" style={{ color: "#991B1B", fontFamily: "var(--font-montserrat)" }}>{cameraError}</p>
+                  </div>
+                )}
+
+                <button
+                  onClick={toggleCamera}
+                  className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold"
+                  style={{
+                    background: cameraAttiva ? "#F3F4F6" : "var(--brand)",
+                    color: cameraAttiva ? "var(--text-primary)" : "#111",
+                    fontFamily: "var(--font-montserrat)",
+                  }}
+                >
+                  {cameraAttiva ? <CameraOff size={16} /> : <Camera size={16} />}
+                  {cameraAttiva ? "Disattiva fotocamera" : "Attiva fotocamera"}
+                </button>
+
+                <p className="text-xs text-center" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  Punta la fotocamera sul barcode EAN13 del pneumatico. La ricerca partirà automaticamente.
+                </p>
+              </>
+            )}
           </div>
         </Card>
       )}
