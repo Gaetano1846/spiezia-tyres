@@ -42,6 +42,25 @@ async function loadUserFromFirestore(uid: string, email: string): Promise<AppUse
   } as AppUser;
 }
 
+function hasRoleCookie(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.cookie.split(";").some((c) => c.trim().startsWith("user-role="));
+}
+
+async function syncSessionCookie(fbUser: import("firebase/auth").User): Promise<void> {
+  if (hasRoleCookie()) return;
+  try {
+    const idToken = await fbUser.getIdToken();
+    await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+  } catch {
+    // best-effort — middleware routing will fall back gracefully
+  }
+}
+
 async function loadUserFromSession(): Promise<AppUser | null> {
   try {
     const res = await fetch("/api/auth/session");
@@ -67,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       setFirebaseUser(fbUser);
       if (fbUser) {
+        syncSessionCookie(fbUser);
         const appUser = await loadUserFromFirestore(fbUser.uid, fbUser.email ?? "");
         setUser(appUser);
         setLoading(false);

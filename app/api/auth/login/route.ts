@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import https from "https";
 import type { Ruolo } from "@/lib/types";
-import { buildDevCookie, buildSessionCookie } from "@/lib/auth";
+import { buildDevCookie, buildSessionCookie, buildRoleCookie } from "@/lib/auth";
 
 // Node.js https rispetta NODE_TLS_REJECT_UNAUTHORIZED; native fetch (undici) no.
 function httpsGet(url: string, token: string): Promise<unknown> {
@@ -64,6 +64,7 @@ export async function POST(req: NextRequest) {
       const sessionPayload = { uid, email, Ruolo, CRM };
       const res = NextResponse.json({ ok: true, Ruolo, CRM });
       res.headers.append("Set-Cookie", buildDevCookie(sessionPayload));
+      res.headers.append("Set-Cookie", buildRoleCookie(Ruolo, CRM));
       return res;
     } catch (err) {
       console.error("[auth/login dev]", err);
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
     const sessionCookie = await adminAuth().createSessionCookie(idToken, { expiresIn: TTL_MS });
     const res = NextResponse.json({ ok: true, Ruolo, CRM });
     res.headers.append("Set-Cookie", buildSessionCookie(sessionCookie));
+    res.headers.append("Set-Cookie", buildRoleCookie(Ruolo, CRM));
     return res;
   } catch (err) {
     console.error("[auth/login]", err);

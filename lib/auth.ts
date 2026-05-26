@@ -67,9 +67,16 @@ export function buildSessionCookie(value: string): string {
   return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`;
 }
 
+// Non-httpOnly: letto dal middleware Edge per routing per ruolo (non è segreto — la sicurezza vera è nel session cookie)
+export function buildRoleCookie(Ruolo: string, CRM: boolean): string {
+  const value = encodeURIComponent(JSON.stringify({ Ruolo, CRM }));
+  return `user-role=${value}; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`;
+}
+
 export function clearCookies(): string[] {
   return [
     `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
     `${DEV_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+    `user-role=; Path=/; SameSite=Lax; Max-Age=0`,
   ];
 }

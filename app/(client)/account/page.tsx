@@ -17,6 +17,16 @@ import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 import type { Ordine, OrdineStato } from "@/lib/types";
 
+type DocumentoOrdine = { Tipo: string; Link: string; Reference_Number?: string };
+
+type DownloadItem = {
+  ordineId: string;
+  ordineNumero?: string;
+  ordineData?: import("firebase/firestore").Timestamp;
+  tipo: string;
+  url: string;
+};
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type IndirizzoDoc = {
@@ -89,6 +99,9 @@ export default function AccountPage() {
   const [ordini, setOrdini] = useState<Ordine[]>([]);
   const [loadingOrdini, setLoadingOrdini] = useState(false);
 
+  const [downloadItems, setDownloadItems] = useState<DownloadItem[]>([]);
+  const [loadingDownload, setLoadingDownload] = useState(false);
+
   const [indirizziF, setIndirizziF] = useState<IndirizzoDoc[]>([]);
   const [indirizziS, setIndirizziS] = useState<IndirizzoDoc[]>([]);
   const [loadingIndirizzi, setLoadingIndirizzi] = useState(false);
@@ -137,6 +150,39 @@ export default function AccountPage() {
     ).then((snap) => setOrdini(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Ordine)))
       .catch(() => toast.error("Errore nel caricamento degli ordini"))
       .finally(() => setLoadingOrdini(false));
+  }, [uid, tab]);
+
+  useEffect(() => {
+    if (!uid || tab !== "download") return;
+    setLoadingDownload(true);
+    const uRef = doc(db, "users", uid);
+    getDocs(
+      query(
+        collection(db, "Ordini"),
+        where("Utente", "==", uRef),
+        orderBy("DataOra", "desc"),
+        limit(100),
+      ),
+    ).then((snap) => {
+      const items: DownloadItem[] = [];
+      snap.docs.forEach((d) => {
+        const data = d.data() as Record<string, unknown>;
+        const ordineNumero = (data.Numero as string | undefined);
+        const ordineData = (data.DataOra ?? data.DataCreazione) as import("firebase/firestore").Timestamp | undefined;
+        if (data.PDF && typeof data.PDF === "string") {
+          items.push({ ordineId: d.id, ordineNumero, ordineData, tipo: "Fattura", url: data.PDF as string });
+        }
+        const docs = data.Documenti as DocumentoOrdine[] | undefined;
+        docs?.forEach((doc_) => {
+          if (doc_.Link) {
+            items.push({ ordineId: d.id, ordineNumero, ordineData, tipo: doc_.Tipo ?? "Documento", url: doc_.Link });
+          }
+        });
+      });
+      setDownloadItems(items);
+    })
+      .catch(() => toast.error("Errore nel caricamento dei documenti"))
+      .finally(() => setLoadingDownload(false));
   }, [uid, tab]);
 
   async function loadIndirizzi(userUid: string) {
@@ -405,26 +451,88 @@ export default function AccountPage() {
 
         {/* ── Download ── */}
         {tab === "download" && (
-          <div
-            className="rounded-2xl py-16 flex flex-col items-center gap-5"
-            style={{ border: "1px solid #e5e7eb", background: "#fff" }}
-          >
-            <Package size={52} style={{ color: "#d1d5db" }} />
-            <div className="text-center">
-              <p className="font-bold text-base mb-1" style={{ fontFamily: "var(--font-poppins)", color: "#374151" }}>
-                Nessun documento disponibile
-              </p>
-              <p className="text-sm" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
-                I documenti e i listini scaricabili appariranno qui.
-              </p>
-            </div>
-            <Link
-              href="/prodotti"
-              className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold mt-2"
-              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid #e5e7eb", background: "#fff" }}>
+            <div
+              className="grid px-5 py-3 text-xs font-bold uppercase tracking-widest"
+              style={{
+                gridTemplateColumns: "160px 1fr 130px 120px",
+                color: "#9ca3af",
+                fontFamily: "var(--font-montserrat)",
+                borderBottom: "1px solid #e5e7eb",
+              }}
             >
-              Vai al negozio <ArrowRight size={15} />
-            </Link>
+              <span>Tipo</span>
+              <span>Ordine</span>
+              <span>Data</span>
+              <span />
+            </div>
+
+            {loadingDownload ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="grid px-5 py-4 gap-4 animate-pulse"
+                  style={{ gridTemplateColumns: "160px 1fr 130px 120px", borderBottom: "1px solid #f3f4f6" }}
+                >
+                  <div className="h-5 w-24 rounded-full" style={{ background: "#f3f4f6" }} />
+                  <div className="h-4 w-28 rounded" style={{ background: "#f3f4f6" }} />
+                  <div className="h-4 w-20 rounded" style={{ background: "#f3f4f6" }} />
+                  <div className="h-7 w-24 rounded-full" style={{ background: "#f3f4f6" }} />
+                </div>
+              ))
+            ) : downloadItems.length === 0 ? (
+              <div className="flex flex-col items-center py-16 gap-3">
+                <Download size={44} style={{ color: "#d1d5db" }} />
+                <div className="text-center">
+                  <p className="font-bold text-sm mb-1" style={{ fontFamily: "var(--font-poppins)", color: "#374151" }}>
+                    Nessun documento disponibile
+                  </p>
+                  <p className="text-xs" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                    Le fatture e i documenti allegati agli ordini appariranno qui.
+                  </p>
+                </div>
+                <Link
+                  href="/prodotti"
+                  className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold mt-2"
+                  style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                >
+                  Vai al negozio <ArrowRight size={15} />
+                </Link>
+              </div>
+            ) : (
+              downloadItems.map((item, idx) => (
+                <div
+                  key={`${item.ordineId}-${idx}`}
+                  className="grid items-center px-5 py-4 hover:bg-[#FFFDF0] transition-colors"
+                  style={{ gridTemplateColumns: "160px 1fr 130px 120px", borderBottom: "1px solid #f3f4f6" }}
+                >
+                  <span
+                    className="text-xs font-bold px-2.5 py-1 rounded-full inline-block"
+                    style={{ background: "#f0fdf4", color: "#16a34a", fontFamily: "var(--font-montserrat)", width: "fit-content" }}
+                  >
+                    {item.tipo}
+                  </span>
+                  <span
+                    className="text-sm font-semibold px-2.5 py-1 rounded-lg inline-block"
+                    style={{ background: "#f9fafb", fontFamily: "var(--font-poppins)", color: "#111", width: "fit-content" }}
+                  >
+                    {item.ordineNumero ?? `#${item.ordineId.slice(0, 8).toUpperCase()}`}
+                  </span>
+                  <span className="text-sm" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                    {formatData(item.ordineData)}
+                  </span>
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold"
+                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", width: "fit-content" }}
+                  >
+                    <Download size={12} /> Scarica
+                  </a>
+                </div>
+              ))
+            )}
           </div>
         )}
 
