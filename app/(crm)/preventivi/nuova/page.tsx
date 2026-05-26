@@ -365,13 +365,18 @@ export default function NuovoPreventivoPage() {
 
     setSaving(true);
     try {
-      // Sede: prendi dall'utente loggato, usa "default" come fallback
-      let sedeId = "default";
-      const sedeRef = user?.Sede;
-      if (sedeRef && typeof sedeRef === "object" && "id" in sedeRef) {
-        sedeId = (sedeRef as { id: string }).id;
+      // Sede obbligatoria per numerazione preventivi
+      const sedeDocRef = user?.Sede;
+      let sedeId: string | null = null;
+      if (sedeDocRef && typeof sedeDocRef === "object" && "id" in sedeDocRef) {
+        sedeId = (sedeDocRef as { id: string }).id;
       } else if (user?.SedeNome) {
         sedeId = user.SedeNome;
+      }
+      if (!sedeId) {
+        toast.error("Sede non configurata per questo account. Contatta l'amministratore.");
+        setSaving(false);
+        return;
       }
 
       const numero = await nextCounter("Preventivo", sedeId);
@@ -396,6 +401,8 @@ export default function NuovoPreventivoPage() {
         Note: note.trim() || null,
         Accettato: false,
         Stato: "In attesa",
+        Operatore: doc(db, "users", user!.uid),
+        Sede: sedeDocRef,
       };
       if (veicoloRef) payload.Veicolo = veicoloRef;
 

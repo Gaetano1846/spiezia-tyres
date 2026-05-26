@@ -57,6 +57,13 @@ export function applicaPromozione(
 ): { prezzoScontato: number; sconto: ScontoApplicato | null } {
   const marcaNorm = item.marca.trim().toLowerCase();
 
+  type Candidato = {
+    prezzoScontato: number;
+    importoSconto: number;
+    sconto: ScontoApplicato;
+  };
+  const candidati: Candidato[] = [];
+
   for (const promo of promozioni) {
     // Controlla match marca
     const brandMatch = promo.Brand_Nome?.some(
@@ -96,18 +103,24 @@ export function applicaPromozione(
       importoSconto = item.prezzo - prezzoScontato;
     }
 
-    return {
+    candidati.push({
       prezzoScontato: parseFloat(prezzoScontato.toFixed(4)),
+      importoSconto,
       sconto: {
         promoId: promo.id,
         brandMatch: item.marca,
         importo: parseFloat(importoSconto.toFixed(2)),
         fisso: promo.Fisso,
       },
-    };
+    });
   }
 
-  return { prezzoScontato: item.prezzo, sconto: null };
+  if (candidati.length === 0) return { prezzoScontato: item.prezzo, sconto: null };
+
+  // Seleziona la promozione più vantaggiosa per il cliente (importo sconto maggiore)
+  candidati.sort((a, b) => b.importoSconto - a.importoSconto);
+  const best = candidati[0];
+  return { prezzoScontato: best.prezzoScontato, sconto: best.sconto };
 }
 
 // ─── Calcola totali con sconti ────────────────────────────────────────────────
