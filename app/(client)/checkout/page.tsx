@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
@@ -10,6 +10,7 @@ import Card from "@/components/ui/Card";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import type { Cliente } from "@/lib/types";
+import { nextCounter } from "@/lib/counters";
 
 const metodiPagamento = [
   { id: "bonifico",  label: "Bonifico bancario" },
@@ -33,10 +34,9 @@ const emptyAddress: AddressForm = {
   nome: "", via: "", cap: "", citta: "", provincia: "", partitaIva: "",
 };
 
-function generateNumero(): string {
+function formatNumeroOrdine(n: number): string {
   const year = new Date().getFullYear();
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `ORD-${year}-${rand}`;
+  return `ORD-${year}-${String(n).padStart(5, "0")}`;
 }
 
 function formatEuro(n: number) {
@@ -371,7 +371,7 @@ type SavedAddress = AddressForm & { id: string; label?: string };
 export default function CheckoutPage() {
   const router = useRouter();
   const { user } = useAuth();
-  const { items, totals, clear } = useCart();
+  const { items, itemsConSconto, totals, totalsConSconto, clear } = useCart();
   const [step, setStep] = useState(0);
   const [fatturazione, setFatturazione] = useState<AddressForm>(emptyAddress);
   const [spedizioneDiv, setSpedizioneDiv] = useState(false);
@@ -385,6 +385,39 @@ export default function CheckoutPage() {
   const isAdmin = user?.Ruolo === "Admin";
   const [ordinaPerCliente, setOrdinaPerCliente] = useState(false);
   const [clienteSelezionato, setClienteSelezionato] = useState<(Cliente & { id: string }) | null>(null);
+  // Indirizzi fatturazione del cliente selezionato (admin mode)
+  const [clienteAddresses, setClienteAddresses] = useState<SavedAddress[]>([]);
+
+  // Quando admin seleziona un cliente, carica gli indirizzi di fatturazione del cliente
+  useEffect(() => {
+    if (!clienteSelezionato) {
+      setClienteAddresses([]);
+      return;
+    }
+    getDocs(collection(db, "Clienti", clienteSelezionato.id, "Indirizzo_FatturazioneC"))
+      .then((snap) => {
+        const addrs: SavedAddress[] = snap.docs.map((d) => {
+          const a = d.data() as Record<string, string>;
+          return {
+            id: d.id,
+            label: a.Ragione_Sociale ?? a.Azienda ?? a.Nome ?? a.Via ?? "",
+            nome: a.Ragione_Sociale ?? a.Azienda ?? a.Nome ?? "",
+            via: a.Via ?? "",
+            cap: a.CAP ?? "",
+            citta: a.Citta ?? "",
+            provincia: a.Provincia ?? "",
+            partitaIva: a.PartitaIVA ?? a.Partita_IVA ?? "",
+          };
+        });
+        setClienteAddresses(addrs);
+        // Pre-popola il form fatturazione con il primo indirizzo del cliente
+        if (addrs.length > 0) {
+          const first = addrs[0];
+          setFatturazione({ nome: first.nome, via: first.via, cap: first.cap, citta: first.citta, provincia: first.provincia, partitaIva: first.partitaIva });
+        }
+      })
+      .catch(() => {});
+  }, [clienteSelezionato]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -467,28 +500,41 @@ export default function CheckoutPage() {
         PartitaIVA: data.partitaIva || undefined,
       });
 
-      // Build order document
+      // Risolvi sede per il counter sequenziale
+      const sedeDocRef = user.Sede;
+      let sedeId = "main";
+      if (sedeDocRef && typeof sedeDocRef === "object" && "id" in sedeDocRef) {
+        sedeId = (sedeDocRef as { id: string }).id;
+      } else if (user.SedeNome) {
+        sedeId = user.SedeNome;
+      }
+
+      const n = await nextCounter("Ordine", sedeId);
+
+      // Build order document con prezzi scontati
       const orderData: Record<string, unknown> = {
         Utente: doc(db, "users", user.uid),
         Source: "B2B",
         Stato: "In attesa di pagamento",
-        Numero: generateNumero(),
-        Articoli: items.map((i) => ({
+        Numero: formatNumeroOrdine(n),
+        Articoli: itemsConSconto.map((i) => ({
           Prodotto: i.id,
           Titolo: `${i.marca} ${i.modello}`,
           Marca: i.marca,
           Quantita: i.quantita,
-          PrezzoUnitario: i.prezzo,
+          PrezzoUnitario: i.prezzoScontato,
           PFU: i.pfu,
+          ...(i.sconto ? { ScontoApplicato: i.sconto } : {}),
         })),
-        Totale: totals.totale,
-        IVA: totals.iva,
-        PFU: totals.pfu,
+        Totale: totalsConSconto.totale,
+        IVA: totalsConSconto.iva,
+        PFU: totalsConSconto.pfu,
+        ScontoTotale: totalsConSconto.scontoTotale,
         Pagamento: {
           Metodo: metodo,
           Stato: "In attesa",
         },
-        ContributoLogistico: totals.contributoLogistico,
+        ContributoLogistico: totalsConSconto.contributoLogistico,
         IndirizzoFatturazione: addr(fatturazione),
         IndirizzoSpedizione: spedizioneDiv ? addr(spedizione) : addr(fatturazione),
         DataCreazione: serverTimestamp(),
@@ -504,7 +550,7 @@ export default function CheckoutPage() {
 
       clear();
       toast.success("Ordine confermato!");
-      router.replace("/ordini");
+      router.replace("/account");
     } catch (e) {
       toast.error("Errore nella creazione dell'ordine");
       console.error(e);
@@ -532,7 +578,7 @@ export default function CheckoutPage() {
           </div>
         )}
         <div className="space-y-3 mb-4">
-          {items.map((item) => (
+          {itemsConSconto.map((item) => (
             <div key={item.id} className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--bg-primary)" }}>
                 <Package size={18} style={{ color: "var(--text-muted)" }} />
@@ -546,8 +592,8 @@ export default function CheckoutPage() {
                 </p>
               </div>
               <div className="text-right flex-shrink-0">
-                <p className="text-xs font-bold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                  {formatEuro(item.prezzo * item.quantita)}
+                <p className="text-xs font-bold" style={{ color: item.sconto ? "#16a34a" : "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                  {formatEuro(item.prezzoScontato * item.quantita)}
                 </p>
                 <p className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                   ×{item.quantita}
@@ -559,23 +605,29 @@ export default function CheckoutPage() {
         <div className="border-t pt-3 space-y-2" style={{ borderColor: "var(--border)" }}>
           <div className="flex justify-between text-xs" style={{ fontFamily: "var(--font-montserrat)" }}>
             <span style={{ color: "var(--text-secondary)" }}>Subtotale</span>
-            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totals.subtotale)}</span>
+            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totalsConSconto.subtotale)}</span>
           </div>
+          {totalsConSconto.scontoTotale > 0 && (
+            <div className="flex justify-between text-xs" style={{ fontFamily: "var(--font-montserrat)" }}>
+              <span style={{ color: "#16a34a", fontWeight: 600 }}>Sconto promo</span>
+              <span style={{ color: "#16a34a", fontWeight: 700 }}>- {formatEuro(totalsConSconto.scontoTotale)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-xs" style={{ fontFamily: "var(--font-montserrat)" }}>
             <span style={{ color: "var(--text-secondary)" }}>PFU</span>
-            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totals.pfu)}</span>
+            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totalsConSconto.pfu)}</span>
           </div>
           <div className="flex justify-between text-xs" style={{ fontFamily: "var(--font-montserrat)" }}>
             <span style={{ color: "var(--text-secondary)" }}>Contrib. logistico</span>
-            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totals.contributoLogistico)}</span>
+            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totalsConSconto.contributoLogistico)}</span>
           </div>
           <div className="flex justify-between text-xs" style={{ fontFamily: "var(--font-montserrat)" }}>
             <span style={{ color: "var(--text-secondary)" }}>IVA (22%)</span>
-            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totals.iva)}</span>
+            <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{formatEuro(totalsConSconto.iva)}</span>
           </div>
           <div className="flex justify-between pt-2 border-t" style={{ borderColor: "var(--border)" }}>
             <span className="font-bold text-sm" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>Totale</span>
-            <span className="font-bold text-sm" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>{formatEuro(totals.totale)}</span>
+            <span className="font-bold text-sm" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>{formatEuro(totalsConSconto.totale)}</span>
           </div>
         </div>
       </Card>
@@ -685,7 +737,32 @@ export default function CheckoutPage() {
             Indirizzo
           </h2>
           <div className="space-y-5">
-            {savedAddresses.length > 0 && (
+            {/* Admin mode: indirizzi fatturazione del cliente selezionato */}
+            {isAdmin && ordinaPerCliente && clienteAddresses.length > 0 && (
+              <div>
+                <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                  Indirizzo fatturazione del cliente
+                </label>
+                <div className="relative">
+                  <select
+                    className="w-full px-3 py-2.5 rounded-xl text-sm outline-none appearance-none pr-8"
+                    style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
+                    defaultValue={clienteAddresses[0]?.id ?? ""}
+                    onChange={(e) => {
+                      const addr = clienteAddresses.find((a) => a.id === e.target.value);
+                      if (addr) setFatturazione({ nome: addr.nome, via: addr.via, cap: addr.cap, citta: addr.citta, provincia: addr.provincia, partitaIva: addr.partitaIva });
+                    }}
+                  >
+                    {clienteAddresses.map((a) => (
+                      <option key={a.id} value={a.id}>{a.label || a.nome || a.via}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+                </div>
+              </div>
+            )}
+            {/* Indirizzi utente salvati (modalità normale) */}
+            {(!isAdmin || !ordinaPerCliente) && savedAddresses.length > 0 && (
               <div>
                 <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                   Usa un indirizzo salvato
@@ -829,13 +906,13 @@ export default function CheckoutPage() {
                 Articoli ({items.length})
               </p>
               <div className="space-y-2">
-                {items.map((item) => (
+                {itemsConSconto.map((item) => (
                   <div key={item.id} className="flex items-center justify-between text-sm">
                     <span style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                       {item.marca} {item.modello} × {item.quantita}
                     </span>
-                    <span style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", fontWeight: 600 }}>
-                      {formatEuro(item.prezzo * item.quantita)}
+                    <span style={{ color: item.sconto ? "#16a34a" : "var(--text-primary)", fontFamily: "var(--font-montserrat)", fontWeight: 600 }}>
+                      {formatEuro(item.prezzoScontato * item.quantita)}
                     </span>
                   </div>
                 ))}
@@ -849,7 +926,7 @@ export default function CheckoutPage() {
                 Totale ordine
               </span>
               <span className="font-bold text-lg" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
-                {formatEuro(totals.totale)}
+                {formatEuro(totalsConSconto.totale)}
               </span>
             </div>
           </div>
