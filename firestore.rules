@@ -1,0 +1,235 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
+    }
+
+    function isAdmin() {
+      return isAuth() && userDoc().Ruolo == 'Admin';
+    }
+
+    function isCRM() {
+      return isAuth() && (userDoc().CRM == true || isAdmin());
+    }
+
+    function isMagazzino() {
+      return isAuth() && (userDoc().Ruolo == 'Admin' || userDoc().Ruolo == 'Magazziniere');
+    }
+
+    function isOwner(ownerId) {
+      return isAuth() && uid() == ownerId;
+    }
+
+    function userRef() {
+      return /databases/$(database)/documents/users/$(uid());
+    }
+
+    // ─── users ────────────────────────────────────────────────────────────────
+
+    match /users/{userId} {
+      allow read: if isAuth();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+
+      match /Indirizzo_Fatturazione/{docId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+      match /Indirizzo_Spedizione/{docId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+      match /Promemoria/{docId} {
+        allow read, write: if isOwner(userId) || isCRM();
+      }
+    }
+
+    // ─── Catalogo (lettura pubblica — necessario per l'app vetrina) ───────────
+
+    match /Prodotti/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /Categoria_Prodotti/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /Marca_Prodotto/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /Modello/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /Servizi/{docId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /Combinations/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── Ordini ───────────────────────────────────────────────────────────────
+
+    match /Ordini/{ordineId} {
+      // Lettura: proprio ordine, o admin, o CRM
+      allow read: if isAuth() && (
+        resource.data.Utente == userRef() ||
+        isAdmin() ||
+        isCRM()
+      );
+      // Crea: qualsiasi utente autenticato (checkout)
+      allow create: if isAuth();
+      // Modifica/cancella: solo admin
+      allow update, delete: if isAdmin();
+
+      match /Cronologia/{docId} {
+        allow read: if isAuth() && (
+          get(/databases/$(database)/documents/Ordini/$(ordineId)).data.Utente == userRef() ||
+          isAdmin() || isCRM()
+        );
+        allow write: if isAdmin() || isCRM();
+      }
+      match /Note_Interne/{docId} {
+        allow read, write: if isAdmin() || isCRM();
+      }
+    }
+
+    // ─── Clienti ──────────────────────────────────────────────────────────────
+
+    match /Clienti/{clienteId} {
+      allow read: if isAdmin() || isCRM();
+      allow create: if isAuth();
+      allow update, delete: if isAdmin() || isCRM();
+
+      match /Preventivo/{docId} {
+        allow read, write: if isAdmin() || isCRM();
+      }
+      match /Veicolo/{docId} {
+        allow read, write: if isAdmin() || isCRM();
+      }
+      match /Indirizzo_FatturazioneC/{docId} {
+        allow read, write: if isAdmin() || isCRM();
+      }
+      match /Indirizzo_SpedizioneC/{docId} {
+        allow read, write: if isAdmin() || isCRM();
+      }
+    }
+
+    // ─── CRM ──────────────────────────────────────────────────────────────────
+
+    match /Appuntamenti/{docId} {
+      allow read: if isAuth() && (isCRM() || isAdmin());
+      allow create: if isCRM() || isAdmin();
+      allow update, delete: if isCRM() || isAdmin();
+    }
+
+    match /Foglio_di_Lavoro/{docId} {
+      allow read: if isCRM() || isAdmin();
+      allow create: if isCRM() || isAdmin();
+      allow update, delete: if isCRM() || isAdmin();
+    }
+
+    match /Reparto/{docId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /Mansione/{docId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /Sede/{docId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ─── Admin commerciale ────────────────────────────────────────────────────
+
+    match /Promozione/{docId} {
+      // Lettura: utente autenticato (per applicare sconti lato client)
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /Spedizioni/{docId} {
+      allow read: if isAdmin() || isCRM();
+      allow create: if isAdmin() || isCRM();
+      allow update, delete: if isAdmin();
+    }
+
+    match /Emails/{docId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /Pop-Up/{docId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /Promo_Immagini/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── Magazzino ────────────────────────────────────────────────────────────
+
+    match /Magazzino/{docId} {
+      allow read: if isMagazzino();
+      allow write: if isMagazzino();
+    }
+
+    // ─── Notifiche ────────────────────────────────────────────────────────────
+
+    match /Notifiche/{docId} {
+      allow read: if isAuth() && (
+        resource.data.Utente == userRef() ||
+        isAdmin() ||
+        isCRM()
+      );
+      allow create: if isAdmin() || isCRM();
+      allow update: if isAuth() && (
+        resource.data.Utente == userRef() ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── Counters (numerazione preventivi / fogli) ────────────────────────────
+
+    match /Counters/{docId} {
+      allow read: if isAuth();
+      allow write: if isAuth();
+    }
+
+    // ─── users_prezzo-gomme (vetrina pubblica) ────────────────────────────────
+
+    match /users_prezzo-gomme/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+  }
+}

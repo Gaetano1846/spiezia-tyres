@@ -1,0 +1,47 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "Ordini",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "Utente", "order": "ASCENDING" },
+        { "fieldPath": "DataCreazione", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "Ordini",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "Stato", "order": "ASCENDING" },
+        { "fieldPath": "DataCreazione", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "Promozione",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "Clienti", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "Attiva", "order": "ASCENDING" },
+        { "fieldPath": "Scadenza", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "Notifiche",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "Utente", "order": "ASCENDING" },
+        { "fieldPath": "Visto", "order": "ASCENDING" },
+        { "fieldPath": "DataCreazione", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "Appuntamenti",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "Sede", "order": "ASCENDING" },
+        { "fieldPath": "DataOra", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

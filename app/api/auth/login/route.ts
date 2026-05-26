@@ -26,29 +26,40 @@ export async function POST(req: NextRequest) {
   const { idToken } = await req.json();
   if (!idToken) return NextResponse.json({ error: "idToken required" }, { status: 400 });
 
-  // ── Dev mode: Admin SDK assente → decodifica JWT senza verifica crittografica ─
+  // ── Dev mode: Admin SDK assente → verifica idToken tramite Firestore REST ────
+  // Il token viene decodificato per estrarre uid, ma la validità è confermata
+  // dalla risposta Firestore (che usa il token come Bearer — fallisce se scaduto/falso).
   if (!isAdminConfigured()) {
     try {
-      const [, payload] = idToken.split(".");
-      const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
+      const parts = idToken.split(".");
+      if (parts.length !== 3) {
+        return NextResponse.json({ error: "Token malformato" }, { status: 401 });
+      }
+      const decoded = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
       const uid: string = decoded.user_id ?? decoded.sub ?? "";
       const email: string = decoded.email ?? "";
 
-      // Legge Ruolo + CRM da Firestore tramite REST con https (rispetta NODE_TLS_REJECT_UNAUTHORIZED)
+      if (!uid) {
+        return NextResponse.json({ error: "uid non trovato nel token" }, { status: 401 });
+      }
+
+      // Verifica implicita: Firestore rifiuterà la richiesta se il Bearer token
+      // è scaduto, revocato o falsificato (con regole non-`if true`).
+      // Se la fetch fallisce → 401 senza eccezioni silenziate.
       const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!;
       const fsUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/users/${uid}`;
 
-      let Ruolo: Ruolo = "Privato";
-      let CRM = false;
-
+      let fsData: { fields?: Record<string, { stringValue?: string; booleanValue?: boolean }> };
       try {
-        const fsData = await httpsGet(fsUrl, idToken) as { fields?: Record<string, { stringValue?: string; booleanValue?: boolean }> };
-        const fields = fsData.fields ?? {};
-        Ruolo = (fields.Ruolo?.stringValue as Ruolo) ?? "Privato";
-        CRM = fields.CRM?.booleanValue ?? false;
+        fsData = await httpsGet(fsUrl, idToken) as typeof fsData;
       } catch {
-        // Documento non trovato o rete — ruolo default
+        // Token non valido o utente inesistente — non autenticare
+        return NextResponse.json({ error: "Token non verificabile (dev)" }, { status: 401 });
       }
+
+      const fields = fsData.fields ?? {};
+      const Ruolo = (fields.Ruolo?.stringValue as Ruolo) ?? "Privato";
+      const CRM = fields.CRM?.booleanValue ?? false;
 
       const sessionPayload = { uid, email, Ruolo, CRM };
       const res = NextResponse.json({ ok: true, Ruolo, CRM });

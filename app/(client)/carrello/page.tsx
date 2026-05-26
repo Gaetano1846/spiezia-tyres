@@ -1,14 +1,13 @@
 "use client";
 import { useEffect } from "react";
 import Link from "next/link";
-import { Package, Plus, Minus, X, Tag, ShoppingCart } from "lucide-react";
+import { Package, Plus, Minus, X, Tag, ShoppingCart, Percent } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import { useCart } from "@/components/layout/CartProvider";
+import { useAuth } from "@/components/layout/AuthProvider";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-
-type StagioneKey = "Estive" | "Invernali" | "4-Stagioni";
 
 function stagioneBadge(stagione: string) {
   if (stagione === "Estive") return <Badge variant="brand">Estive</Badge>;
@@ -17,9 +16,16 @@ function stagioneBadge(stagione: string) {
 }
 
 export default function CarrelloPage() {
-  const { items, remove, update, totals } = useCart();
+  const { user } = useAuth();
+  const { items, itemsConSconto, remove, update, totals, totalsConSconto, refreshPromo } = useCart();
 
-  // Stock check: trim qty if product stock has decreased since adding to cart
+  // Carica promozioni utente al mount (se non già caricate dal PromoLoader)
+  useEffect(() => {
+    if (user?.uid) refreshPromo(user.uid);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
+
+  // Stock check: riduce qty se lo stock è diminuito dal momento dell'aggiunta
   useEffect(() => {
     if (items.length === 0) return;
     items.forEach(async (item) => {
@@ -37,6 +43,8 @@ export default function CarrelloPage() {
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const haSconto = totalsConSconto.scontoTotale > 0;
 
   if (items.length === 0) {
     return (
@@ -70,7 +78,7 @@ export default function CarrelloPage() {
             Carrello ({items.length} articoli)
           </h1>
 
-          {items.map((item) => (
+          {itemsConSconto.map((item) => (
             <Card key={item.id} padding="sm">
               <div className="flex gap-4 relative">
                 <button
@@ -105,14 +113,40 @@ export default function CarrelloPage() {
                           {item.misura}
                         </span>
                         {stagioneBadge(item.stagione)}
+                        {item.sconto && (
+                          <span
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+                            style={{ background: "rgba(34,197,94,0.12)", color: "#16a34a" }}
+                          >
+                            <Percent size={9} />
+                            PROMO
+                          </span>
+                        )}
                       </div>
                       <div className="mt-1 flex items-center gap-2">
-                        <span
-                          className="text-sm font-semibold"
-                          style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}
-                        >
-                          € {item.prezzo.toFixed(2)}
-                        </span>
+                        {item.sconto ? (
+                          <>
+                            <span
+                              className="text-xs line-through"
+                              style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+                            >
+                              € {item.prezzo.toFixed(2)}
+                            </span>
+                            <span
+                              className="text-sm font-bold"
+                              style={{ color: "#16a34a", fontFamily: "var(--font-montserrat)" }}
+                            >
+                              € {item.prezzoScontato.toFixed(2)}
+                            </span>
+                          </>
+                        ) : (
+                          <span
+                            className="text-sm font-semibold"
+                            style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}
+                          >
+                            € {item.prezzo.toFixed(2)}
+                          </span>
+                        )}
                         <span
                           className="text-xs"
                           style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
@@ -152,7 +186,7 @@ export default function CarrelloPage() {
                       className="font-bold"
                       style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}
                     >
-                      € {(item.prezzo * item.quantita).toFixed(2)}
+                      € {(item.prezzoScontato * item.quantita).toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -174,19 +208,37 @@ export default function CarrelloPage() {
               <div className="space-y-3">
                 <div className="flex justify-between text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
                   <span style={{ color: "var(--text-secondary)" }}>Subtotale</span>
-                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>€ {totals.subtotale.toFixed(2)}</span>
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    € {totalsConSconto.subtotale.toFixed(2)}
+                  </span>
                 </div>
+
+                {haSconto && (
+                  <div className="flex justify-between text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
+                    <span style={{ color: "#16a34a", fontWeight: 600 }}>Sconto promozione</span>
+                    <span style={{ color: "#16a34a", fontWeight: 700 }}>
+                      - € {totalsConSconto.scontoTotale.toFixed(2)}
+                    </span>
+                  </div>
+                )}
+
                 <div className="flex justify-between text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
                   <span style={{ color: "var(--text-secondary)" }}>PFU</span>
-                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>€ {totals.pfu.toFixed(2)}</span>
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    € {totalsConSconto.pfu.toFixed(2)}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
                   <span style={{ color: "var(--text-secondary)" }}>Contributo logistico</span>
-                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>€ {totals.contributoLogistico.toFixed(2)}</span>
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    € {totalsConSconto.contributoLogistico.toFixed(2)}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
                   <span style={{ color: "var(--text-secondary)" }}>IVA (22%)</span>
-                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>€ {totals.iva.toFixed(2)}</span>
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    € {totalsConSconto.iva.toFixed(2)}
+                  </span>
                 </div>
 
                 <div
@@ -203,18 +255,30 @@ export default function CarrelloPage() {
                     className="font-bold text-lg"
                     style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}
                   >
-                    € {totals.totale.toFixed(2)}
+                    € {totalsConSconto.totale.toFixed(2)}
                   </span>
                 </div>
               </div>
 
-              <div
-                className="mt-4 p-3 rounded-xl flex items-center gap-2 text-sm"
-                style={{ background: "rgba(255,200,3,0.1)", fontFamily: "var(--font-montserrat)" }}
-              >
-                <Tag size={14} style={{ color: "var(--brand)", flexShrink: 0 }} />
-                <span style={{ color: "var(--text-secondary)" }}>I prezzi mostrati sono già il tuo prezzo personalizzato</span>
-              </div>
+              {haSconto ? (
+                <div
+                  className="mt-4 p-3 rounded-xl flex items-center gap-2 text-sm"
+                  style={{ background: "rgba(34,197,94,0.08)", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <Percent size={14} style={{ color: "#16a34a", flexShrink: 0 }} />
+                  <span style={{ color: "#16a34a" }}>
+                    Promozione applicata — risparmi € {totalsConSconto.scontoTotale.toFixed(2)}
+                  </span>
+                </div>
+              ) : (
+                <div
+                  className="mt-4 p-3 rounded-xl flex items-center gap-2 text-sm"
+                  style={{ background: "rgba(255,200,3,0.1)", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <Tag size={14} style={{ color: "var(--brand)", flexShrink: 0 }} />
+                  <span style={{ color: "var(--text-secondary)" }}>I prezzi mostrati sono già il tuo prezzo personalizzato</span>
+                </div>
+              )}
 
               <div className="mt-5 space-y-3">
                 <Link
