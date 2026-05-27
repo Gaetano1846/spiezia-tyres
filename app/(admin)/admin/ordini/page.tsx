@@ -6,7 +6,7 @@ import {
   where, limit, type DocumentReference, type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ShoppingBag, Search, X, Eye, Truck, Download } from "lucide-react";
+import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
@@ -99,6 +99,9 @@ export default function OrdiniAdminPage() {
   const [dataDa, setDataDa]       = useState("");
   const [dataA, setDataA]         = useState("");
 
+  // Multi-selezione
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   // ── Fetch ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
@@ -173,6 +176,50 @@ export default function OrdiniAdminPage() {
   }
 
   const hasFilters = !!(stato || fonte || dataDa || dataA || search);
+
+  // ── Selezione ──────────────────────────────────────────────────────────────
+  const allSelected = filtered.length > 0 && selectedIds.size === filtered.length;
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(filtered.map((e) => e.docId)));
+  }
+
+  function handleExportSelected() {
+    const rows = filtered.filter((e) => selectedIds.has(e.docId));
+    const header = ["ID", "Cliente", "Fonte", "Stato", "Totale", "Data"];
+    const lines = rows.map(({ ordine, clienteNome }) => [
+      ordine.id ?? "",
+      clienteNome,
+      ordine.Source ?? "",
+      ordine.Stato ?? "",
+      String(ordine.Totale ?? ""),
+      formatData(getTs(ordine)),
+    ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+    const csv = [header.join(","), ...lines].join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `ordini_selezionati_${rows.length}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Esportati ${rows.length} ordini`);
+  }
+
+  function handleSpedisci(sede: "Roma" | "Nola") {
+    toast(`Spedizione ${sede}: integrazione CF in arrivo (${selectedIds.size} ordini)`);
+  }
+
+  function handleAggiornaTracking() {
+    toast(`Aggiorna Tracking: integrazione CF in arrivo (${selectedIds.size} ordini)`);
+  }
 
   // ── KPI cards ──────────────────────────────────────────────────────────────
   const kpiCards = [
@@ -315,6 +362,53 @@ export default function OrdiniAdminPage() {
           )}
         </div>
 
+        {/* Barra azioni bulk — visibile solo con selezione attiva */}
+        {selectedIds.size > 0 && (
+          <div
+            className="flex items-center gap-2.5 px-4 py-2.5 flex-wrap"
+            style={{ background: "#FFFDF0", borderBottom: "1px solid #FFC803" }}
+          >
+            <span className="text-xs font-bold mr-1" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
+              {selectedIds.size} selezionat{selectedIds.size === 1 ? "o" : "i"}
+            </span>
+            <button
+              onClick={handleExportSelected}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors hover:bg-[#f9fafb]"
+              style={{ border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+            >
+              <Download size={12} /> Export CSV
+            </button>
+            <button
+              onClick={() => handleSpedisci("Roma")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors hover:bg-[#f9fafb]"
+              style={{ border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+            >
+              <MapPin size={12} /> Spedisci Roma
+            </button>
+            <button
+              onClick={() => handleSpedisci("Nola")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors hover:bg-[#f9fafb]"
+              style={{ border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+            >
+              <MapPin size={12} /> Spedisci Nola
+            </button>
+            <button
+              onClick={handleAggiornaTracking}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors hover:bg-[#f9fafb]"
+              style={{ border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+            >
+              <RefreshCw size={12} /> Aggiorna Tracking
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold ml-auto"
+              style={{ background: "#fee2e2", color: "#ef4444", fontFamily: "var(--font-montserrat)" }}
+            >
+              <X size={11} /> Deseleziona
+            </button>
+          </div>
+        )}
+
         {/* Count */}
         <div className="px-4 py-2" style={{ borderBottom: "1px solid #f3f4f6" }}>
           <p className="text-xs" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
@@ -334,6 +428,20 @@ export default function OrdiniAdminPage() {
             <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                  {/* Select-all checkbox */}
+                  <th className="pl-4 pr-2 py-3 w-10">
+                    <button
+                      onClick={toggleSelectAll}
+                      className="w-6 h-6 rounded-md flex items-center justify-center transition-all"
+                      style={{
+                        background: allSelected ? "#FFC803" : someSelected ? "#FFF8DC" : "#fff",
+                        border: `1.5px solid ${(allSelected || someSelected) ? "#FFC803" : "#d1d5db"}`,
+                      }}
+                    >
+                      {allSelected && <Check size={13} style={{ color: "#111" }} />}
+                      {someSelected && <div style={{ width: 8, height: 2, background: "#FFC803", borderRadius: 1 }} />}
+                    </button>
+                  </th>
                   {["ID Ordine", "Cliente", "Data", "Fonte", "Importo", "Stato", ""].map((h) => (
                     <th
                       key={h}
@@ -353,12 +461,28 @@ export default function OrdiniAdminPage() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map(({ ordine, clienteNome, docId }) => (
+                  filtered.map(({ ordine, clienteNome, docId }) => {
+                    const isSelected = selectedIds.has(docId);
+                    return (
                     <tr
                       key={docId}
                       className="hover:bg-[#FFFDF0] transition-colors"
-                      style={{ borderBottom: "1px solid #f3f4f6" }}
+                      style={{ borderBottom: "1px solid #f3f4f6", background: isSelected ? "#FFFDF0" : undefined }}
                     >
+                      {/* Checkbox */}
+                      <td className="pl-4 pr-2 py-3.5 w-10">
+                        <button
+                          onClick={() => toggleSelect(docId)}
+                          className="w-6 h-6 rounded-md flex items-center justify-center transition-all"
+                          style={{
+                            background: isSelected ? "#FFC803" : "#fff",
+                            border: `1.5px solid ${isSelected ? "#FFC803" : "#d1d5db"}`,
+                          }}
+                        >
+                          {isSelected && <Check size={13} style={{ color: "#111" }} />}
+                        </button>
+                      </td>
+
                       {/* ID */}
                       <td className="px-4 py-3.5 font-semibold" style={{ color: "#111" }}>
                         {ordine.id}
@@ -419,7 +543,8 @@ export default function OrdiniAdminPage() {
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
