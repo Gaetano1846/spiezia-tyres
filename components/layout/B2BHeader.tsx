@@ -302,15 +302,15 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
             </div>
 
             {/* Indice di Velocità */}
-            <select
-              value={indiceVelocita}
-              onChange={(e) => setIndiceVelocita(e.target.value)}
-              className="px-3 py-2 text-sm outline-none rounded-xl flex-shrink-0"
-              style={{ border: "1.5px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: indiceVelocita ? "#111" : "#9ca3af", background: "#fff", cursor: "pointer" }}
-            >
-              <option value="">Indice vel.</option>
-              {INDICI_VELOCITA.map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
+            <div className="flex-shrink-0" style={{ width: 130 }}>
+              <SearchableSelect
+                value={indiceVelocita}
+                onChange={setIndiceVelocita}
+                options={INDICI_VELOCITA}
+                placeholder="Indice vel."
+                style={{ fontSize: 13 }}
+              />
+            </div>
 
             {/* Stagioni */}
             {STAGIONI.map((s) => {
@@ -393,15 +393,14 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
 
                 {/* Riga 2: Indice velocità + stagioni */}
                 <div className="flex items-center gap-2 mb-4">
-                  <select
-                    value={modal.indVelocita}
-                    onChange={(e) => setModal((p) => ({ ...p, indVelocita: e.target.value }))}
-                    className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none"
-                    style={{ border: "1.5px solid #e5e7eb", color: modal.indVelocita ? "#111" : "#9ca3af" }}
-                  >
-                    <option value="">Indice di Velocità</option>
-                    {INDICI_VELOCITA.map((v) => <option key={v} value={v}>{v}</option>)}
-                  </select>
+                  <div className="flex-1">
+                    <SearchableSelect
+                      value={modal.indVelocita}
+                      onChange={(v) => setModal((p) => ({ ...p, indVelocita: v }))}
+                      options={INDICI_VELOCITA}
+                      placeholder="Indice di Velocità"
+                    />
+                  </div>
                   <div className="flex gap-1.5 flex-shrink-0">
                     {STAGIONI.map((s) => {
                       const active = modal.stagioni.includes(s.key);
