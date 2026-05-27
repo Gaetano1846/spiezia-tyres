@@ -664,8 +664,6 @@ export default function ProdottiPage() {
           )}
         </>
       )}
-    </div>
-
       {/* ── Modal foto prodotto ── */}
       {fotoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
