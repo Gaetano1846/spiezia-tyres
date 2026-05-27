@@ -119,7 +119,8 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
       if (cat) params.set("categoria", cat);
       if (modal.misura.trim()) params.set("q", modal.misura.trim());
     }
-    router.push(`/prodotti?${params.toString()}`);
+    const qs = params.toString();
+    router.push(qs ? `/prodotti?${qs}` : "/prodotti");
     closeModal();
   }
 

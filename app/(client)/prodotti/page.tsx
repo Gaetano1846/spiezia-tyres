@@ -90,6 +90,18 @@ export default function ProdottiPage() {
 
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Sincronizza i filtri quando i searchParams cambiano (es. navigazione da header modal)
+  useEffect(() => {
+    setSearch(searchParams.get("q") ?? "");
+    const m = searchParams.get("marca");
+    setMarche(m ? m.split(",").filter(Boolean) : []);
+    const s = searchParams.get("stagione");
+    setStagioni(s ? (s.split(",") as Stagione[]) : []);
+    setCategoria(searchParams.get("categoria") ?? "");
+    setMisuraRapida(""); setLargezza(""); setAltezza(""); setDiametro("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   useEffect(() => {
     // Carica lista marche da Algolia facets; se non configurate come facets nel dashboard,
     // cade silenziosamente e la lista viene popolata dai risultati di ricerca.
