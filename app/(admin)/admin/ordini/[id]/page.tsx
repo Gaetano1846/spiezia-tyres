@@ -52,10 +52,14 @@ const statoVariant: Record<string, "success" | "brand" | "warning" | "error" | "
 };
 
 const fonteColors: Record<string, string> = {
-  B2B:         "#FFC803",
-  Amazon:      "#F9A825",
-  eBay:        "#E53935",
-  WooCommerce: "#9C27B0",
+  B2B:            "#FFC803",
+  eBay:           "#92C821",
+  Amazon:         "#FF9900",
+  WooCommerce:    "#7F54B3",
+  T24:            "#EC7522",
+  "Prezzo-Gomme": "#2D6ACB",
+  AdTyres:        "#22C55E",
+  Anonimo:        "#9ca3af",
 };
 
 const statoIcons: Record<string, React.ElementType> = {

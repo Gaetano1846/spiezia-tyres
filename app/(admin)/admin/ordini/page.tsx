@@ -22,14 +22,14 @@ const STATI: OrdineStato[] = [
 const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "T24", "Prezzo-Gomme", "AdTyres", "Anonimo"];
 
 const FONTE_COLORS: Record<string, string> = {
-  B2B:           "#FFC803",
-  eBay:          "#E53935",
-  Amazon:        "#F9A825",
-  WooCommerce:   "#9C27B0",
-  T24:           "#EE8B60",
-  "Prezzo-Gomme":"#0062CC",
-  AdTyres:       "#16A34A",
-  Anonimo:       "#9ca3af",
+  B2B:            "#FFC803",
+  eBay:           "#92C821",
+  Amazon:         "#FF9900",
+  WooCommerce:    "#7F54B3",
+  T24:            "#EC7522",
+  "Prezzo-Gomme": "#2D6ACB",
+  AdTyres:        "#22C55E",
+  Anonimo:        "#9ca3af",
 };
 
 const STATO_VARIANT: Record<string, "success" | "brand" | "neutral" | "error" | "warning"> = {
