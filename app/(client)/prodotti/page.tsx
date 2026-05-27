@@ -576,27 +576,25 @@ export default function ProdottiPage() {
                     <StockPill value={stockT24} color="rgba(99,179,237,0.75)" />
                   </div>
 
-                  {/* Quantità — visibile solo se disponibile e con prezzo */}
-                  {!esaurito && !senzaPrezzo && (
-                    <div className="flex items-center justify-center">
-                      <div className="flex items-center rounded-xl overflow-hidden"
-                        style={{ border: "1px solid #e5e7eb" }}>
-                        <button onClick={() => changeQty(hit.objectID, -1, stock)}
-                          disabled={qty <= 1}
-                          className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
-                          <Minus size={11} />
-                        </button>
-                        <span className="w-8 text-center text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
-                          {qty}
-                        </span>
-                        <button onClick={() => changeQty(hit.objectID, +1, stock)}
-                          disabled={qty >= stock}
-                          className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
-                          <Plus size={11} />
-                        </button>
-                      </div>
+                  {/* Quantità — cella sempre presente per mantenere l'allineamento della griglia */}
+                  <div className="flex items-center justify-center" style={{ visibility: (!esaurito && !senzaPrezzo) ? "visible" : "hidden" }}>
+                    <div className="flex items-center rounded-xl overflow-hidden"
+                      style={{ border: "1px solid #e5e7eb" }}>
+                      <button onClick={() => changeQty(hit.objectID, -1, stock)}
+                        disabled={qty <= 1}
+                        className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
+                        <Minus size={11} />
+                      </button>
+                      <span className="w-8 text-center text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                        {qty}
+                      </span>
+                      <button onClick={() => changeQty(hit.objectID, +1, stock)}
+                        disabled={qty >= stock}
+                        className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
+                        <Plus size={11} />
+                      </button>
                     </div>
-                  )}
+                  </div>
 
                   {/* Aggiungi / Su richiesta / Esaurito */}
                   <button
