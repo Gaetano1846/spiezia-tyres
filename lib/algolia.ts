@@ -165,9 +165,11 @@ export async function searchProdotti(
 
   const filterParts: string[] = [];
 
+  filterParts.push("T24=0");
+
   if (soloDisponibili) {
     filterParts.push(
-      "(Stock_Nola>=1 OR Stock_Nola_2>=1 OR Stock_Volla>=1 OR Stock_Roma>=1 OR Stock_Portici>=1 OR Stock_OCP>=1 OR Stock_T24>=16)"
+      "(Stock_Nola>=1 OR Stock_Nola_2>=1 OR Stock_Volla>=1 OR Stock_Roma>=1 OR Stock_Portici>=1 OR Stock_OCP>=1)"
     );
   }
 
