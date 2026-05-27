@@ -614,7 +614,7 @@ export default function ProdottiPage() {
                   </button>
 
                   {/* Foto */}
-                  <div className="hidden xl:flex justify-center">
+                  <div className="hidden xl:flex w-full items-center justify-center">
                     <button
                       onClick={() => setFotoModal(hit)}
                       className="w-8 h-8 flex items-center justify-center rounded-xl transition-colors hover:bg-gray-100"
