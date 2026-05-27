@@ -271,97 +271,79 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
           </div>
         </div>
 
-        {/* ── Barra ricerca unificata (nascosta su homepage e prodotti) ── */}
+        {/* ── Filtri rapidi (nascosti su homepage e prodotti) ── */}
         {showSearch && (
           <div
-            className="flex items-center gap-3 px-5 pb-3 pt-1"
+            className="flex items-center gap-2 px-5 pb-3 pt-1 flex-wrap"
             style={{ background: "#fff", borderBottom: "1px solid #e5e7eb" }}
           >
-            <div
-              className="flex items-center rounded-xl flex-1"
-              style={{ border: "1.5px solid #e5e7eb", overflow: "visible" }}
-            >
-              {/* Testo libero */}
+            {/* Campo testo */}
+            <div className="relative flex-shrink-0">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "#9ca3af" }} />
               <input
                 value={cerca}
                 onChange={(e) => setCerca(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleHeaderSearch()}
-                placeholder="Cerca marca, modello…"
-                className="min-w-0 w-32 px-3 py-2 text-sm outline-none"
-                style={{ fontFamily: "var(--font-montserrat)", color: "#111", background: "transparent" }}
+                placeholder="Cerca..."
+                className="pl-8 pr-3 py-2 text-sm outline-none rounded-xl"
+                style={{ width: 160, border: "1.5px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
               />
-              <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
-
-              {/* Marchio */}
-              <div style={{ width: 130, flexShrink: 0 }}>
-                <SearchableSelect
-                  value={marca}
-                  onChange={setMarca}
-                  options={marcheAll}
-                  placeholder="Marchio"
-                  style={{ border: "none", borderRadius: 0, fontSize: 13 }}
-                />
-              </div>
-              <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
-
-              {/* Indice di Velocità */}
-              <select
-                value={indiceVelocita}
-                onChange={(e) => setIndiceVelocita(e.target.value)}
-                className="px-3 py-2 text-xs outline-none flex-shrink-0"
-                style={{
-                  fontFamily: "var(--font-montserrat)",
-                  color: indiceVelocita ? "#111" : "#9ca3af",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                }}
-              >
-                <option value="">Indice vel.</option>
-                {INDICI_VELOCITA.map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-              <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
-
-              {/* Stagioni */}
-              <div className="flex items-center gap-1 px-2 flex-shrink-0">
-                {STAGIONI.map((s) => {
-                  const active = stagioni.includes(s.key);
-                  return (
-                    <button
-                      key={s.key}
-                      onClick={() => toggleStagione(s.key)}
-                      title={s.label}
-                      className="w-7 h-7 rounded-full flex items-center justify-center transition-all"
-                      style={{
-                        border: `2px solid ${active ? "#FFC803" : "#e5e7eb"}`,
-                        background: active ? "#FFF8DC" : "transparent",
-                      }}
-                    >
-                      {s.icon === "flame"     && <Flame     size={12} style={{ color: active ? "#EF4444" : "#9ca3af" }} />}
-                      {s.icon === "4stagioni" && <Image src="/icon-4stagioni.png" width={12} height={12} alt="4 stagioni" unoptimized />}
-                      {s.icon === "snowflake" && <Snowflake size={12} style={{ color: active ? "#3B82F6" : "#9ca3af" }} />}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Bottone Cerca */}
-              <button
-                onClick={handleHeaderSearch}
-                className="px-4 py-2.5 flex items-center justify-center gap-2 flex-shrink-0 transition-opacity hover:opacity-80 text-xs font-bold"
-                style={{
-                  background: "#FFC803",
-                  color: "#111",
-                  borderRadius: "0 10px 10px 0",
-                  borderLeft: "1.5px solid #FFC803",
-                  fontFamily: "var(--font-montserrat)",
-                }}
-                aria-label="Cerca"
-              >
-                <Search size={14} style={{ color: "#111" }} />
-                Cerca
-              </button>
             </div>
+
+            {/* Marchio */}
+            <div className="flex-shrink-0" style={{ width: 145 }}>
+              <SearchableSelect
+                value={marca}
+                onChange={setMarca}
+                options={marcheAll}
+                placeholder="Marchio"
+                style={{ fontSize: 13 }}
+              />
+            </div>
+
+            {/* Indice di Velocità */}
+            <select
+              value={indiceVelocita}
+              onChange={(e) => setIndiceVelocita(e.target.value)}
+              className="px-3 py-2 text-sm outline-none rounded-xl flex-shrink-0"
+              style={{ border: "1.5px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: indiceVelocita ? "#111" : "#9ca3af", background: "#fff", cursor: "pointer" }}
+            >
+              <option value="">Indice vel.</option>
+              {INDICI_VELOCITA.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+
+            {/* Stagioni */}
+            {STAGIONI.map((s) => {
+              const active = stagioni.includes(s.key);
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => toggleStagione(s.key)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all flex-shrink-0"
+                  style={{
+                    border: `1.5px solid ${active ? "#FFC803" : "#e5e7eb"}`,
+                    background: active ? "#FFF8DC" : "#fff",
+                    color: active ? "#111" : "#6b7280",
+                    fontFamily: "var(--font-montserrat)",
+                  }}
+                >
+                  {s.icon === "flame"     && <Flame     size={12} style={{ color: active ? "#EF4444" : "#9ca3af" }} />}
+                  {s.icon === "4stagioni" && <Image src="/icon-4stagioni.png" width={12} height={12} alt="4 stagioni" unoptimized />}
+                  {s.icon === "snowflake" && <Snowflake size={12} style={{ color: active ? "#3B82F6" : "#9ca3af" }} />}
+                  {s.label}
+                </button>
+              );
+            })}
+
+            {/* Bottone Cerca */}
+            <button
+              onClick={handleHeaderSearch}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition-opacity hover:opacity-80 flex-shrink-0"
+              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+            >
+              <Search size={14} />
+              Cerca
+            </button>
           </div>
         )}
       </header>
