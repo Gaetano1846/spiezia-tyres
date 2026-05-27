@@ -3,10 +3,11 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   collection, query, orderBy, getDocs, getDoc, getCountFromServer,
-  where, limit, type DocumentReference, type Timestamp,
+  where, limit, onSnapshot, doc,
+  type DocumentReference, type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw } from "lucide-react";
+import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2 } from "lucide-react";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
@@ -85,6 +86,150 @@ function formatEuro(n: number | undefined | null) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
+// ─── SpedizioneModal ───────────────────────────────────────────────────────────
+
+type Spedizione = {
+  id: string;
+  corriere?: string;
+  parcelId?: string;
+  destinationName?: string;
+  warehouseStatus?: string;
+  contractIndex?: number;
+  motivoAnnullamento?: string;
+  noteAggiuntive?: string;
+};
+
+const WAREHOUSE_STATUS_STYLE: Record<string, { bg: string; text: string }> = {
+  "In Preparazione": { bg: "#FFF8DC", text: "#B45309" },
+  "Spedito":         { bg: "#DCFCE7", text: "#166534" },
+  "Annullato":       { bg: "#FEE2E2", text: "#991B1B" },
+};
+
+function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: string; onClose: () => void }) {
+  const [spedizioni, setSpedizioni] = useState<Spedizione[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const ref = doc(db, "Ordini", docId);
+    const q = query(
+      collection(db, "Spedizioni"),
+      where("orderReference", "==", ref),
+      orderBy("createdAt", "desc"),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setSpedizioni(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Spedizione)));
+      setLoading(false);
+    }, () => setLoading(false));
+    return unsub;
+  }, [docId]);
+
+  const SEDE = ["Nola", "Roma"];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="relative bg-white rounded-2xl shadow-2xl w-full overflow-hidden"
+        style={{ maxWidth: 520, fontFamily: "var(--font-montserrat)" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #f3f4f6" }}>
+          <div className="flex items-center gap-2.5">
+            <Truck size={18} style={{ color: "#FFC803" }} />
+            <div>
+              <h2 className="text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                Spedizioni
+              </h2>
+              <p className="text-xs" style={{ color: "#9ca3af" }}>Ordine {orderId}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-xl hover:bg-gray-100 transition-colors">
+            <X size={18} style={{ color: "#374151" }} />
+          </button>
+        </div>
+
+        {/* Contenuto */}
+        <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-20 rounded-xl animate-pulse" style={{ background: "#f3f4f6" }} />
+              ))}
+            </div>
+          ) : spedizioni.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 gap-2">
+              <Package2 size={36} style={{ color: "#d1d5db" }} />
+              <p className="text-sm font-semibold" style={{ color: "#374151" }}>Nessuna spedizione</p>
+              <p className="text-xs" style={{ color: "#9ca3af" }}>Non ci sono spedizioni associate a questo ordine</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {spedizioni.map((s) => {
+                const statusStyle = WAREHOUSE_STATUS_STYLE[s.warehouseStatus ?? ""] ?? { bg: "#f3f4f6", text: "#374151" };
+                return (
+                  <div key={s.id} className="rounded-xl p-3.5" style={{ border: "1px solid #e5e7eb" }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Corriere badge */}
+                        <span
+                          className="px-2 py-0.5 rounded-full text-xs font-bold"
+                          style={{ background: s.corriere === "GLS" ? "#003DA5" : "#E8001C", color: "#fff" }}
+                        >
+                          {s.corriere ?? "—"}
+                        </span>
+                        {/* Sede */}
+                        {s.corriere === "GLS" && s.contractIndex != null && (
+                          <span className="text-xs font-semibold" style={{ color: "#6b7280" }}>
+                            {SEDE[s.contractIndex] ?? `Sede ${s.contractIndex}`}
+                          </span>
+                        )}
+                        {/* Stato */}
+                        <span
+                          className="px-2 py-0.5 rounded-full text-xs font-semibold"
+                          style={{ background: statusStyle.bg, color: statusStyle.text }}
+                        >
+                          {s.warehouseStatus ?? "—"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Parcel ID */}
+                    {s.parcelId && (
+                      <p className="mt-2 text-sm font-bold font-mono" style={{ color: "#111" }}>
+                        {s.parcelId}
+                      </p>
+                    )}
+
+                    {/* Destinazione */}
+                    {s.destinationName && (
+                      <p className="mt-1 text-xs" style={{ color: "#6b7280" }}>
+                        <MapPin size={10} className="inline mr-1" />
+                        {s.destinationName}
+                      </p>
+                    )}
+
+                    {/* Motivo annullamento */}
+                    {s.motivoAnnullamento && (
+                      <p className="mt-1.5 text-xs px-2 py-1 rounded-lg" style={{ background: "#FEE2E2", color: "#991B1B" }}>
+                        {s.motivoAnnullamento}
+                      </p>
+                    )}
+
+                    {/* Note */}
+                    {s.noteAggiuntive && (
+                      <p className="mt-1 text-xs" style={{ color: "#9ca3af" }}>{s.noteAggiuntive}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function OrdiniAdminPage() {
@@ -101,6 +246,9 @@ export default function OrdiniAdminPage() {
 
   // Multi-selezione
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Modal spedizioni
+  const [spedizioneModal, setSpedizioneModal] = useState<{ docId: string; orderId: string } | null>(null);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -535,8 +683,8 @@ export default function OrdiniAdminPage() {
                           </Link>
                           <button
                             className="p-1.5 rounded-lg hover:bg-[#f3f4f6] transition-colors"
-                            title="Spedizione"
-                            onClick={() => toast("Gestione spedizione in arrivo")}
+                            title="Spedizioni ordine"
+                            onClick={() => setSpedizioneModal({ docId, orderId: ordine.id ?? docId })}
                           >
                             <Truck size={15} style={{ color: "#374151" }} />
                           </button>
@@ -551,6 +699,14 @@ export default function OrdiniAdminPage() {
           </div>
         )}
       </div>
+
+      {spedizioneModal && (
+        <SpedizioneModal
+          docId={spedizioneModal.docId}
+          orderId={spedizioneModal.orderId}
+          onClose={() => setSpedizioneModal(null)}
+        />
+      )}
     </div>
   );
 }
