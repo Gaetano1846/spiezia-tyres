@@ -51,15 +51,15 @@ const statoVariant: Record<string, "success" | "brand" | "warning" | "error" | "
   "Rimborsato":             "error",
 };
 
-const fonteColors: Record<string, string> = {
-  B2B:            "#FFC803",
-  eBay:           "#92C821",
-  Amazon:         "#FF9900",
-  WooCommerce:    "#7F54B3",
-  T24:            "#EC7522",
-  "Prezzo-Gomme": "#2D6ACB",
-  AdTyres:        "#22C55E",
-  Anonimo:        "#9ca3af",
+const fonteColors: Record<string, { bg: string; text: string }> = {
+  B2B:            { bg: "#FFC803", text: "#111" },
+  eBay:           { bg: "#92C821", text: "#fff" },
+  Amazon:         { bg: "#2196F3", text: "#fff" },
+  WooCommerce:    { bg: "#7F54B3", text: "#fff" },
+  T24:            { bg: "#EC7522", text: "#fff" },
+  "Prezzo-Gomme": { bg: "#1565C0", text: "#fff" },
+  AdTyres:        { bg: "#E8E8E8", text: "#374151" },
+  Anonimo:        { bg: "#E8E8E8", text: "#374151" },
 };
 
 const statoIcons: Record<string, React.ElementType> = {
@@ -409,7 +409,13 @@ export default function OrdineAdminDetailPage() {
           <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
             {ordine.Numero ?? `Ordine #${id.slice(0, 8).toUpperCase()}`}
           </h1>
-          <span className="px-2.5 py-1 rounded-full text-xs font-bold text-white" style={{ background: fonteColors[ordine.Source] ?? "#666" }}>
+          <span
+            className="px-2.5 py-1 rounded-full text-xs font-bold"
+            style={{
+              background: fonteColors[ordine.Source]?.bg ?? "#E8E8E8",
+              color: fonteColors[ordine.Source]?.text ?? "#374151",
+            }}
+          >
             {ordine.Source}
           </span>
           <Badge variant={statoVariant[ordine.Stato] ?? "neutral"}>{ordine.Stato}</Badge>

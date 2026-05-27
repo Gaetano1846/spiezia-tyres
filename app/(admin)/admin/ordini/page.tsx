@@ -21,15 +21,15 @@ const STATI: OrdineStato[] = [
 
 const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "T24", "Prezzo-Gomme", "AdTyres", "Anonimo"];
 
-const FONTE_COLORS: Record<string, string> = {
-  B2B:            "#FFC803",
-  eBay:           "#92C821",
-  Amazon:         "#FF9900",
-  WooCommerce:    "#7F54B3",
-  T24:            "#EC7522",
-  "Prezzo-Gomme": "#2D6ACB",
-  AdTyres:        "#22C55E",
-  Anonimo:        "#9ca3af",
+const FONTE_COLORS: Record<string, { bg: string; text: string }> = {
+  B2B:            { bg: "#FFC803", text: "#111" },
+  eBay:           { bg: "#92C821", text: "#fff" },
+  Amazon:         { bg: "#2196F3", text: "#fff" },
+  WooCommerce:    { bg: "#7F54B3", text: "#fff" },
+  T24:            { bg: "#EC7522", text: "#fff" },
+  "Prezzo-Gomme": { bg: "#1565C0", text: "#fff" },
+  AdTyres:        { bg: "#E8E8E8", text: "#374151" },
+  Anonimo:        { bg: "#E8E8E8", text: "#374151" },
 };
 
 const STATO_VARIANT: Record<string, "success" | "brand" | "neutral" | "error" | "warning"> = {
@@ -379,8 +379,8 @@ export default function OrdiniAdminPage() {
                         <span
                           className="px-2 py-0.5 rounded-full text-xs font-bold"
                           style={{
-                            background: FONTE_COLORS[ordine.Source] ?? "#9ca3af",
-                            color: ordine.Source === "B2B" ? "#111" : "#fff",
+                            background: FONTE_COLORS[ordine.Source]?.bg ?? "#E8E8E8",
+                            color: FONTE_COLORS[ordine.Source]?.text ?? "#374151",
                           }}
                         >
                           {ordine.Source}

@@ -49,13 +49,13 @@ type SpedizioneRow = SpedizioneFS & {
 const SOURCE_COLORS: Record<string, { bg: string; color: string }> = {
   B2B:            { bg: "#FFC803", color: "#111" },
   eBay:           { bg: "#92C821", color: "#fff" },
-  Amazon:         { bg: "#FF9900", color: "#fff" },
+  Amazon:         { bg: "#2196F3", color: "#fff" },
   WooCommerce:    { bg: "#7F54B3", color: "#fff" },
   Tyre24:         { bg: "#EC7522", color: "#fff" },
   T24:            { bg: "#EC7522", color: "#fff" },
-  "Prezzo-Gomme": { bg: "#2D6ACB", color: "#fff" },
-  AdTyres:        { bg: "#22C55E", color: "#fff" },
-  Anonimo:        { bg: "#9ca3af", color: "#fff" },
+  "Prezzo-Gomme": { bg: "#1565C0", color: "#fff" },
+  AdTyres:        { bg: "#E8E8E8", color: "#374151" },
+  Anonimo:        { bg: "#E8E8E8", color: "#374151" },
 };
 
 const STATO_GLS_LABELS: Record<string, string> = {
