@@ -1,10 +1,25 @@
 import { algoliasearch } from "algoliasearch";
 import type { Ruolo } from "./types";
 
-export const algoliaClient = algoliasearch(
-  process.env.NEXT_PUBLIC_ALGOLIA_APP_ID ?? "",
-  process.env.NEXT_PUBLIC_ALGOLIA_SEARCH_KEY ?? ""
-);
+let _algoliaClient: ReturnType<typeof algoliasearch> | null = null;
+
+function getAlgoliaClient() {
+  if (!_algoliaClient) {
+    const appId = process.env.NEXT_PUBLIC_ALGOLIA_APP_ID ?? "";
+    const key   = process.env.NEXT_PUBLIC_ALGOLIA_SEARCH_KEY ?? "";
+    if (!appId || !key) throw new Error("Algolia non configurato: NEXT_PUBLIC_ALGOLIA_APP_ID e NEXT_PUBLIC_ALGOLIA_SEARCH_KEY mancanti.");
+    _algoliaClient = algoliasearch(appId, key);
+  }
+  return _algoliaClient;
+}
+
+export const algoliaClient = new Proxy({} as ReturnType<typeof algoliasearch>, {
+  get(_t, prop) {
+    const client = getAlgoliaClient();
+    const value = (client as Record<string | symbol, unknown>)[prop];
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(client) : value;
+  },
+});
 
 export const INDEX_NAME = process.env.NEXT_PUBLIC_ALGOLIA_INDEX ?? "Prodotti";
 

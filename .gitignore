@@ -26,3 +26,9 @@ yarn-error.log*
 
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase service account keys
+*-firebase-adminsdk-*.json
+
+# Playwright test artifacts
+.playwright-mcp/

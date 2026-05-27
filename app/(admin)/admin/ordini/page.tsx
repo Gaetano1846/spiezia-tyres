@@ -19,7 +19,7 @@ const STATI: OrdineStato[] = [
   "Spedito", "Consegnato", "Annullato", "Rimborsato",
 ];
 
-const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "T24", "Prezzo-Gomme", "Anonimo"];
+const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "T24", "Prezzo-Gomme", "AdTyres", "Anonimo"];
 
 const FONTE_COLORS: Record<string, string> = {
   B2B:           "#FFC803",
@@ -28,6 +28,7 @@ const FONTE_COLORS: Record<string, string> = {
   WooCommerce:   "#9C27B0",
   T24:           "#EE8B60",
   "Prezzo-Gomme":"#0062CC",
+  AdTyres:       "#16A34A",
   Anonimo:       "#9ca3af",
 };
 
@@ -43,7 +44,7 @@ const STATO_VARIANT: Record<string, "success" | "brand" | "neutral" | "error" | 
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type OrdineEntry = { ordine: Ordine; clienteNome: string };
+type OrdineEntry = { ordine: Ordine; clienteNome: string; docId: string };
 
 type KPIs = { totale: number; daEvadere: number; inTransito: number; annullati: number };
 
@@ -104,7 +105,7 @@ export default function OrdiniAdminPage() {
       setLoading(true);
       try {
         const [ordiniSnap, kpiTotale, kpiDaEvadere, kpiTransito, kpiAnnullati] = await Promise.all([
-          getDocs(query(collection(db, "Ordini"), limit(300))),
+          getDocs(query(collection(db, "Ordini"), orderBy("DataOra", "desc"), limit(300))),
           getCountFromServer(collection(db, "Ordini")),
           getCountFromServer(query(collection(db, "Ordini"), where("Stato", "in", ["Confermato", "In lavorazione"]))),
           getCountFromServer(query(collection(db, "Ordini"), where("Stato", "==", "Spedito"))),
@@ -119,17 +120,17 @@ export default function OrdiniAdminPage() {
         });
 
         const ordini = ordiniSnap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as Ordine))
-          .sort((a, b) => (getTs(b)?.toMillis() ?? 0) - (getTs(a)?.toMillis() ?? 0));
+          .map((d) => ({ docId: d.id, ordine: { ...d.data(), id: (d.data() as Record<string, unknown>).id ?? d.id } as Ordine }))
+          .sort((a, b) => (getTs(b.ordine)?.toMillis() ?? 0) - (getTs(a.ordine)?.toMillis() ?? 0));
 
-        const clienteRefs = ordini.map((o) => o.Cliente).filter(Boolean) as DocumentReference[];
-        const utenteRefs  = ordini.map((o) => o.Utente).filter(Boolean) as DocumentReference[];
+        const clienteRefs = ordini.map(({ ordine: o }) => o.Cliente).filter(Boolean) as DocumentReference[];
+        const utenteRefs  = ordini.map(({ ordine: o }) => o.Utente).filter(Boolean) as DocumentReference[];
         const [clientiMap, utentiMap] = await Promise.all([
           batchGetDocs(clienteRefs),
           batchGetDocs(utenteRefs),
         ]);
 
-        const resolved: OrdineEntry[] = ordini.map((ordine) => {
+        const resolved: OrdineEntry[] = ordini.map(({ ordine, docId }) => {
           let clienteNome = "—";
           if (ordine.Cliente) {
             const c = clientiMap.get(ordine.Cliente.path);
@@ -138,7 +139,7 @@ export default function OrdiniAdminPage() {
             const u = utentiMap.get(ordine.Utente.path);
             if (u) clienteNome = String(u.displayName || u.email || "—");
           }
-          return { ordine, clienteNome };
+          return { ordine, clienteNome, docId };
         });
 
         setEntries(resolved);
@@ -155,7 +156,7 @@ export default function OrdiniAdminPage() {
   const filtered = useMemo(() => {
     return entries.filter(({ ordine, clienteNome }) => {
       if (search) {
-        const hay = [ordine.Numero ?? "", clienteNome, String(ordine.Totale ?? ""), ordine.id].join(" ").toLowerCase();
+        const hay = [ordine.id, clienteNome, String(ordine.Totale ?? "")].join(" ").toLowerCase();
         if (!hay.includes(search.toLowerCase())) return false;
       }
       if (stato  && ordine.Stato  !== stato)  return false;
@@ -352,15 +353,15 @@ export default function OrdiniAdminPage() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map(({ ordine, clienteNome }) => (
+                  filtered.map(({ ordine, clienteNome, docId }) => (
                     <tr
-                      key={ordine.id}
+                      key={docId}
                       className="hover:bg-[#FFFDF0] transition-colors"
                       style={{ borderBottom: "1px solid #f3f4f6" }}
                     >
                       {/* ID */}
                       <td className="px-4 py-3.5 font-semibold" style={{ color: "#111" }}>
-                        {ordine.Numero ?? `#${ordine.id.slice(0, 8).toUpperCase()}`}
+                        {ordine.id}
                       </td>
 
                       {/* Cliente */}
@@ -402,7 +403,7 @@ export default function OrdiniAdminPage() {
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-2">
                           <Link
-                            href={`/admin/ordini/${ordine.id}`}
+                            href={`/admin/ordini/${docId}`}
                             className="p-1.5 rounded-lg hover:bg-[#FFF8DC] transition-colors"
                             title="Dettagli ordine"
                           >

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { buildDevCookie } from "@/lib/auth";
+import { buildDevCookie, buildRoleCookie } from "@/lib/auth";
 import type { SessionPayload, Ruolo } from "@/lib/types";
 
 // Disponibile SOLO quando l'Admin SDK non è configurato (sviluppo locale).
@@ -36,5 +36,6 @@ export function GET(request: NextRequest) {
 
   const res = NextResponse.redirect(new URL(redirectTo, request.url));
   res.headers.append("Set-Cookie", buildDevCookie(payload));
+  res.headers.append("Set-Cookie", buildRoleCookie(payload.Ruolo, payload.CRM));
   return res;
 }

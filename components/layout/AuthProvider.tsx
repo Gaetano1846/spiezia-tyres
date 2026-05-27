@@ -68,8 +68,12 @@ async function loadUserFromSession(): Promise<AppUser | null> {
     const payload: SessionPayload = await res.json();
     if (!payload?.uid) return null;
     // Try to get the full Firestore doc; fall back to the session payload itself
-    const snap = await getDoc(doc(db, "users", payload.uid));
-    if (snap.exists()) return { uid: payload.uid, email: payload.email, ...snap.data() } as AppUser;
+    try {
+      const snap = await getDoc(doc(db, "users", payload.uid));
+      if (snap.exists()) return { uid: payload.uid, email: payload.email, ...snap.data() } as AppUser;
+    } catch {
+      // Firestore unavailable (e.g. stub API key in dev) — fall through to session payload
+    }
     // Dev preset users (dev-admin, dev-crm, …) don't exist in Firestore — build from payload
     return { uid: payload.uid, email: payload.email, Ruolo: payload.Ruolo, CRM: payload.CRM } as AppUser;
   } catch {
