@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Search } from "lucide-react";
-import { collection, getDocs, query, limit } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
@@ -15,7 +15,7 @@ const MARCHE = [
 ];
 
 const INDICI_VELOCITA = ["P","Q","R","S","T","H","V","W","Y","Z"];
-const INDICI_CARICO = Array.from({ length: 50 }, (_, i) => String(60 + i));
+const INDICI_CARICO   = Array.from({ length: 50 }, (_, i) => String(60 + i));
 
 const STAGIONI = [
   { key: "Estive",     icon: "🔥", label: "Estive" },
@@ -23,46 +23,48 @@ const STAGIONI = [
   { key: "Invernali",  icon: "❄️", label: "Invernali" },
 ] as const;
 
-type PromoImg = { id: string; URL?: string; Immagine?: string; Ordine?: number };
+type PromoImg = { id: string; Url?: string; URL?: string; Immagine?: string; Ordine?: number; Attivo?: boolean };
 
 export default function HomePage() {
   const router = useRouter();
 
-  const [cerca, setCerca] = useState("");
-  const [marche, setMarche] = useState<string[]>([]);
+  const [cerca,          setCerca]          = useState("");
+  const [marche,         setMarche]         = useState<string[]>([]);
   const [indiceVelocita, setIndiceVelocita] = useState("");
-  const [indiceCarico, setIndiceCarico] = useState("");
-  const [stagioni, setStagioni] = useState<string[]>([]);
-  const [promo, setPromo] = useState<PromoImg[]>([]);
+  const [indiceCarico,   setIndiceCarico]   = useState("");
+  const [stagioni,       setStagioni]       = useState<string[]>([]);
+  const [promo,          setPromo]          = useState<PromoImg[]>([]);
 
   useEffect(() => {
-    getDocs(query(collection(db, "Promo_Immagini"), limit(6)))
-      .then((snap) =>
-        setPromo(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PromoImg)))
-      )
+    getDocs(collection(db, "Promo_Immagini"))
+      .then((snap) => {
+        const items = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() } as PromoImg))
+          .filter((p) => p.Attivo !== false)          // mostra tutti salvo Attivo==false esplicito
+          .sort((a, b) => (a.Ordine ?? 0) - (b.Ordine ?? 0));
+        setPromo(items);
+      })
       .catch(() => {});
   }, []);
 
   function toggleStagione(s: string) {
-    setStagioni((prev) =>
-      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
-    );
+    setStagioni((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
   }
 
   function handleCerca() {
     const params = new URLSearchParams();
-    if (cerca) params.set("q", cerca);
-    if (marche.length > 0) params.set("marca", marche.join(","));
-    if (indiceVelocita) params.set("iv", indiceVelocita);
-    if (indiceCarico) params.set("ic", indiceCarico);
-    if (stagioni.length > 0) params.set("stagione", stagioni.join(","));
+    if (cerca)           params.set("q",       cerca);
+    if (marche.length)   params.set("marca",   marche.join(","));
+    if (indiceVelocita)  params.set("iv",      indiceVelocita);
+    if (indiceCarico)    params.set("ic",      indiceCarico);
+    if (stagioni.length) params.set("stagione",stagioni.join(","));
     router.push(`/prodotti?${params.toString()}`);
   }
 
   return (
     <div>
-      {/* ── Hero + Search Widget ── */}
-      <div className="relative w-full" style={{ height: 520 }}>
+      {/* ── Background: widget ricerca + card promo ── */}
+      <div className="relative w-full overflow-hidden">
         <Image
           src="/login-bg-b2b.jpg"
           alt="Spiezia Tyres"
@@ -71,52 +73,41 @@ export default function HomePage() {
           priority
           unoptimized
         />
-        <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.52)" }} />
+        <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.50)" }} />
 
-        <div className="absolute inset-0 flex items-center justify-center px-4">
+        <div className="relative z-10 px-5 py-8 space-y-6">
+
+          {/* Widget di ricerca */}
           <div
-            className="w-full rounded-2xl p-6"
-            style={{
-              maxWidth: 520,
-              background: "#fff",
-              boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
-            }}
+            className="w-full mx-auto rounded-2xl p-6"
+            style={{ maxWidth: 560, background: "#fff", boxShadow: "0 24px 64px rgba(0,0,0,0.35)" }}
           >
-            <h2
-              className="text-lg font-bold mb-4"
-              style={{ fontFamily: "var(--font-poppins)", color: "#111" }}
-            >
+            <h2 className="text-lg font-bold mb-4" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
               Ricerca
             </h2>
 
-            {/* Riga 1: Cerca libera */}
-            <div className="mb-3">
+            {/* Cerca + Marchio */}
+            <div className="flex gap-2 mb-3">
               <input
                 value={cerca}
                 onChange={(e) => setCerca(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleCerca()}
                 placeholder="Cerca misura, modello..."
-                className="w-full px-4 py-2.5 rounded-xl text-sm outline-none"
-                style={{
-                  border: "1px solid #e5e7eb",
-                  fontFamily: "var(--font-montserrat)",
-                  color: "#111",
-                }}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm outline-none"
+                style={{ border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
               />
+              <div style={{ flex: "0 0 160px" }}>
+                <MultiSearchableSelect
+                  values={marche}
+                  onChange={setMarche}
+                  options={MARCHE}
+                  placeholder="Marchio"
+                />
+              </div>
             </div>
 
-            {/* Marche multi-select */}
-            <div className="mb-3">
-              <MultiSearchableSelect
-                values={marche}
-                onChange={setMarche}
-                options={MARCHE}
-                placeholder="Marchio (multi-selezione)"
-              />
-            </div>
-
-            {/* Riga 2: Indice Velocità + Indice Carico + Stagioni */}
-            <div className="flex gap-3 mb-5 items-center">
+            {/* Indice Velocità + Indice Carico + Stagioni */}
+            <div className="flex gap-2 mb-5 items-center">
               <SearchableSelect
                 value={indiceVelocita}
                 onChange={setIndiceVelocita}
@@ -131,8 +122,6 @@ export default function HomePage() {
                 placeholder="Indice di Carico"
                 style={{ flex: 1 }}
               />
-
-              {/* Stagione toggle */}
               <div className="flex gap-1.5 flex-shrink-0">
                 {STAGIONI.map((s) => {
                   const active = stagioni.includes(s.key);
@@ -155,56 +144,43 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Bottone Cerca */}
             <button
               onClick={handleCerca}
               className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-bold transition-opacity hover:opacity-90"
-              style={{
-                background: "#FFC803",
-                color: "#111",
-                fontFamily: "var(--font-montserrat)",
-              }}
+              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
             >
-              <Search size={16} />
-              Cerca
+              <Search size={16} /> Cerca
             </button>
           </div>
+
+          {/* Card promo in scroll orizzontale */}
+          {promo.length > 0 && (
+            <div
+              className="flex gap-4 overflow-x-auto pb-3"
+              style={{ scrollbarWidth: "thin", scrollbarColor: "#FFC803 rgba(255,255,255,0.2)" }}
+            >
+              {promo.map((p) => {
+                const src = p.Url ?? p.URL ?? p.Immagine;
+                if (!src) return null;
+                return (
+                  <div
+                    key={p.id}
+                    className="flex-shrink-0 rounded-2xl overflow-hidden shadow-2xl"
+                    style={{ width: 300, height: 260 }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={src} alt="Promozione" className="w-full h-full object-cover" />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ── Contenuto sotto hero ── */}
-      <div className="px-5 py-8 space-y-8">
-
-        {/* Promo banners da Firestore */}
-        {promo.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {promo.slice(0, 3).map((p) => {
-              const src = p.URL ?? p.Immagine;
-              if (!src) return null;
-              return (
-                <div
-                  key={p.id}
-                  className="rounded-2xl overflow-hidden"
-                  style={{ border: "1px solid #e5e7eb", minHeight: 200 }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={src}
-                    alt="Promozione"
-                    className="w-full h-full object-cover"
-                    style={{ minHeight: 200 }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Brand distributor strip */}
-        <div
-          className="rounded-2xl overflow-hidden"
-          style={{ border: "1px solid #e5e7eb" }}
-        >
+      {/* ── Striscia distributori ── */}
+      <div className="px-5 py-6">
+        <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid #e5e7eb" }}>
           <Image
             src="/distributore.png"
             alt="Spiezia Tyres — Distributore autorizzato"
