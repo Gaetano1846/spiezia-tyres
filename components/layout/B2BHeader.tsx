@@ -180,7 +180,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
         {/* ── Header principale — riga 1 ── */}
         <div
           className="flex items-center gap-3 px-5 py-2.5"
-          style={{ background: "#fff", borderBottom: showSearch ? "none" : "1px solid #e5e7eb" }}
+          style={{ background: "#fff", borderBottom: "none" }}
         >
           {/* Sinistra: hamburger + CRM */}
           <div className="flex items-center gap-2.5 flex-shrink-0">
@@ -198,41 +198,6 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
             )}
           </div>
 
-          {/* Barra di ricerca rapida (nascosta su homepage e prodotti) */}
-          {showSearch && (
-            <div className="flex items-center rounded-xl flex-shrink-0" style={{ border: "1.5px solid #e5e7eb" }}>
-              <input
-                value={cerca}
-                onChange={(e) => setCerca(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleHeaderSearch()}
-                placeholder="Cerca..."
-                className="w-36 px-3 py-2 text-sm outline-none rounded-l-xl"
-                style={{ fontFamily: "var(--font-montserrat)", color: "#111" }}
-              />
-              <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
-              <div style={{ width: 130 }}>
-                <SearchableSelect
-                  value={marca}
-                  onChange={setMarca}
-                  options={marcheAll}
-                  placeholder="Marchio"
-                  style={{
-                    border: "none",
-                    borderRadius: 0,
-                    fontSize: 13,
-                  }}
-                />
-              </div>
-              <button
-                onClick={handleHeaderSearch}
-                className="px-3 py-2 flex items-center justify-center flex-shrink-0 transition-opacity hover:opacity-80"
-                style={{ background: "#FFC803" }}
-                aria-label="Cerca"
-              >
-                <Search size={15} style={{ color: "#111" }} />
-              </button>
-            </div>
-          )}
 
           {/* Centro: Ricerca Avanzata — sempre visibile */}
           <div className="flex-1 flex items-center justify-center gap-2 flex-wrap">
@@ -306,41 +271,97 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
           </div>
         </div>
 
-        {/* ── Riga 2: Indice Velocità + Stagioni (solo quando showSearch) ── */}
+        {/* ── Barra ricerca unificata (nascosta su homepage e prodotti) ── */}
         {showSearch && (
           <div
-            className="flex items-center gap-2.5 px-5 pb-2.5 pt-1"
+            className="flex items-center gap-3 px-5 pb-3 pt-1"
             style={{ background: "#fff", borderBottom: "1px solid #e5e7eb" }}
           >
-            <select
-              value={indiceVelocita}
-              onChange={(e) => setIndiceVelocita(e.target.value)}
-              className="px-3 py-1.5 text-xs rounded-xl outline-none"
-              style={{ border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: indiceVelocita ? "#111" : "#9ca3af", background: "#fff" }}
+            <div
+              className="flex items-center rounded-xl flex-1"
+              style={{ border: "1.5px solid #e5e7eb", overflow: "visible" }}
             >
-              <option value="">Indice di Velocità</option>
-              {INDICI_VELOCITA.map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
+              {/* Testo libero */}
+              <input
+                value={cerca}
+                onChange={(e) => setCerca(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleHeaderSearch()}
+                placeholder="Cerca marca, modello…"
+                className="min-w-0 w-32 px-3 py-2 text-sm outline-none"
+                style={{ fontFamily: "var(--font-montserrat)", color: "#111", background: "transparent" }}
+              />
+              <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
 
-            {STAGIONI.map((s) => {
-              const active = stagioni.includes(s.key);
-              return (
-                <button
-                  key={s.key}
-                  onClick={() => toggleStagione(s.key)}
-                  title={s.label}
-                  className="w-8 h-8 rounded-full flex items-center justify-center transition-all flex-shrink-0"
-                  style={{
-                    border: `2px solid ${active ? "#FFC803" : "#e5e7eb"}`,
-                    background: active ? "#FFF8DC" : "#fff",
-                  }}
-                >
-                  {s.icon === "flame"     && <Flame     size={13} style={{ color: active ? "#EF4444" : "#9ca3af" }} />}
-                  {s.icon === "4stagioni" && <Image src="/icon-4stagioni.png" width={14} height={14} alt="4 stagioni" unoptimized />}
-                  {s.icon === "snowflake" && <Snowflake size={13} style={{ color: active ? "#3B82F6" : "#9ca3af" }} />}
-                </button>
-              );
-            })}
+              {/* Marchio */}
+              <div style={{ width: 130, flexShrink: 0 }}>
+                <SearchableSelect
+                  value={marca}
+                  onChange={setMarca}
+                  options={marcheAll}
+                  placeholder="Marchio"
+                  style={{ border: "none", borderRadius: 0, fontSize: 13 }}
+                />
+              </div>
+              <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
+
+              {/* Indice di Velocità */}
+              <select
+                value={indiceVelocita}
+                onChange={(e) => setIndiceVelocita(e.target.value)}
+                className="px-3 py-2 text-xs outline-none flex-shrink-0"
+                style={{
+                  fontFamily: "var(--font-montserrat)",
+                  color: indiceVelocita ? "#111" : "#9ca3af",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">Indice vel.</option>
+                {INDICI_VELOCITA.map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+              <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
+
+              {/* Stagioni */}
+              <div className="flex items-center gap-1 px-2 flex-shrink-0">
+                {STAGIONI.map((s) => {
+                  const active = stagioni.includes(s.key);
+                  return (
+                    <button
+                      key={s.key}
+                      onClick={() => toggleStagione(s.key)}
+                      title={s.label}
+                      className="w-7 h-7 rounded-full flex items-center justify-center transition-all"
+                      style={{
+                        border: `2px solid ${active ? "#FFC803" : "#e5e7eb"}`,
+                        background: active ? "#FFF8DC" : "transparent",
+                      }}
+                    >
+                      {s.icon === "flame"     && <Flame     size={12} style={{ color: active ? "#EF4444" : "#9ca3af" }} />}
+                      {s.icon === "4stagioni" && <Image src="/icon-4stagioni.png" width={12} height={12} alt="4 stagioni" unoptimized />}
+                      {s.icon === "snowflake" && <Snowflake size={12} style={{ color: active ? "#3B82F6" : "#9ca3af" }} />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Bottone Cerca */}
+              <button
+                onClick={handleHeaderSearch}
+                className="px-4 py-2.5 flex items-center justify-center gap-2 flex-shrink-0 transition-opacity hover:opacity-80 text-xs font-bold"
+                style={{
+                  background: "#FFC803",
+                  color: "#111",
+                  borderRadius: "0 10px 10px 0",
+                  borderLeft: "1.5px solid #FFC803",
+                  fontFamily: "var(--font-montserrat)",
+                }}
+                aria-label="Cerca"
+              >
+                <Search size={14} style={{ color: "#111" }} />
+                Cerca
+              </button>
+            </div>
           </div>
         )}
       </header>
