@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, updateDoc, increment, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
@@ -12,14 +12,7 @@ import toast from "react-hot-toast";
 import type { Cliente } from "@/lib/types";
 import { nextCounter } from "@/lib/counters";
 
-const metodiPagamento = [
-  { id: "bonifico",  label: "Bonifico bancario" },
-  { id: "contanti",  label: "Contanti alla consegna" },
-  { id: "carta",     label: "Carta di credito" },
-  { id: "fido",      label: "Fido" },
-];
-
-const steps = ["Dati cliente", "Indirizzo", "Pagamento", "Conferma"];
+const steps = ["Dati cliente", "Indirizzo", "Conferma"];
 
 type AddressForm = {
   nome: string;
@@ -376,7 +369,6 @@ export default function CheckoutPage() {
   const [fatturazione, setFatturazione] = useState<AddressForm>(emptyAddress);
   const [spedizioneDiv, setSpedizioneDiv] = useState(false);
   const [spedizione, setSpedizione] = useState<AddressForm>(emptyAddress);
-  const [metodo, setMetodo] = useState("bonifico");
   const [submitting, setSubmitting] = useState(false);
   const [fidoBlocked, setFidoBlocked] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
@@ -531,7 +523,7 @@ export default function CheckoutPage() {
         PFU: totalsConSconto.pfu,
         ScontoTotale: totalsConSconto.scontoTotale,
         Pagamento: {
-          Metodo: metodo,
+          Metodo: "Da definire",
           Stato: "In attesa",
         },
         ContributoLogistico: totalsConSconto.contributoLogistico,
@@ -574,19 +566,6 @@ export default function CheckoutPage() {
         }),
       }).catch(() => {});
 
-      // ── Aggiorna Fido_Residuo se metodo = fido ───────────────────────────────
-      if (metodo === "fido") {
-        const delta = -totalsConSconto.totale;
-        if (isAdmin && clienteSelezionato) {
-          updateDoc(doc(db, "Clienti", clienteSelezionato.id), {
-            Fido_Residuo: increment(delta),
-          }).catch(() => {});
-        } else {
-          updateDoc(doc(db, "users", user.uid), {
-            Fido_Residuo: increment(delta),
-          }).catch(() => {});
-        }
-      }
 
       clear();
       toast.success("Ordine confermato!");
@@ -851,41 +830,6 @@ export default function CheckoutPage() {
       return (
         <Card>
           <h2 className="text-lg font-bold mb-5" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
-            Metodo di pagamento
-          </h2>
-          <div className="space-y-3">
-            {metodiPagamento.map((m) => (
-              <label
-                key={m.id}
-                className="flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all"
-                style={{
-                  border: metodo === m.id ? "2px solid var(--brand)" : "2px solid var(--border)",
-                  background: metodo === m.id ? "rgba(255,200,3,0.05)" : "transparent",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="metodo"
-                  value={m.id}
-                  checked={metodo === m.id}
-                  onChange={() => setMetodo(m.id)}
-                  className="accent-yellow-400"
-                />
-                <span className="text-sm font-medium" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                  {m.label}
-                </span>
-              </label>
-            ))}
-          </div>
-        </Card>
-      );
-    }
-
-    if (step === 3) {
-      const metodoLabel = metodiPagamento.find((m) => m.id === metodo)?.label ?? "";
-      return (
-        <Card>
-          <h2 className="text-lg font-bold mb-5" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
             Conferma ordine
           </h2>
           <div className="space-y-5">
@@ -933,14 +877,6 @@ export default function CheckoutPage() {
                 )}
               </div>
             )}
-            <div>
-              <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                Metodo di pagamento
-              </p>
-              <p className="text-sm" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                {metodoLabel}
-              </p>
-            </div>
             <div>
               <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                 Articoli ({items.length})
@@ -1025,7 +961,7 @@ export default function CheckoutPage() {
             ) : (
               <div />
             )}
-            {step < 3 ? (
+            {step < 2 ? (
               <button
                 onClick={handleNext}
                 className="px-6 py-2.5 rounded-full text-sm font-semibold transition-opacity hover:opacity-90"
