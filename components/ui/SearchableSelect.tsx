@@ -83,7 +83,10 @@ export default function SearchableSelect({
         !dropdownRef.current?.contains(t)
       ) setOpen(false);
     }
-    function onScroll() { setOpen(false); }
+    function onScroll(e: Event) {
+      if (dropdownRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    }
     document.addEventListener("mousedown", close);
     window.addEventListener("scroll", onScroll, true);
     return () => {
