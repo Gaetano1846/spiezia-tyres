@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind } from "lucide-react";
+import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind, ZoomIn } from "lucide-react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useCart } from "@/components/layout/CartProvider";
@@ -84,6 +84,9 @@ export default function ProdottiPage() {
 
   // Quantità per prodotto
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+
+  // Modal foto prodotto
+  const [fotoModal, setFotoModal] = useState<ProdottoHit | null>(null);
 
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -439,7 +442,7 @@ export default function ProdottiPage() {
             {/* Intestazione colonne — stile Flutter: header scuro */}
             <div className="hidden xl:grid px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider"
               style={{
-                gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
+                gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
                 background: "#111",
                 borderBottom: "1px solid #333",
                 color: "#fff",
@@ -458,6 +461,7 @@ export default function ProdottiPage() {
               <span className="text-center">48/72</span>
               <span className="text-center">Qtà</span>
               <span></span>
+              <span className="text-center">Foto</span>
             </div>
 
             {/* Righe prodotto */}
@@ -479,7 +483,7 @@ export default function ProdottiPage() {
                   key={hit.objectID}
                   className="flex xl:grid items-center gap-2 px-4 py-2.5 transition-colors hover:bg-[#FFFDF0]"
                   style={{
-                    gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
+                    gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
                     borderBottom: idx < sortedHits.length - 1 ? "1px solid #f3f4f6" : "none",
                     opacity: esaurito ? 0.5 : 1,
                     gap: "8px",
@@ -608,6 +612,18 @@ export default function ProdottiPage() {
                     <ShoppingCart size={12} />
                     {esaurito ? "Esaurito" : senzaPrezzo ? "Su richiesta" : "Aggiungi"}
                   </button>
+
+                  {/* Foto */}
+                  <div className="hidden xl:flex justify-center">
+                    <button
+                      onClick={() => setFotoModal(hit)}
+                      className="w-8 h-8 flex items-center justify-center rounded-xl transition-colors hover:bg-gray-100"
+                      style={{ border: "1px solid #e5e7eb" }}
+                      title="Visualizza foto"
+                    >
+                      <ZoomIn size={14} style={{ color: "#6b7280" }} />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -647,6 +663,70 @@ export default function ProdottiPage() {
             </div>
           )}
         </>
+      )}
+    </div>
+
+      {/* ── Modal foto prodotto ── */}
+      {fotoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setFotoModal(null)} />
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full overflow-hidden"
+            style={{ maxWidth: 720, fontFamily: "var(--font-montserrat)" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <h2 className="text-base font-bold truncate pr-4" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                {fotoModal.Marca} {formatMisura(fotoModal)}
+                {fotoModal.Indice_Carico && fotoModal.Indice_Velocita
+                  ? ` ${fotoModal.Indice_Carico}${fotoModal.Indice_Velocita}` : ""}
+                {" "}{fotoModal.Modello}
+              </h2>
+              <button
+                onClick={() => setFotoModal(null)}
+                className="flex-shrink-0 p-1.5 rounded-xl hover:bg-gray-100 transition-colors"
+                aria-label="Chiudi"
+              >
+                <X size={20} style={{ color: "#111" }} />
+              </button>
+            </div>
+
+            {/* Contenuto */}
+            <div className="flex items-start justify-center gap-6 px-6 py-6">
+              {/* Foto prodotto */}
+              {fotoModal.Foto ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={fotoModal.Foto}
+                  alt={`${fotoModal.Marca} ${fotoModal.Modello}`}
+                  style={{ maxHeight: 340, maxWidth: 320, objectFit: "contain" }}
+                />
+              ) : fotoModal.Immagine ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={fotoModal.Immagine}
+                  alt={fotoModal.Marca}
+                  style={{ maxHeight: 200, maxWidth: 200, objectFit: "contain" }}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2" style={{ width: 200, height: 200, background: "#f9fafb", borderRadius: 12 }}>
+                  <ZoomIn size={40} style={{ color: "#d1d5db" }} />
+                  <p className="text-xs" style={{ color: "#9ca3af" }}>Nessuna foto</p>
+                </div>
+              )}
+
+              {/* Etichetta energetica */}
+              {fotoModal.Label && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={fotoModal.Label}
+                  alt="Etichetta energetica"
+                  style={{ maxHeight: 340, maxWidth: 220, objectFit: "contain" }}
+                />
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

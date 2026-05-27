@@ -41,6 +41,7 @@ export type ProdottoHit = {
   EAN?: string;
   SKU?: string;
   Label?: string;
+  Foto?: string;
   CAI?: string;
   Prezzo?: number;           // campo generico — usato come ultimo fallback
   Prezzo_Gommista: number;
