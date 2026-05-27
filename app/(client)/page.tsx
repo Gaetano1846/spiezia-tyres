@@ -156,8 +156,8 @@ export default function HomePage() {
           {/* Card promo in scroll orizzontale */}
           {promo.length > 0 && (
             <div
-              className="flex gap-4 overflow-x-auto pb-3"
-              style={{ scrollbarWidth: "thin", scrollbarColor: "#FFC803 rgba(255,255,255,0.2)" }}
+              className="flex overflow-x-auto pb-2"
+              style={{ gap: 25, scrollbarWidth: "thin", scrollbarColor: "#FFC803 rgba(255,255,255,0.2)" }}
             >
               {promo.map((p) => {
                 const src = p.Url ?? p.URL ?? p.Immagine;
@@ -165,11 +165,15 @@ export default function HomePage() {
                 return (
                   <div
                     key={p.id}
-                    className="flex-shrink-0 rounded-2xl overflow-hidden shadow-2xl"
-                    style={{ width: 300, height: 260 }}
+                    className="flex-shrink-0 overflow-hidden shadow-2xl"
+                    style={{ borderRadius: 8, height: 300 }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt="Promozione" className="w-full h-full object-cover" />
+                    <img
+                      src={src}
+                      alt="Promozione"
+                      style={{ height: "100%", width: "auto", display: "block", objectFit: "cover" }}
+                    />
                   </div>
                 );
               })}
@@ -179,18 +183,13 @@ export default function HomePage() {
       </div>
 
       {/* ── Striscia distributori ── */}
-      <div className="px-5 py-6">
-        <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid #e5e7eb" }}>
-          <Image
-            src="/distributore.png"
-            alt="Spiezia Tyres — Distributore autorizzato"
-            width={1200}
-            height={250}
-            className="w-full"
-            style={{ maxHeight: 220, objectFit: "cover", objectPosition: "center" }}
-            unoptimized
-          />
-        </div>
+      <div className="py-6 flex justify-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/distributore.png"
+          alt="Spiezia Tyres — Distributore autorizzato"
+          style={{ width: "60vw", height: "15vh", objectFit: "contain" }}
+        />
       </div>
     </div>
   );
