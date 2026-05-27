@@ -8,6 +8,7 @@ import {
   Search, X, Flame, Snowflake,
 } from "lucide-react";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import { searchProdotti } from "@/lib/algolia";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
@@ -66,6 +67,16 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
 
   // Modal pneumatici / cerchi / camere
   const [modal, setModal] = useState<ModalState>(MODAL_EMPTY);
+
+  // Marche disponibili (caricate da Algolia, fallback sulla lista statica)
+  const [marcheAll, setMarcheAll] = useState<string[]>(MARCHE);
+  useEffect(() => {
+    searchProdotti({ withFacets: true, hitsPerPage: 1, soloDisponibili: false })
+      .then((r) => {
+        if (r.facets?.Marca) setMarcheAll(Object.keys(r.facets.Marca).sort());
+      })
+      .catch(() => {});
+  }, []);
 
   // Notifiche non viste
   const [notifCount, setNotifCount] = useState(0);
@@ -189,28 +200,29 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
 
           {/* Barra di ricerca rapida (nascosta su homepage e prodotti) */}
           {showSearch && (
-            <div
-              className="flex items-center rounded-xl overflow-hidden flex-shrink-0"
-              style={{ border: "1.5px solid #e5e7eb" }}
-            >
+            <div className="flex items-center rounded-xl flex-shrink-0" style={{ border: "1.5px solid #e5e7eb" }}>
               <input
                 value={cerca}
                 onChange={(e) => setCerca(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleHeaderSearch()}
                 placeholder="Cerca..."
-                className="w-36 px-3 py-2 text-sm outline-none"
+                className="w-36 px-3 py-2 text-sm outline-none rounded-l-xl"
                 style={{ fontFamily: "var(--font-montserrat)", color: "#111" }}
               />
               <div style={{ width: 1, background: "#e5e7eb", height: 22, flexShrink: 0 }} />
-              <select
-                value={marca}
-                onChange={(e) => setMarca(e.target.value)}
-                className="px-2.5 py-2 text-sm outline-none bg-white"
-                style={{ fontFamily: "var(--font-montserrat)", color: marca ? "#111" : "#9ca3af", border: "none" }}
-              >
-                <option value="">Marchio</option>
-                {MARCHE.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+              <div style={{ width: 130 }}>
+                <SearchableSelect
+                  value={marca}
+                  onChange={setMarca}
+                  options={marcheAll}
+                  placeholder="Marchio"
+                  style={{
+                    border: "none",
+                    borderRadius: 0,
+                    fontSize: 13,
+                  }}
+                />
+              </div>
               <button
                 onClick={handleHeaderSearch}
                 className="px-3 py-2 flex items-center justify-center flex-shrink-0 transition-opacity hover:opacity-80"
@@ -370,7 +382,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
                     <SearchableSelect
                       value={modal.marchio}
                       onChange={(v) => setModal((p) => ({ ...p, marchio: v }))}
-                      options={MARCHE}
+                      options={marcheAll}
                       placeholder="Marchio"
                     />
                   </div>
