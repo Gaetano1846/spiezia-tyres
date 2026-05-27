@@ -136,7 +136,7 @@ export default function ProdottiPage() {
         return merged as ProdottoHit;
       });
 
-      setHits(enriched);
+      setHits(enriched.filter((h) => !h.T24));
     } catch {
       toast.error("Errore nel caricamento prodotti");
     } finally {
