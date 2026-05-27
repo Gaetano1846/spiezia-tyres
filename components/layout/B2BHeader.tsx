@@ -7,6 +7,7 @@ import {
   Phone, MessageCircle, Mail, Bell, ShoppingCart, Menu,
   Search, X, Flame, Snowflake,
 } from "lucide-react";
+import SearchableSelect from "@/components/ui/SearchableSelect";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
@@ -365,15 +366,14 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
                     // eslint-disable-next-line jsx-a11y/no-autofocus
                     autoFocus
                   />
-                  <select
-                    value={modal.marchio}
-                    onChange={(e) => setModal((p) => ({ ...p, marchio: e.target.value }))}
-                    className="rounded-xl px-3 py-2.5 text-sm outline-none"
-                    style={{ border: "1.5px solid #e5e7eb", color: modal.marchio ? "#111" : "#9ca3af", minWidth: 110 }}
-                  >
-                    <option value="">Marchio</option>
-                    {MARCHE.map((m) => <option key={m} value={m}>{m}</option>)}
-                  </select>
+                  <div style={{ minWidth: 120 }}>
+                    <SearchableSelect
+                      value={modal.marchio}
+                      onChange={(v) => setModal((p) => ({ ...p, marchio: v }))}
+                      options={MARCHE}
+                      placeholder="Marchio"
+                    />
+                  </div>
                 </div>
 
                 {/* Riga 2: Indice velocità + stagioni */}
