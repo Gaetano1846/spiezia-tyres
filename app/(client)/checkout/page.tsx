@@ -678,62 +678,60 @@ export default function CheckoutPage() {
 
             {/* Admin-only: ordine per conto di un cliente */}
             {isAdmin && (
-              <div
-                className="rounded-xl overflow-hidden"
-                style={{ border: "1px solid var(--border)" }}
-              >
-                {/* Header / toggle row */}
-                <div
+              <div className="rounded-xl" style={{ border: "2px solid #FFC803", background: "rgba(255,200,3,0.04)" }}>
+                {/* Toggle row */}
+                <label
                   className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
-                  style={{ background: "var(--bg-primary)" }}
-                  onClick={() => {
-                    setOrdinaPerCliente((v) => !v);
-                    if (ordinaPerCliente) setClienteSelezionato(null);
-                  }}
+                  style={{ fontFamily: "var(--font-montserrat)" }}
                 >
                   <input
                     type="checkbox"
                     checked={ordinaPerCliente}
-                    onChange={() => {}}
-                    className="w-4 h-4 accent-yellow-400 cursor-pointer"
+                    onChange={(e) => {
+                      setOrdinaPerCliente(e.target.checked);
+                      if (!e.target.checked) setClienteSelezionato(null);
+                    }}
+                    className="w-4 h-4 accent-yellow-400 cursor-pointer flex-shrink-0"
                   />
                   <div className="flex-1">
-                    <p className="text-sm font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                    <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
                       Ordine per conto di un cliente
                     </p>
-                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                      Visibile solo agli amministratori
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Solo amministratori
                     </p>
                   </div>
                   {ordinaPerCliente && clienteSelezionato && (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: "rgba(255,200,3,0.15)" }}>
-                      <UserCheck size={12} style={{ color: "#FFC803" }} />
-                      <span className="text-xs font-semibold max-w-[120px] truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: "rgba(255,200,3,0.25)" }}>
+                      <UserCheck size={12} style={{ color: "#92660a" }} />
+                      <span className="text-xs font-bold max-w-[120px] truncate" style={{ color: "#92660a" }}>
                         {clienteDisplayName(clienteSelezionato)}
                       </span>
                     </div>
                   )}
-                </div>
+                </label>
 
                 {/* Expanded: cliente search */}
                 {ordinaPerCliente && (
-                  <div className="px-4 pb-4 pt-3" style={{ background: "var(--bg-secondary)", borderTop: "1px solid var(--border)" }}>
-                    <SearchableClienteDropdown
-                      value={clienteSelezionato}
-                      onChange={setClienteSelezionato}
-                    />
+                  <div className="px-4 pb-4" style={{ borderTop: "1px solid rgba(255,200,3,0.3)" }}>
+                    <div className="pt-3">
+                      <SearchableClienteDropdown
+                        value={clienteSelezionato}
+                        onChange={setClienteSelezionato}
+                      />
+                    </div>
                     {clienteSelezionato && (
                       <div
-                        className="mt-3 p-3 rounded-lg flex items-center gap-3"
-                        style={{ background: "rgba(255,200,3,0.08)", border: "1px solid rgba(255,200,3,0.25)" }}
+                        className="mt-3 p-3 rounded-xl flex items-center gap-3"
+                        style={{ background: "rgba(255,200,3,0.1)", border: "1px solid rgba(255,200,3,0.35)" }}
                       >
-                        <UserCheck size={18} style={{ color: "#FFC803", flexShrink: 0 }} />
+                        <UserCheck size={16} style={{ color: "#FFC803", flexShrink: 0 }} />
                         <div className="min-w-0">
                           <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
                             {clienteDisplayName(clienteSelezionato)}
                           </p>
                           {clienteSelezionato.Telefono && (
-                            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                            <p className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                               {clienteSelezionato.Telefono}
                             </p>
                           )}
