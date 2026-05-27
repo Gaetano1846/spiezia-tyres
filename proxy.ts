@@ -1,34 +1,80 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const SESSION_COOKIE = "spiezia_session";
-const DEV_COOKIE = "spiezia_dev_session";
-
+// Public paths: accessible without authentication
 const PUBLIC_PATHS = ["/login", "/recupera-password"];
 
-function isPublic(pathname: string): boolean {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
+// Paths that require CRM or Admin role
+const CRM_PATHS = [
+  "/dashboard",
+  "/clienti",
+  "/preventivi",
+  "/appuntamenti",
+  "/fogli-di-lavoro",
+  "/notifiche",
+];
+const ADMIN_PATHS = ["/admin"];
+const MAGAZZINO_PATHS = ["/magazzino"];
+
+// Check either session cookie (prod or dev). Auth verification (signature check) happens
+// server-side in getSession(). Here we only need presence for routing decisions.
+function getSessionCookie(req: NextRequest): string | undefined {
+  return (
+    req.cookies.get("spiezia_session")?.value ||
+    req.cookies.get("spiezia_dev_session")?.value
+  );
 }
 
-export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+function getRoleData(req: NextRequest): { Ruolo: string; CRM: boolean } | null {
+  const raw = req.cookies.get("user-role")?.value;
+  if (!raw) return null;
+  try {
+    return JSON.parse(decodeURIComponent(raw)) as { Ruolo: string; CRM: boolean };
+  } catch {
+    return null;
+  }
+}
 
-  if (isPublic(pathname)) return NextResponse.next();
+export function proxy(req: NextRequest) {
+  const { pathname } = req.nextUrl;
 
-  const hasSession =
-    request.cookies.has(SESSION_COOKIE) || request.cookies.has(DEV_COOKIE);
-
-  if (!hasSession) {
-    // In sviluppo locale auto-login come Admin (nessun Firebase richiesto)
-    if (process.env.NODE_ENV === "development") {
-      const devUrl = new URL("/api/auth/dev", request.url);
-      devUrl.searchParams.set("role", "admin");
-      devUrl.searchParams.set("to", pathname);
-      return NextResponse.redirect(devUrl);
+  // ── Public paths ────────────────────────────────────────────────────────────
+  // Already authenticated → redirect away from login. Not authenticated → pass through.
+  // Unauthenticated access to protected routes is handled by server-side layouts
+  // (getSession() + redirect("/login")) — this avoids RSC navigation 404 issues
+  // that occur when proxy redirects mid-client-navigation in Next.js 16.
+  const isPublic = PUBLIC_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + "/"),
+  );
+  if (isPublic) {
+    if (getSessionCookie(req)) {
+      return NextResponse.redirect(new URL("/", req.url));
     }
+    return NextResponse.next();
+  }
 
-    const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("from", pathname);
-    return NextResponse.redirect(loginUrl);
+  // ── Role-based routing (only for authenticated sessions) ────────────────────
+  const session = getSessionCookie(req);
+  if (!session) return NextResponse.next(); // layout will redirect to /login
+
+  const role = getRoleData(req);
+  const ruolo = role?.Ruolo?.toLowerCase() ?? "";
+
+  if (CRM_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    if (!role?.CRM && ruolo !== "admin") {
+      return NextResponse.redirect(new URL("/", req.url));
+    }
+  }
+
+  if (ADMIN_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    if (ruolo !== "admin") {
+      return NextResponse.redirect(new URL("/", req.url));
+    }
+  }
+
+  if (MAGAZZINO_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    if (ruolo !== "admin" && ruolo !== "magazziniere") {
+      return NextResponse.redirect(new URL("/", req.url));
+    }
   }
 
   return NextResponse.next();
@@ -36,6 +82,7 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/|public/).*)",
+    // Skip Next.js internals and static files. Page routes always have no dot in the path.
+    "/((?!api|_next/static|_next/image|favicon\\.ico|.*\\..*).*)",
   ],
 };

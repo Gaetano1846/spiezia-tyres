@@ -3,11 +3,11 @@
 import { useState, useEffect, useRef } from "react";
 import {
   collection, query, orderBy, getDocs,
-  addDoc, updateDoc, doc,
+  addDoc, updateDoc, deleteDoc, doc,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "@/lib/firebase";
-import { Search, Pencil, Plus, X, Check, Loader2, Upload, ImageIcon } from "lucide-react";
+import { Search, Pencil, Trash2, Plus, X, Check, Loader2, Upload, ImageIcon } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 
@@ -130,6 +130,18 @@ export default function BrandPage() {
       toast.error("Errore nel salvataggio");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDelete(brand: Brand) {
+    if (!confirm(`Eliminare il brand "${brand.Nome}"?`)) return;
+    try {
+      await deleteDoc(doc(db, "Marca_Prodotto", brand.id));
+      setBrands((prev) => prev.filter((b) => b.id !== brand.id));
+      closeModal();
+      toast.success("Brand eliminato");
+    } catch {
+      toast.error("Errore nell'eliminazione del brand");
     }
   }
 
@@ -299,19 +311,28 @@ export default function BrandPage() {
             </div>
 
             {/* Footer */}
-            <div className="px-5 py-4 flex justify-end gap-2"
+            <div className="px-5 py-4 flex items-center justify-between gap-2"
               style={{ borderTop: "1px solid #e5e7eb" }}>
-              <button onClick={closeModal}
-                className="px-4 py-2 rounded-xl text-sm font-semibold"
-                style={{ background: "#f9fafb", border: "1px solid #e5e7eb", color: "#374151", fontFamily: "var(--font-montserrat)" }}>
-                Annulla
-              </button>
-              <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-opacity"
-                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}>
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                {saving ? "Salvataggio…" : "Salva"}
-              </button>
+              {editBrand ? (
+                <button onClick={() => handleDelete(editBrand)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold hover:bg-red-50 transition-colors"
+                  style={{ border: "1px solid #FCA5A5", color: "#DC2626", fontFamily: "var(--font-montserrat)" }}>
+                  <Trash2 size={13} /> Elimina
+                </button>
+              ) : <span />}
+              <div className="flex gap-2">
+                <button onClick={closeModal}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold"
+                  style={{ background: "#f9fafb", border: "1px solid #e5e7eb", color: "#374151", fontFamily: "var(--font-montserrat)" }}>
+                  Annulla
+                </button>
+                <button onClick={handleSave} disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-opacity"
+                  style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  {saving ? "Salvataggio…" : "Salva"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

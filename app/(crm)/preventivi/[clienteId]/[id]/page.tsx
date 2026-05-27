@@ -6,6 +6,7 @@ import {
   doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { nextCounter } from "@/lib/counters";
 import {
   ArrowLeft, Download, CheckCircle2, XCircle, Car, User, FileText, Wrench,
   ShoppingCart, Loader2, Printer,
@@ -114,11 +115,6 @@ function badgeVariant(stato: string): "success" | "warning" | "neutral" | "error
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-function generateNumeroOrdine(): string {
-  const year = new Date().getFullYear();
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `ORD-${year}-${rand}`;
-}
 
 export default function PreventivoDetailPage() {
   const params    = useParams();
@@ -232,8 +228,12 @@ export default function PreventivoDetailPage() {
         PFU: 0,
       }));
 
+      const sedeId = (preventivo.Sede?.id ?? preventivo.Sede) ?? "main";
+      const n = await nextCounter("Ordine", typeof sedeId === "string" ? sedeId : "main");
+      const year = new Date().getFullYear();
+
       const payload = {
-        Numero: generateNumeroOrdine(),
+        Numero: `ORD-${year}-${String(n).padStart(5, "0")}`,
         Cliente: doc(db, "Clienti", clienteId),
         Source: "B2B",
         Stato: "Confermato",

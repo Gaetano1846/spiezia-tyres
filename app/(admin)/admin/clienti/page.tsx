@@ -172,9 +172,17 @@ export default function ClientiPage() {
 
   async function aggiornaFido() {
     setAggiornandoFido(true);
-    await new Promise((r) => setTimeout(r, 800));
-    toast.success("Funzione Aggiorna Fido in sviluppo");
-    setAggiornandoFido(false);
+    try {
+      const res = await fetch(
+        "https://europe-west3-crm-3iuocs.cloudfunctions.net/Fido_Management_CSV"
+      );
+      if (!res.ok) throw new Error(`CF error ${res.status}`);
+      toast.success("Fido aggiornato dal CSV");
+    } catch {
+      toast.error("Errore nell'aggiornamento del fido");
+    } finally {
+      setAggiornandoFido(false);
+    }
   }
 
   function openEdit(u: UserDoc) {

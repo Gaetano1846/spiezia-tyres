@@ -11,6 +11,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useRouter } from "next/navigation";
 import { Truck, Search, Printer, Eye, RefreshCw, X } from "lucide-react";
 import StatCard from "@/components/ui/StatCard";
 import toast from "react-hot-toast";
@@ -128,6 +129,7 @@ function RowSkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function SpedizioniPage() {
+  const router = useRouter();
   const [rawDocs, setRawDocs] = useState<SpedizioneFS[]>([]);
   const [rows, setRows]       = useState<SpedizioneRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -233,6 +235,63 @@ export default function SpedizioniPage() {
     setSelected(new Set());
   }
 
+  async function handleChiudiManifesto() {
+    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA");
+    if (glsSelected.length === 0) { toast.error("Nessuna spedizione GLS selezionata"); return; }
+
+    // Group by contractIndex (0=Nola, 1=Roma)
+    const byContract = new Map<number, typeof glsSelected>();
+    for (const r of glsSelected) {
+      const ci = r.contractIndex ?? 0;
+      if (!byContract.has(ci)) byContract.set(ci, []);
+      byContract.get(ci)!.push(r);
+    }
+
+    const toastId = toast.loading("Chiusura manifesto GLS…");
+    try {
+      await Promise.all(
+        [...byContract.entries()].map(([contractIndex]) =>
+          fetch(
+            `https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy?action=close&contractIndex=${contractIndex}`,
+            { method: "POST" }
+          )
+        )
+      );
+      toast.dismiss(toastId);
+      toast.success(`Manifesto chiuso per ${glsSelected.length} spedizioni`);
+      setSelected(new Set());
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Errore nella chiusura del manifesto");
+    }
+  }
+
+  function handleViewOrder(r: SpedizioneRow) {
+    const orderId = r.orderReference?.id;
+    if (!orderId) { toast.error("Ordine non collegato"); return; }
+    router.push(`/admin/ordini/${orderId}`);
+  }
+
+  async function handlePrintLabel(r: SpedizioneRow) {
+    if (!r.parcelId) { toast.error("Nessun ID spedizione disponibile"); return; }
+    const isSDA  = r.Corriere === "SDA";
+    const toastId = toast.loading(`Recupero etichetta ${isSDA ? "SDA" : "GLS"}…`);
+    try {
+      const url = isSDA
+        ? `https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=label&parcelId=${r.parcelId}`
+        : `https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy?action=label&parcelId=${r.parcelId}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`CF error ${res.status}`);
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      window.open(objUrl, "_blank");
+      toast.dismiss(toastId);
+    } catch {
+      toast.dismiss(toastId);
+      toast.error(`Impossibile recuperare l'etichetta ${isSDA ? "SDA" : "GLS"}`);
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
@@ -284,9 +343,17 @@ export default function SpedizioniPage() {
 
       {/* Bulk selection bar */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl flex-wrap"
           style={{ background: "#FFF8DC", border: "1px solid #FFC803", fontFamily: "var(--font-montserrat)" }}>
           <span className="text-sm font-bold" style={{ color: "#111" }}>{selected.size} selezionati</span>
+          <button
+            onClick={handleChiudiManifesto}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
+            style={{ background: "#111", color: "#FFC803" }}
+            title="Chiudi manifesto GLS per le spedizioni selezionate"
+          >
+            <Printer size={11} /> Chiudi Manifesto GLS
+          </button>
           <button onClick={() => setSelected(new Set())}
             className="ml-auto flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium"
             style={{ background: "#e5e7eb", color: "#374151" }}>
@@ -478,12 +545,12 @@ export default function SpedizioniPage() {
                       {/* Actions */}
                       <td className="py-3.5 pr-4">
                         <div className="flex items-center gap-1.5">
-                          <button title="Stampa etichetta"
+                          <button title="Stampa etichetta" onClick={() => handlePrintLabel(r)}
                             className="p-1.5 rounded-lg transition-colors hover:bg-[#FFF8DC]"
                             style={{ color: "#FFC803", border: "1px solid #FFC803" }}>
                             <Printer size={13} />
                           </button>
-                          <button title="Visualizza ordine"
+                          <button title="Visualizza ordine" onClick={() => handleViewOrder(r)}
                             className="p-1.5 rounded-lg transition-colors hover:bg-[#FFF8DC]"
                             style={{ color: "#FFC803", border: "1px solid #FFC803" }}>
                             <Eye size={13} />

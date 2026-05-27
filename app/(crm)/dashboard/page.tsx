@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   collection, collectionGroup, query, where, getDocs, getDoc,
-  getCountFromServer, limit, orderBy, updateDoc, doc,
+  getCountFromServer, limit, updateDoc, doc,
   Timestamp, type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -90,8 +90,7 @@ export default function DashboardPage() {
         getDocs(query(
           collection(db, "users", uid, "Promemoria"),
           where("Completato", "==", false),
-          orderBy("Data", "asc"),
-          limit(20),
+          limit(50),
         )),
       ]);
 
@@ -147,7 +146,9 @@ export default function DashboardPage() {
 
       // Filter: mostra solo quelli con Data <= oggi (o senza data)
       const todayTs = Timestamp.fromDate(endOfDay.toDate());
-      const promoFiltrati = promWithCliente.filter((p) => !p.Data || p.Data.seconds <= todayTs.seconds);
+      const promoFiltrati = promWithCliente
+        .filter((p) => !p.Data || p.Data.seconds <= todayTs.seconds)
+        .sort((a, b) => (a.Data?.seconds ?? 0) - (b.Data?.seconds ?? 0));
 
       setKpis({
         clientiCount:     clientiSnap.data().count,

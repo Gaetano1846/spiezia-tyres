@@ -11,6 +11,11 @@ const TABS = [
   { label: "Brand",       href: "/admin/brand" },
   { label: "Disegni",     href: "/admin/disegni" },
   { label: "Email",       href: "/admin/email" },
+  { label: "Operatori",   href: "/admin/operatori" },
+  { label: "Sedi",        href: "/admin/sedi" },
+  { label: "Catalogo",   href: "/admin/catalogo" },
+  { label: "Banner",     href: "/admin/banner" },
+  { label: "Pop-Up",    href: "/admin/popup" },
 ];
 
 export default function BackendTabs() {

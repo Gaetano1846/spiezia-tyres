@@ -3,15 +3,15 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
-  doc, getDoc, getDocs, collection, query, orderBy, limit,
-  where, updateDoc, addDoc, serverTimestamp, Timestamp,
+  doc, getDoc, getDocs, collection, collectionGroup, query, orderBy, limit,
+  where, updateDoc, addDoc, deleteDoc, serverTimestamp, Timestamp,
   type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
   ArrowLeft, Pencil, Car, FileText, Calendar, StickyNote,
   Plus, Eye, Phone, Mail, Building2, CreditCard, AlertCircle,
-  X, Check, ShoppingBag, Wrench,
+  X, Check, ShoppingBag, Wrench, Bell,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -26,8 +26,25 @@ const appStatoVariant: Record<string, "success" | "brand" | "neutral" | "error">
   Annullato:   "error",
 };
 
-type Tab = "Veicoli" | "Preventivi" | "Appuntamenti" | "Ordini" | "FogliDiLavoro" | "Note";
-const TABS: Tab[] = ["Veicoli", "Preventivi", "Appuntamenti", "Ordini", "FogliDiLavoro", "Note"];
+type Tab = "Veicoli" | "Preventivi" | "Appuntamenti" | "Ordini" | "FogliDiLavoro" | "Promemoria" | "Note";
+const TABS: Tab[] = ["Veicoli", "Preventivi", "Appuntamenti", "Ordini", "FogliDiLavoro", "Promemoria", "Note"];
+
+type PromemoriaRow = {
+  id: string;
+  Nome: string;
+  Descrizione?: string;
+  Mittente?: string;
+  Data_Scadenza?: Timestamp;
+  Data_Creazione?: Timestamp;
+  Completata: boolean;
+};
+
+type PromemoriaForm = {
+  nome: string;
+  descrizione: string;
+  scadenza: string;
+};
+const emptyPromemoriaForm = (): PromemoriaForm => ({ nome: "", descrizione: "", scadenza: "" });
 
 type FoglioRow = {
   id: string;
@@ -91,18 +108,25 @@ export default function ClienteDetailPage() {
   const [appuntamenti, setAppuntamenti] = useState<Appuntamento[]>([]);
   const [ordini,       setOrdini]       = useState<Ordine[]>([]);
   const [fogli,        setFogli]        = useState<FoglioRow[]>([]);
+  const [promemoria,   setPromemoria]   = useState<PromemoriaRow[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [activeTab,    setActiveTab]    = useState<Tab>("Veicoli");
   const [nota,         setNota]         = useState("");
   const [savingNota,   setSavingNota]   = useState(false);
+
+  // Promemoria
+  const [showPromemoriaModal, setShowPromemoriaModal] = useState(false);
+  const [proForm,  setProForm]  = useState<PromemoriaForm>(emptyPromemoriaForm());
+  const [savingPro, setSavingPro] = useState(false);
 
   // Modifica cliente
   const [editMode,   setEditMode]   = useState(false);
   const [editForm,   setEditForm]   = useState<EditForm | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Nuovo veicolo
+  // Veicolo (crea / modifica)
   const [showVeicoloModal, setShowVeicoloModal] = useState(false);
+  const [editVeicoloId, setEditVeicoloId] = useState<string | null>(null);
   const [veicoloForm, setVeicoloForm] = useState<VeicoloForm>(emptyVeicoloForm());
   const [savingVeicolo, setSavingVeicolo] = useState(false);
 
@@ -121,7 +145,7 @@ export default function ClienteDetailPage() {
 
         const clienteRef = doc(db, "Clienti", id) as DocumentReference;
 
-        const [veicoliSnap, preventiviSnap, appSnap, ordiniSnap, fogliSnap] = await Promise.all([
+        const [veicoliSnap, preventiviSnap, appSnap, ordiniSnap, fogliSnap, proSnap] = await Promise.all([
           getDocs(collection(db, "Clienti", id, "Veicolo")),
           getDocs(query(collection(db, "Clienti", id, "Preventivo"), orderBy("DataCreazione", "desc"), limit(50))),
           getDocs(query(
@@ -140,7 +164,23 @@ export default function ClienteDetailPage() {
             orderBy("DataOra", "desc"),
             limit(50),
           )),
+          getDocs(query(
+            collectionGroup(db, "Promemoria"),
+            where("Cliente", "==", clienteRef),
+            orderBy("Data_Scadenza", "asc"),
+            limit(50),
+          )),
         ]);
+
+        setPromemoria(proSnap.docs.map((d) => ({
+          id: d.id,
+          Nome:          d.data().Nome ?? "",
+          Descrizione:   d.data().Descrizione,
+          Mittente:      d.data().Mittente,
+          Data_Scadenza: d.data().Data_Scadenza as Timestamp | undefined,
+          Data_Creazione: d.data().Data_Creazione as Timestamp | undefined,
+          Completata:    d.data().Completata ?? false,
+        })));
 
         setVeicoli(veicoliSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
         setPreventivi(preventiviSnap.docs.map((d) => ({
@@ -254,6 +294,24 @@ export default function ClienteDetailPage() {
     }
   }
 
+  function openVeicoloModal(veicolo?: Veicolo) {
+    if (veicolo) {
+      setEditVeicoloId(veicolo.id);
+      setVeicoloForm({
+        Marca: veicolo.Marca ?? "",
+        Modello: veicolo.Modello ?? "",
+        Targa: veicolo.Targa ?? "",
+        Anno: veicolo.Anno != null ? String(veicolo.Anno) : "",
+        Km: veicolo.Km != null ? String(veicolo.Km) : "",
+        Note: veicolo.Note ?? "",
+      });
+    } else {
+      setEditVeicoloId(null);
+      setVeicoloForm(emptyVeicoloForm());
+    }
+    setShowVeicoloModal(true);
+  }
+
   async function handleSaveVeicolo() {
     if (!veicoloForm.Marca || !veicoloForm.Modello) {
       toast.error("Inserisci marca e modello");
@@ -266,30 +324,109 @@ export default function ClienteDetailPage() {
         Modello: veicoloForm.Modello,
         Targa: veicoloForm.Targa,
         identificativo: `${veicoloForm.Marca} ${veicoloForm.Modello}${veicoloForm.Targa ? ` (${veicoloForm.Targa})` : ""}`,
-        DataCreazione: serverTimestamp(),
       };
       if (veicoloForm.Anno) payload.Anno = Number(veicoloForm.Anno);
       if (veicoloForm.Km) payload.Km = Number(veicoloForm.Km);
       if (veicoloForm.Note) payload.Note = veicoloForm.Note;
 
-      const ref = await addDoc(collection(db, "Clienti", id, "Veicolo"), payload);
-      const newV: Veicolo = {
-        id: ref.id,
-        Targa: veicoloForm.Targa,
-        Marca: veicoloForm.Marca,
-        Modello: veicoloForm.Modello,
-        Anno: veicoloForm.Anno ? Number(veicoloForm.Anno) : undefined,
-        Km: veicoloForm.Km ? Number(veicoloForm.Km) : undefined,
-        Note: veicoloForm.Note || undefined,
-      };
-      setVeicoli((prev) => [...prev, newV]);
-      toast.success("Veicolo aggiunto");
+      if (editVeicoloId) {
+        await updateDoc(doc(db, "Clienti", id, "Veicolo", editVeicoloId), payload);
+        setVeicoli((prev) => prev.map((v) => v.id === editVeicoloId ? {
+          ...v,
+          Marca: veicoloForm.Marca,
+          Modello: veicoloForm.Modello,
+          Targa: veicoloForm.Targa,
+          Anno: veicoloForm.Anno ? Number(veicoloForm.Anno) : undefined,
+          Km: veicoloForm.Km ? Number(veicoloForm.Km) : undefined,
+          Note: veicoloForm.Note || undefined,
+        } : v));
+        toast.success("Veicolo aggiornato");
+      } else {
+        payload.DataCreazione = serverTimestamp();
+        const ref = await addDoc(collection(db, "Clienti", id, "Veicolo"), payload);
+        const newV: Veicolo = {
+          id: ref.id,
+          Targa: veicoloForm.Targa,
+          Marca: veicoloForm.Marca,
+          Modello: veicoloForm.Modello,
+          Anno: veicoloForm.Anno ? Number(veicoloForm.Anno) : undefined,
+          Km: veicoloForm.Km ? Number(veicoloForm.Km) : undefined,
+          Note: veicoloForm.Note || undefined,
+        };
+        setVeicoli((prev) => [...prev, newV]);
+        toast.success("Veicolo aggiunto");
+      }
+
       setShowVeicoloModal(false);
+      setEditVeicoloId(null);
       setVeicoloForm(emptyVeicoloForm());
     } catch {
-      toast.error("Errore nell'aggiunta del veicolo");
+      toast.error(editVeicoloId ? "Errore nell'aggiornamento" : "Errore nell'aggiunta del veicolo");
     } finally {
       setSavingVeicolo(false);
+    }
+  }
+
+  async function handleAddPromemoria() {
+    if (!proForm.nome.trim()) { toast.error("Inserisci il nome del promemoria"); return; }
+    setSavingPro(true);
+    try {
+      const payload: Record<string, unknown> = {
+        Nome:        proForm.nome.trim(),
+        Descrizione: proForm.descrizione.trim() || null,
+        Cliente:     doc(db, "Clienti", id),
+        Completata:  false,
+        Data_Creazione: serverTimestamp(),
+      };
+      if (proForm.scadenza) {
+        payload.Data_Scadenza = Timestamp.fromDate(new Date(proForm.scadenza));
+      }
+      const newRef = await addDoc(collection(db, "users", "promemoria_crm", "Promemoria"), payload);
+      setPromemoria((prev) => [...prev, {
+        id: newRef.id,
+        Nome: proForm.nome.trim(),
+        Descrizione: proForm.descrizione.trim() || undefined,
+        Data_Scadenza: proForm.scadenza ? Timestamp.fromDate(new Date(proForm.scadenza)) : undefined,
+        Completata: false,
+      }]);
+      setProForm(emptyPromemoriaForm());
+      setShowPromemoriaModal(false);
+      toast.success("Promemoria aggiunto");
+    } catch {
+      toast.error("Errore nell'aggiunta del promemoria");
+    } finally {
+      setSavingPro(false);
+    }
+  }
+
+  async function handleToggleCompletata(p: PromemoriaRow) {
+    try {
+      await updateDoc(doc(db, "users", "promemoria_crm", "Promemoria", p.id), { Completata: !p.Completata });
+      setPromemoria((prev) => prev.map((x) => x.id === p.id ? { ...x, Completata: !p.Completata } : x));
+    } catch {
+      toast.error("Errore nell'aggiornamento");
+    }
+  }
+
+  async function handleDeletePromemoria(p: PromemoriaRow) {
+    if (!confirm(`Eliminare il promemoria "${p.Nome}"?`)) return;
+    try {
+      await deleteDoc(doc(db, "users", "promemoria_crm", "Promemoria", p.id));
+      setPromemoria((prev) => prev.filter((x) => x.id !== p.id));
+      toast.success("Promemoria eliminato");
+    } catch {
+      toast.error("Errore nell'eliminazione");
+    }
+  }
+
+  async function handleDeleteVeicolo(veicoloId: string) {
+    if (!confirm("Eliminare questo veicolo? L'operazione non può essere annullata.")) return;
+    try {
+      await deleteDoc(doc(db, "Clienti", id, "Veicolo", veicoloId));
+      setVeicoli((prev) => prev.filter((v) => v.id !== veicoloId));
+      toast.success("Veicolo eliminato");
+    } catch {
+      toast.error("Errore nell'eliminazione del veicolo");
     }
   }
 
@@ -327,6 +464,7 @@ export default function ClienteDetailPage() {
     Appuntamenti: Calendar,
     Ordini:       ShoppingBag,
     FogliDiLavoro: Wrench,
+    Promemoria:   Bell,
     Note:         StickyNote,
   };
 
@@ -336,6 +474,7 @@ export default function ClienteDetailPage() {
     Appuntamenti: "Appuntamenti",
     Ordini:       "Ordini",
     FogliDiLavoro: "Fogli",
+    Promemoria:   "Promemoria",
     Note:         "Note",
   };
 
@@ -345,6 +484,7 @@ export default function ClienteDetailPage() {
     Appuntamenti: appuntamenti.length,
     Ordini:       ordini.length,
     FogliDiLavoro: fogli.length,
+    Promemoria:   promemoria.filter((p) => !p.Completata).length,
     Note:         undefined,
   };
 
@@ -363,7 +503,7 @@ export default function ClienteDetailPage() {
           >
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-base font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
-                Aggiungi veicolo
+                {editVeicoloId ? "Modifica veicolo" : "Aggiungi veicolo"}
               </h3>
               <button
                 onClick={() => setShowVeicoloModal(false)}
@@ -449,7 +589,7 @@ export default function ClienteDetailPage() {
 
             <div className="flex justify-end gap-3 mt-5">
               <button
-                onClick={() => setShowVeicoloModal(false)}
+                onClick={() => { setShowVeicoloModal(false); setEditVeicoloId(null); setVeicoloForm(emptyVeicoloForm()); }}
                 className="px-4 py-2 rounded-xl text-sm font-semibold"
                 style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}
               >
@@ -461,7 +601,7 @@ export default function ClienteDetailPage() {
                 className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50"
                 style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
               >
-                {savingVeicolo ? "Salvataggio…" : "Aggiungi"}
+                {savingVeicolo ? "Salvataggio…" : (editVeicoloId ? "Salva modifiche" : "Aggiungi")}
               </button>
             </div>
           </div>
@@ -676,7 +816,7 @@ export default function ClienteDetailPage() {
                   {veicoli.length} veicoli registrati
                 </p>
                 <button
-                  onClick={() => { setVeicoloForm(emptyVeicoloForm()); setShowVeicoloModal(true); }}
+                  onClick={() => openVeicoloModal()}
                   className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl"
                   style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
                 >
@@ -693,7 +833,7 @@ export default function ClienteDetailPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                        {["Targa", "Marca / Modello", "Anno", "Km"].map((h) => (
+                        {["Targa", "Marca / Modello", "Anno", "Km", ""].map((h) => (
                           <th key={h} className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                             {h}
                           </th>
@@ -707,6 +847,26 @@ export default function ClienteDetailPage() {
                           <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>{v.Marca} {v.Modello}</td>
                           <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>{v.Anno ?? "—"}</td>
                           <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>{v.Km ? `${v.Km.toLocaleString("it-IT")} km` : "—"}</td>
+                          <td className="px-2 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => openVeicoloModal(v)}
+                                className="p-1.5 rounded-lg hover:bg-white transition-colors"
+                                style={{ border: "1px solid var(--border)" }}
+                                title="Modifica veicolo"
+                              >
+                                <Pencil size={12} style={{ color: "var(--text-secondary)" }} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteVeicolo(v.id)}
+                                className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                                style={{ border: "1px solid var(--border)" }}
+                                title="Elimina veicolo"
+                              >
+                                <X size={12} style={{ color: "#DC2626" }} />
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -957,6 +1117,158 @@ export default function ClienteDetailPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PROMEMORIA */}
+          {activeTab === "Promemoria" && (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-medium" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                  {promemoria.filter((p) => !p.Completata).length} attivi · {promemoria.filter((p) => p.Completata).length} completati
+                </p>
+                <button
+                  onClick={() => { setProForm(emptyPromemoriaForm()); setShowPromemoriaModal(true); }}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl"
+                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <Plus size={13} /> Aggiungi
+                </button>
+              </div>
+
+              {promemoria.length === 0 ? (
+                <div className="text-center py-10" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  <Bell size={28} className="mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">Nessun promemoria</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {promemoria.map((p) => {
+                    const scaduto = p.Data_Scadenza && !p.Completata &&
+                      p.Data_Scadenza.toDate() < new Date();
+                    return (
+                      <div key={p.id}
+                        className="flex items-start gap-3 px-4 py-3 rounded-xl"
+                        style={{
+                          background: p.Completata ? "var(--bg-primary)" : scaduto ? "#FEF2F2" : "var(--bg-primary)",
+                          border: `1px solid ${p.Completata ? "var(--border)" : scaduto ? "#FCA5A5" : "var(--border)"}`,
+                          opacity: p.Completata ? 0.6 : 1,
+                        }}
+                      >
+                        <button
+                          onClick={() => handleToggleCompletata(p)}
+                          className="mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-colors"
+                          style={{
+                            borderColor: p.Completata ? "#249689" : "var(--border)",
+                            background:  p.Completata ? "#249689" : "transparent",
+                          }}
+                        >
+                          {p.Completata && <Check size={11} style={{ color: "#fff" }} />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold" style={{
+                            color: "var(--text-primary)",
+                            fontFamily: "var(--font-montserrat)",
+                            textDecoration: p.Completata ? "line-through" : "none",
+                          }}>
+                            {p.Nome}
+                          </p>
+                          {p.Descrizione && (
+                            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                              {p.Descrizione}
+                            </p>
+                          )}
+                          {p.Data_Scadenza && (
+                            <p className="text-xs mt-1 font-semibold" style={{
+                              color: scaduto ? "#EF4444" : "var(--text-muted)",
+                              fontFamily: "var(--font-montserrat)",
+                            }}>
+                              {scaduto ? "Scaduto · " : "Scade · "}{fmtData(p.Data_Scadenza)}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleDeletePromemoria(p)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"
+                        >
+                          <X size={12} style={{ color: "#DC2626" }} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Add promemoria modal */}
+              {showPromemoriaModal && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center p-4"
+                  style={{ background: "rgba(0,0,0,0.5)" }}
+                  onClick={(e) => { if (e.target === e.currentTarget) setShowPromemoriaModal(false); }}
+                >
+                  <div className="w-full max-w-sm rounded-2xl p-6" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
+                    <div className="flex items-center justify-between mb-5">
+                      <h3 className="text-base font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+                        Nuovo promemoria
+                      </h3>
+                      <button onClick={() => setShowPromemoriaModal(false)} className="p-1.5 rounded-lg hover:bg-[#F1F4F8]">
+                        <X size={16} style={{ color: "var(--text-muted)" }} />
+                      </button>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold mb-1" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                          Nome *
+                        </label>
+                        <input
+                          type="text"
+                          value={proForm.nome}
+                          onChange={(e) => setProForm((f) => ({ ...f, nome: e.target.value }))}
+                          placeholder="es. Richiamare per preventivo"
+                          className="w-full px-3 py-2 rounded-xl text-sm"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold mb-1" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                          Descrizione
+                        </label>
+                        <textarea
+                          value={proForm.descrizione}
+                          onChange={(e) => setProForm((f) => ({ ...f, descrizione: e.target.value }))}
+                          rows={2}
+                          className="w-full px-3 py-2 rounded-xl text-sm resize-none"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold mb-1" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                          Scadenza
+                        </label>
+                        <input
+                          type="date"
+                          value={proForm.scadenza}
+                          onChange={(e) => setProForm((f) => ({ ...f, scadenza: e.target.value }))}
+                          className="w-full px-3 py-2 rounded-xl text-sm"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-3 mt-5">
+                      <button onClick={() => setShowPromemoriaModal(false)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
+                        Annulla
+                      </button>
+                      <button onClick={handleAddPromemoria} disabled={savingPro}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50"
+                        style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                        {savingPro ? "Salvataggio…" : "Aggiungi"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

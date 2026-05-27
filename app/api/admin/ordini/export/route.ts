@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
+import { getSession } from "@/lib/auth";
 import type { Timestamp } from "firebase-admin/firestore";
 
 function fmtDate(ts: Timestamp | null | undefined): string {
@@ -13,6 +14,11 @@ function esc(val: unknown): string {
 }
 
 export async function GET() {
+  const session = await getSession();
+  if (!session || session.Ruolo !== "Admin") {
+    return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
+  }
+
   try {
     const snap = await adminDb().collection("Ordini").orderBy("DataCreazione", "desc").limit(2000).get();
 

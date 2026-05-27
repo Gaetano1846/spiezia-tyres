@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
+import { collection, addDoc, updateDoc, increment, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
@@ -546,11 +546,51 @@ export default function CheckoutPage() {
         orderData.createdBy = user.uid;
       }
 
-      await addDoc(collection(db, "Ordini"), orderData);
+      const ordineRef = await addDoc(collection(db, "Ordini"), orderData);
+
+      // ── Email conferma ordine (fire-and-forget) ──────────────────────────────
+      const emailAddr = spedizioneDiv ? addr(spedizione) : addr(fatturazione);
+      fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/Order_Email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: fatturazione.nome || user.displayName || user.email || "",
+          order_number:  orderData.Numero,
+          order_total:   totalsConSconto.totale,
+          order_date:    new Date().toLocaleDateString("it-IT"),
+          fatturazioneJson: JSON.stringify(addr(fatturazione)),
+          spedizioneJson:   JSON.stringify(emailAddr),
+          productsJson:     JSON.stringify(
+            itemsConSconto.map((i) => ({
+              titolo: `${i.marca} ${i.modello}`,
+              misura: i.misura,
+              stagione: i.stagione,
+              quantita: i.quantita,
+              prezzoUnitario: i.prezzoScontato,
+              pfu: i.pfu,
+            }))
+          ),
+          emailsList: [user.email].filter(Boolean),
+        }),
+      }).catch(() => {});
+
+      // ── Aggiorna Fido_Residuo se metodo = fido ───────────────────────────────
+      if (metodo === "fido") {
+        const delta = -totalsConSconto.totale;
+        if (isAdmin && clienteSelezionato) {
+          updateDoc(doc(db, "Clienti", clienteSelezionato.id), {
+            Fido_Residuo: increment(delta),
+          }).catch(() => {});
+        } else {
+          updateDoc(doc(db, "users", user.uid), {
+            Fido_Residuo: increment(delta),
+          }).catch(() => {});
+        }
+      }
 
       clear();
       toast.success("Ordine confermato!");
-      router.replace("/account");
+      router.replace(`/ordini/${ordineRef.id}`);
     } catch (e) {
       toast.error("Errore nella creazione dell'ordine");
       console.error(e);

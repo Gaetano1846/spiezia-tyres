@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Package, Search, Eye, Pencil, X, ChevronLeft, ChevronRight, Plus, Save, Loader2 } from "lucide-react";
+import { Package, Search, Eye, Pencil, Trash2, X, ChevronLeft, ChevronRight, Plus, Save, Loader2 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import StatCard from "@/components/ui/StatCard";
@@ -10,7 +10,7 @@ import {
   searchProdotti, stockTotale, formatMisura, pfuDaDiametro,
   type ProdottoHit,
 } from "@/lib/algolia";
-import { doc, addDoc, updateDoc, collection } from "firebase/firestore";
+import { doc, addDoc, updateDoc, deleteDoc, collection } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 const PAGE_SIZE = 50;
@@ -584,6 +584,18 @@ export default function ProdottiPage() {
     };
   }
 
+  async function handleDelete(objectID: string, marca: string, modello: string) {
+    if (!confirm(`Eliminare definitivamente "${marca} ${modello}"? L'operazione non può essere annullata.`)) return;
+    try {
+      await deleteDoc(doc(db, "Prodotti", objectID));
+      setTutti((prev) => prev.filter((p) => p.objectID !== objectID));
+      closePanel();
+      toast.success("Prodotto eliminato");
+    } catch {
+      toast.error("Errore nell'eliminazione");
+    }
+  }
+
   async function handleSave() {
     if (!form.Marca.trim() || !form.Modello.trim() || !form.Stagione || !form.Larghezza || !form.Altezza || !form.Diametro) {
       toast.error("Compila i campi obbligatori: Marca, Modello, Stagione, Misura");
@@ -782,6 +794,14 @@ export default function ProdottiPage() {
                             title="Modifica"
                           >
                             <Pencil size={13} style={{ color: "var(--text-secondary)" }} />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDelete(p.objectID, p.Marca, p.Modello); }}
+                            className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                            style={{ border: "1px solid var(--border)" }}
+                            title="Elimina"
+                          >
+                            <Trash2 size={13} style={{ color: "#DC2626" }} />
                           </button>
                         </div>
                       </td>

@@ -6,6 +6,7 @@ import { Search } from "lucide-react";
 import { collection, getDocs, query, limit } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
 
 const MARCHE = [
   "Michelin","Pirelli","Continental","Bridgestone","Goodyear",
@@ -28,7 +29,7 @@ export default function HomePage() {
   const router = useRouter();
 
   const [cerca, setCerca] = useState("");
-  const [marchio, setMarchio] = useState("");
+  const [marche, setMarche] = useState<string[]>([]);
   const [indiceVelocita, setIndiceVelocita] = useState("");
   const [indiceCarico, setIndiceCarico] = useState("");
   const [stagioni, setStagioni] = useState<string[]>([]);
@@ -51,7 +52,7 @@ export default function HomePage() {
   function handleCerca() {
     const params = new URLSearchParams();
     if (cerca) params.set("q", cerca);
-    if (marchio) params.set("marca", marchio);
+    if (marche.length > 0) params.set("marca", marche.join(","));
     if (indiceVelocita) params.set("iv", indiceVelocita);
     if (indiceCarico) params.set("ic", indiceCarico);
     if (stagioni.length > 0) params.set("stagione", stagioni.join(","));
@@ -88,26 +89,29 @@ export default function HomePage() {
               Ricerca
             </h2>
 
-            {/* Riga 1: Cerca + Marchio */}
-            <div className="flex gap-3 mb-3">
+            {/* Riga 1: Cerca libera */}
+            <div className="mb-3">
               <input
                 value={cerca}
                 onChange={(e) => setCerca(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleCerca()}
-                placeholder="Cerca...."
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm outline-none"
+                placeholder="Cerca misura, modello..."
+                className="w-full px-4 py-2.5 rounded-xl text-sm outline-none"
                 style={{
                   border: "1px solid #e5e7eb",
                   fontFamily: "var(--font-montserrat)",
                   color: "#111",
                 }}
               />
-              <SearchableSelect
-                value={marchio}
-                onChange={setMarchio}
+            </div>
+
+            {/* Marche multi-select */}
+            <div className="mb-3">
+              <MultiSearchableSelect
+                values={marche}
+                onChange={setMarche}
                 options={MARCHE}
-                placeholder="Marchio"
-                style={{ minWidth: 150 }}
+                placeholder="Marchio (multi-selezione)"
               />
             </div>
 

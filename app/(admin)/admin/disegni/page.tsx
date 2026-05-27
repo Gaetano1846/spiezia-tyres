@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   collection, query, orderBy, getDocs, doc,
   addDoc, updateDoc, writeBatch, where, arrayUnion,
   type DocumentReference,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { Search, Pencil, Plus, X, Check, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "@/lib/firebase";
+import { Search, Pencil, Plus, X, Check, Loader2, ChevronLeft, ChevronRight, Upload, ImageIcon } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 
@@ -67,7 +68,10 @@ export default function DisegniPage() {
   const [showModal, setShowModal] = useState(false);
   const [editDisegno, setEditDisegno] = useState<Disegno | null>(null);
   const [nomeInput, setNomeInput] = useState("");
+  const [immagineFile, setImmagineFile] = useState<File | null>(null);
+  const [immaginePreview, setImmaginePreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function loadDisegni() {
     try {
@@ -85,6 +89,8 @@ export default function DisegniPage() {
   function openModal(disegno?: Disegno) {
     setEditDisegno(disegno ?? null);
     setNomeInput(disegno?.Nome ?? "");
+    setImmagineFile(null);
+    setImmaginePreview(disegno?.Immagine ?? null);
     setShowModal(true);
   }
 
@@ -92,6 +98,17 @@ export default function DisegniPage() {
     setShowModal(false);
     setEditDisegno(null);
     setNomeInput("");
+    setImmagineFile(null);
+    setImmaginePreview(null);
+  }
+
+  function handleImmagineChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setImmaginePreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+    setImmagineFile(file);
   }
 
   async function handleSave() {
@@ -99,17 +116,29 @@ export default function DisegniPage() {
     if (!nome) { toast.error("Inserisci il nome del disegno"); return; }
     setSaving(true);
     try {
+      // Upload immagine se presente
+      let immagineUrl: string | undefined = editDisegno?.Immagine;
+      if (immagineFile) {
+        const ext = immagineFile.name.split(".").pop() ?? "png";
+        const sRef = storageRef(storage, `disegni/${Date.now()}_${nome}.${ext}`);
+        await uploadBytes(sRef, immagineFile, { contentType: immagineFile.type });
+        immagineUrl = await getDownloadURL(sRef);
+      } else if (!immaginePreview) {
+        immagineUrl = undefined; // rimossa
+      }
+
       if (editDisegno) {
         const oldNome = editDisegno.Nome;
         const modelloRef = doc(db, "Modello", editDisegno.id);
 
-        // 1. Update Modello: new Nome + old name appended to Sinonimo[]
-        await updateDoc(modelloRef, {
+        const updatePayload: Record<string, unknown> = {
           Nome: nome,
           Sinonimo: arrayUnion(oldNome),
-        });
+        };
+        if (immagineUrl !== undefined) updatePayload.Immagine = immagineUrl;
 
-        // 2. Cascade: update all Prodotti with oldNome → newNome (batched, 400/batch)
+        await updateDoc(modelloRef, updatePayload);
+
         if (nome !== oldNome) {
           const prodSnap = await getDocs(
             query(collection(db, "Prodotti"), where("Modello", "==", oldNome))
@@ -128,10 +157,13 @@ export default function DisegniPage() {
           toast.success("Disegno aggiornato");
         }
 
-        // Update local state
-        setDisegni((prev) => prev.map((d) => d.id === editDisegno.id ? { ...d, Nome: nome } : d));
+        setDisegni((prev) => prev.map((d) =>
+          d.id === editDisegno.id ? { ...d, Nome: nome, Immagine: immagineUrl } : d
+        ));
       } else {
-        await addDoc(collection(db, "Modello"), { Nome: nome, Conteggio: 0, Sinonimo: [] });
+        const payload: Record<string, unknown> = { Nome: nome, Conteggio: 0, Sinonimo: [] };
+        if (immagineUrl) payload.Immagine = immagineUrl;
+        await addDoc(collection(db, "Modello"), payload);
         toast.success("Disegno aggiunto");
         setLoading(true);
         await loadDisegni();
@@ -327,26 +359,71 @@ export default function DisegniPage() {
             </div>
 
             {/* Body */}
-            <div className="px-5 py-5">
-              <label className="block text-xs font-bold uppercase tracking-widest mb-1.5"
-                style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
-                Nome disegno
-              </label>
-              <input
-                type="text"
-                value={nomeInput}
-                onChange={(e) => setNomeInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-                placeholder="es. Primacy 4"
-                autoFocus
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
-              />
-              {editDisegno && nomeInput.trim() !== editDisegno.Nome && (
-                <p className="mt-2 text-[11px]" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-                  Il vecchio nome &ldquo;{editDisegno.Nome}&rdquo; verrà aggiunto ai sinonimi e tutti i prodotti collegati verranno aggiornati.
-                </p>
-              )}
+            <div className="px-5 py-5 space-y-4">
+              {/* Immagine */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest mb-2"
+                  style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                  Immagine disegno
+                </label>
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden"
+                    style={{ border: "1px solid #e5e7eb", background: "#f9fafb" }}>
+                    {immaginePreview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={immaginePreview} alt="preview" className="w-full h-full object-contain p-1" />
+                    ) : (
+                      <ImageIcon size={22} style={{ color: "#d1d5db" }} />
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold w-full justify-center hover:opacity-80 transition-opacity"
+                      style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#374151" }}>
+                      <Upload size={14} />
+                      {immagineFile ? immagineFile.name : "Carica immagine"}
+                    </button>
+                    {immaginePreview && (
+                      <button type="button"
+                        onClick={() => { setImmagineFile(null); setImmaginePreview(null); }}
+                        className="flex items-center gap-1 text-xs w-full justify-center"
+                        style={{ color: "#EF4444", fontFamily: "var(--font-montserrat)" }}>
+                        <X size={11} /> Rimuovi immagine
+                      </button>
+                    )}
+                    <p className="text-[10px] text-center" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                      PNG, JPG, WEBP — max 2 MB
+                    </p>
+                  </div>
+                </div>
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+                  onChange={handleImmagineChange} />
+              </div>
+
+              {/* Nome */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest mb-1.5"
+                  style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                  Nome disegno
+                </label>
+                <input
+                  type="text"
+                  value={nomeInput}
+                  onChange={(e) => setNomeInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
+                  placeholder="es. Primacy 4"
+                  autoFocus
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
+                />
+                {editDisegno && nomeInput.trim() !== editDisegno.Nome && (
+                  <p className="mt-2 text-[11px]" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                    Il vecchio nome &ldquo;{editDisegno.Nome}&rdquo; verrà aggiunto ai sinonimi e tutti i prodotti collegati verranno aggiornati.
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Footer */}

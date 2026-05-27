@@ -10,7 +10,7 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import {
   ChevronRight, ArrowLeft, Printer, Mail, XCircle, ExternalLink,
-  Plus, Send, CheckCircle2, Package, Truck, Clock, RotateCcw,
+  Plus, Send, CheckCircle2, Package, Truck, Clock, RotateCcw, Box,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -120,6 +120,8 @@ export default function OrdineAdminDetailPage() {
   const [savingStato,    setSavingStato]    = useState(false);
   const [savingNota,     setSavingNota]     = useState(false);
   const [savingTracking, setSavingTracking] = useState(false);
+  const [creatingSDA,    setCreatingSDA]    = useState(false);
+  const [creatingGLS,    setCreatingGLS]    = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -218,11 +220,127 @@ export default function OrdineAdminDetailPage() {
     try {
       await updateDoc(doc(db, "Ordini", id), { Tracking: tracking });
       setOrdine({ ...ordine, Tracking: tracking });
+
+      // Sync tracking to eBay / Amazon (fire-and-forget)
+      if (tracking && ordine.Source === "eBay" && ordine.eBay_OrderID) {
+        fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/ExternalApiIntegrationsV2", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ callName: "ebay-tracking", orderId: ordine.eBay_OrderID, tracking }),
+        }).catch(() => {});
+      }
+      if (tracking && ordine.Source === "Amazon" && ordine.Amazon_MarketplaceID) {
+        fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/ExternalApiIntegrationsV2", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ callName: "amazon-tracking", orderId: ordine.Amazon_MarketplaceID, tracking }),
+        }).catch(() => {});
+      }
+      if (tracking && (ordine.Source as string) === "AdTyres") {
+        fetch("https://europe-west1-crm-3iuocs.cloudfunctions.net/sendADTyresTracking", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: ordine.Numero ?? id, tracking }),
+        }).catch(() => {});
+      }
+
       toast.success("Tracking aggiornato");
     } catch {
       toast.error("Errore aggiornamento tracking");
     } finally {
       setSavingTracking(false);
+    }
+  }
+
+  async function handleCreaSDA() {
+    if (!ordine || creatingSDA) return;
+    setCreatingSDA(true);
+    const toastId = toast.loading("Creazione spedizione SDA…");
+    try {
+      const inSped = ordine.IndirizzoSpedizione ?? ordine.IndirizzoFatturazione;
+      const res = await fetch(
+        "https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action:          "create",
+            orderId:         ordine.Numero ?? id,
+            destinationName: inSped?.Azienda || inSped?.Nome || clienteInfo?.nome || "",
+            address:         `${inSped?.Via ?? ""} ${inSped?.Civico ?? ""}`.trim(),
+            city:            inSped?.Citta ?? "",
+            zip:             inSped?.CAP ?? "",
+            province:        inSped?.Provincia ?? "",
+            country:         "IT",
+            colli:           1,
+            weight:          (ordine.Articoli as unknown[])?.length ?? 1,
+            notes:           (ordine as Record<string, unknown>).NoteCliente as string ?? "",
+          }),
+        }
+      );
+      if (!res.ok) throw new Error(`CF ${res.status}`);
+      const data = await res.json() as { parcelId?: string; tracking?: string };
+      toast.dismiss(toastId);
+      toast.success(`Spedizione SDA creata${data.parcelId ? ` · ID ${data.parcelId}` : ""}`);
+      if (data.tracking) {
+        setTracking(data.tracking);
+        await updateDoc(doc(db, "Ordini", id), { Tracking: data.tracking });
+        setOrdine((o) => o ? { ...o, Tracking: data.tracking } : o);
+      }
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Errore nella creazione della spedizione SDA");
+    } finally {
+      setCreatingSDA(false);
+    }
+  }
+
+  async function handleCreaGLS(contractIndex: 0 | 1) {
+    if (!ordine || creatingGLS) return;
+    setCreatingGLS(true);
+    const sedeName = contractIndex === 0 ? "Nola" : "Roma";
+    const toastId = toast.loading(`Creazione spedizione GLS (${sedeName})…`);
+    try {
+      const inSped = ordine.IndirizzoSpedizione ?? ordine.IndirizzoFatturazione;
+      const res = await fetch(
+        "https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action:          "create",
+            contractIndex,
+            orderId:         ordine.Numero ?? id,
+            destinationName: inSped?.Azienda || inSped?.Nome || clienteInfo?.nome || "",
+            address:         `${inSped?.Via ?? ""} ${inSped?.Civico ?? ""}`.trim(),
+            city:            inSped?.Citta ?? "",
+            zip:             inSped?.CAP ?? "",
+            province:        inSped?.Provincia ?? "",
+            country:         "IT",
+            colli:           1,
+            weight:          (ordine.Articoli as unknown[])?.length ?? 1,
+            notes:           (ordine as Record<string, unknown>).NoteCliente as string ?? "",
+          }),
+        }
+      );
+      if (!res.ok) throw new Error(`CF ${res.status}`);
+      const data = await res.json() as { parcelId?: string; tracking?: string };
+      toast.dismiss(toastId);
+      toast.success(`Spedizione GLS ${sedeName} creata${data.parcelId ? ` · ID ${data.parcelId}` : ""}`);
+      if (data.tracking) {
+        setTracking(data.tracking);
+        await updateDoc(doc(db, "Ordini", id), {
+          Tracking: data.tracking,
+          Corriere: "GLS",
+          contractIndex,
+        });
+        setOrdine((o) => o ? { ...o, Tracking: data.tracking } : o);
+      }
+    } catch {
+      toast.dismiss(toastId);
+      toast.error(`Errore nella creazione della spedizione GLS (${sedeName})`);
+    } finally {
+      setCreatingGLS(false);
     }
   }
 
@@ -604,6 +722,40 @@ export default function OrdineAdminDetailPage() {
               >
                 <Mail size={15} /> Invia email conferma
               </button>
+              <button
+                onClick={handleCreaSDA}
+                disabled={creatingSDA}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8] disabled:opacity-40"
+                style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+              >
+                <Box size={15} /> {creatingSDA ? "Creazione SDA…" : "Crea spedizione SDA"}
+              </button>
+
+              {/* GLS — sede selector */}
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-center" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  Crea spedizione GLS
+                </p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => handleCreaGLS(0)}
+                    disabled={creatingGLS}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors hover:bg-[#F1F4F8] disabled:opacity-40"
+                    style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+                  >
+                    <Truck size={13} /> {creatingGLS ? "…" : "Nola"}
+                  </button>
+                  <button
+                    onClick={() => handleCreaGLS(1)}
+                    disabled={creatingGLS}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors hover:bg-[#F1F4F8] disabled:opacity-40"
+                    style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+                  >
+                    <Truck size={13} /> {creatingGLS ? "…" : "Roma"}
+                  </button>
+                </div>
+              </div>
+
               <button
                 onClick={() => handleStatoChange("Annullato")}
                 disabled={ordine.Stato === "Annullato" || savingStato}

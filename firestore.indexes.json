@@ -41,6 +41,21 @@
         { "fieldPath": "Sede", "order": "ASCENDING" },
         { "fieldPath": "DataOra", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "Promemoria",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "Completato", "order": "ASCENDING" },
+        { "fieldPath": "Data", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "Veicolo",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "Targa", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

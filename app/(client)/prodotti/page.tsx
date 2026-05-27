@@ -67,7 +67,7 @@ export default function ProdottiPage() {
   });
   const [marche, setMarche] = useState<string[]>(() => {
     const m = searchParams.get("marca");
-    return m ? [m] : [];
+    return m ? m.split(",").filter(Boolean) : [];
   });
   const [categoria, setCategoria] = useState(searchParams.get("categoria") ?? "");
   const [showFiltri, setShowFiltri] = useState(false);
@@ -88,9 +88,13 @@ export default function ProdottiPage() {
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    searchProdotti({ withFacets: true, hitsPerPage: 0, soloDisponibili: false })
-      .then((r) => { if (r.facets?.Marca) setMarcheList(Object.keys(r.facets.Marca).sort()); })
-      .catch(() => {});
+    // Carica lista marche da Algolia facets; se non configurate come facets nel dashboard,
+    // cade silenziosamente e la lista viene popolata dai risultati di ricerca.
+    searchProdotti({ withFacets: true, hitsPerPage: 1, soloDisponibili: false })
+      .then((r) => {
+        if (r.facets?.Marca) setMarcheList(Object.keys(r.facets.Marca).sort());
+      })
+      .catch(console.warn);
   }, []);
 
   const doSearch = useCallback(async (pg: number) => {
@@ -100,7 +104,7 @@ export default function ProdottiPage() {
       const r = await searchProdotti({
         query: search,
         largezza: largezza || undefined,
-        altezza: altezza || undefined,
+        altezza:  altezza  || undefined,
         diametro: diametro || undefined,
         stagioni,
         marche,
@@ -110,6 +114,10 @@ export default function ProdottiPage() {
         hitsPerPage: 50,
       });
 
+      setNbHits(r.nbHits);
+      setNbPages(r.nbPages);
+      setPage(r.page);
+
       // Arricchisci con dati Firestore (prezzi, stock, PFU)
       const firestoreDocs = await Promise.all(
         r.hits.map((hit) => getDoc(doc(db, "Prodotti", hit.objectID)))
@@ -117,8 +125,6 @@ export default function ProdottiPage() {
       const enriched: ProdottoHit[] = r.hits.map((hit, i) => {
         const fsDoc = firestoreDocs[i];
         if (!fsDoc.exists()) return hit;
-        // Firestore ha la verità su prezzi e stock; Algolia è l'indice di ricerca.
-        // Non sovrascrivere campi Algolia con null/undefined da Firestore.
         const fsData = fsDoc.data() as Record<string, unknown>;
         const merged: Record<string, unknown> = { ...hit };
         for (const [k, v] of Object.entries(fsData)) {
@@ -128,10 +134,6 @@ export default function ProdottiPage() {
       });
 
       setHits(enriched);
-      // nbHits viene aggiornato dopo il filtro prezzi nel render via sortedHits
-      setNbHits(r.nbHits);
-      setNbPages(r.nbPages);
-      setPage(r.page);
     } catch {
       toast.error("Errore nel caricamento prodotti");
     } finally {
@@ -198,11 +200,12 @@ export default function ProdottiPage() {
 
   const isPneumatici = categoria === "";
   const isCerchi     = categoria.includes("Cerchi");
+  const isCamere     = categoria.includes("Camere");
 
   const activeFilters = [
     ...(isPneumatici && largezza  ? [`L:${largezza}`]  : []),
     ...(isPneumatici && altezza   ? [`A:${altezza}`]   : []),
-    ...((isPneumatici || isCerchi) && diametro ? [`R${diametro}`] : []),
+    ...((isPneumatici || isCerchi || isCamere) && diametro ? [`R${diametro}`] : []),
     ...(isPneumatici ? stagioni : []),
     ...marche,
     ...(categoria ? [CATEGORIE.find((c) => c.value === categoria)?.label ?? categoria] : []),
@@ -214,10 +217,7 @@ export default function ProdottiPage() {
       // Reset pneumatici-only filters when switching to Cerchi / Camere
       setMisuraRapida(""); setLargezza(""); setAltezza(""); setStagioni([]);
     }
-    if (!value.includes("Cerchi")) {
-      // Reset cerchi-only filters when switching away from Cerchi
-      setDiametro("");
-    }
+    // Diametro is shared between all categories — never reset it on category switch
     setPage(0);
   }
 
@@ -237,9 +237,10 @@ export default function ProdottiPage() {
               onClick={() => handleSetCategoria(c.value)}
               className="px-4 py-1.5 rounded-full text-xs font-semibold transition-colors"
               style={{
-                background: active ? "#FFC803" : "transparent",
+                background: active ? "#FFFBEB" : "transparent",
                 border: `1.5px solid #FFC803`,
                 color: "#111",
+                fontWeight: active ? 700 : 600,
                 fontFamily: "var(--font-montserrat)",
               }}
             >
@@ -295,36 +296,28 @@ export default function ProdottiPage() {
 
         {showFiltri && (
           <div className="px-4 pb-4 pt-1 border-t" style={{ borderColor: "#f3f4f6" }}>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 
-              {/* ── PNEUMATICI only ── */}
-              {isPneumatici && (
+            {/* ── Pneumatici: layout completo ── */}
+            {isPneumatici && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="md:col-span-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Misura rapida</label>
                   <input value={misuraRapida} onChange={(e) => handleMisuraRapida(e.target.value)}
                     placeholder="es. 205/55 R16" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
                     style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
                 </div>
-              )}
-              {isPneumatici && (
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Larghezza</label>
                   <input type="number" value={largezza} onChange={(e) => setLargezza(e.target.value)}
                     placeholder="es. 205" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
                     style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
                 </div>
-              )}
-              {isPneumatici && (
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Altezza</label>
                   <input type="number" value={altezza} onChange={(e) => setAltezza(e.target.value)}
                     placeholder="es. 55" className="w-full px-3 py-2 rounded-xl text-sm outline-none"
                     style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
                 </div>
-              )}
-
-              {/* ── Diametro: Pneumatici + Cerchi ── */}
-              {(isPneumatici || isCerchi) && (
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Diametro</label>
                   <select value={diametro} onChange={(e) => setDiametro(e.target.value)}
@@ -334,10 +327,6 @@ export default function ProdottiPage() {
                     {[13,14,15,16,17,18,19,20,21,22].map((d) => <option key={d} value={d}>R{d}</option>)}
                   </select>
                 </div>
-              )}
-
-              {/* ── Stagione: Pneumatici only ── */}
-              {isPneumatici && (
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Stagione</label>
                   <div className="flex flex-col gap-1">
@@ -353,23 +342,14 @@ export default function ProdottiPage() {
                     })}
                   </div>
                 </div>
-              )}
-
-              {/* ── Marca: tutti ── */}
-              {marcheList.length > 0 && (
-                <div className="md:col-span-2">
-                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Marca</label>
-                  <input
-                    value={marcaSearch}
-                    onChange={(e) => setMarcaSearch(e.target.value)}
-                    placeholder="Cerca marca..."
-                    className="w-full mb-2 px-3 py-1.5 rounded-xl text-xs outline-none"
-                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
-                  />
-                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-                    {marcheList
-                      .filter((m) => m.toLowerCase().includes(marcaSearch.toLowerCase()))
-                      .map((m) => {
+                {marcheList.length > 0 && (
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Marca</label>
+                    <input value={marcaSearch} onChange={(e) => setMarcaSearch(e.target.value)}
+                      placeholder="Cerca marca..." className="w-full mb-2 px-3 py-1.5 rounded-xl text-xs outline-none"
+                      style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                      {marcheList.filter((m) => m.toLowerCase().includes(marcaSearch.toLowerCase())).map((m) => {
                         const active = marche.includes(m);
                         return (
                           <button key={m} onClick={() => setMarche((p) => p.includes(m) ? p.filter((x) => x !== m) : [...p, m])}
@@ -379,10 +359,47 @@ export default function ProdottiPage() {
                           </button>
                         );
                       })}
+                    </div>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Cerchi / Camere D'Aria: solo Diametro + Marca ── */}
+            {(isCerchi || isCamere) && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Diametro</label>
+                  <select value={diametro} onChange={(e) => setDiametro(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}>
+                    <option value="">Tutti</option>
+                    {[13,14,15,16,17,18,19,20,21,22].map((d) => <option key={d} value={d}>R{d}</option>)}
+                  </select>
                 </div>
-              )}
-            </div>
+                {marcheList.length > 0 && (
+                  <div className="md:col-span-3">
+                    <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Marca</label>
+                    <input value={marcaSearch} onChange={(e) => setMarcaSearch(e.target.value)}
+                      placeholder="Cerca marca..." className="w-full mb-2 px-3 py-1.5 rounded-xl text-xs outline-none"
+                      style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                      {marcheList.filter((m) => m.toLowerCase().includes(marcaSearch.toLowerCase())).map((m) => {
+                        const active = marche.includes(m);
+                        return (
+                          <button key={m} onClick={() => setMarche((p) => p.includes(m) ? p.filter((x) => x !== m) : [...p, m])}
+                            className="px-3 py-1 rounded-full text-xs font-semibold transition-colors"
+                            style={{ background: active ? "#FFC803" : "#f9fafb", color: active ? "#111" : "#374151", border: `1px solid ${active ? "#FFC803" : "#e5e7eb"}`, fontFamily: "var(--font-montserrat)" }}>
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeFilters.length > 0 && (
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 {activeFilters.map((f) => (
@@ -555,34 +572,36 @@ export default function ProdottiPage() {
                     <StockPill value={stockT24} color="rgba(99,179,237,0.75)" />
                   </div>
 
-                  {/* Quantità */}
-                  <div className="flex items-center justify-center">
-                    <div className="flex items-center rounded-xl overflow-hidden"
-                      style={{ border: "1px solid #e5e7eb" }}>
-                      <button onClick={() => changeQty(hit.objectID, -1, stock)}
-                        disabled={qty <= 1 || esaurito}
-                        className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
-                        <Minus size={11} />
-                      </button>
-                      <span className="w-8 text-center text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
-                        {qty}
-                      </span>
-                      <button onClick={() => changeQty(hit.objectID, +1, stock)}
-                        disabled={qty >= stock || esaurito}
-                        className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
-                        <Plus size={11} />
-                      </button>
+                  {/* Quantità — visibile solo se disponibile e con prezzo */}
+                  {!esaurito && !senzaPrezzo && (
+                    <div className="flex items-center justify-center">
+                      <div className="flex items-center rounded-xl overflow-hidden"
+                        style={{ border: "1px solid #e5e7eb" }}>
+                        <button onClick={() => changeQty(hit.objectID, -1, stock)}
+                          disabled={qty <= 1}
+                          className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
+                          <Minus size={11} />
+                        </button>
+                        <span className="w-8 text-center text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                          {qty}
+                        </span>
+                        <button onClick={() => changeQty(hit.objectID, +1, stock)}
+                          disabled={qty >= stock}
+                          className="w-7 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40">
+                          <Plus size={11} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
-                  {/* Aggiungi al carrello */}
+                  {/* Aggiungi / Su richiesta / Esaurito */}
                   <button
-                    onClick={() => !senzaPrezzo && handleAdd(hit)}
+                    onClick={() => !esaurito && !senzaPrezzo && handleAdd(hit)}
                     disabled={esaurito || senzaPrezzo}
                     className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-opacity hover:opacity-80 disabled:opacity-40 flex-shrink-0"
                     style={{
-                      background: senzaPrezzo ? "#e5e7eb" : "#FFC803",
-                      color: senzaPrezzo ? "#9ca3af" : "#111",
+                      background: (esaurito || senzaPrezzo) ? "#e5e7eb" : "#FFC803",
+                      color: (esaurito || senzaPrezzo) ? "#9ca3af" : "#111",
                       fontFamily: "var(--font-montserrat)",
                       minWidth: 90,
                     }}>

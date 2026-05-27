@@ -47,7 +47,8 @@ export default function GabbiaPage() {
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<ProdottoHit | null>(null);
   const [qty, setQty] = useState(4);
-  const [adding, setAdding] = useState(false);
+  const [adding,       setAdding]       = useState(false);
+  const [generatingQR, setGeneratingQR] = useState(false);
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [prodottiCache, setProdottiCache] = useState<Record<string, {
@@ -232,6 +233,39 @@ export default function GabbiaPage() {
     }
   }
 
+  async function handleGeneraQR() {
+    if (!gabbia || generatingQR) return;
+    setGeneratingQR(true);
+    const toastId = toast.loading("Generazione QR…");
+    try {
+      const res = await fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/GenerateQR", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id:       id,
+          posizione: gabbia.ID ?? id,
+          sede:     gabbia.sedeName,
+          x: gabbia.X, y: gabbia.Y, z: gabbia.Z,
+        }),
+      });
+      if (!res.ok) throw new Error(`CF ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `QR_Gabbia_${gabbia.ID ?? id}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.dismiss(toastId);
+      toast.success("QR scaricato");
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Errore nella generazione del QR");
+    } finally {
+      setGeneratingQR(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="px-5 py-5 space-y-6">
@@ -413,13 +447,25 @@ export default function GabbiaPage() {
               {gabbia.sedeName}
             </p>
           </div>
-          <button
-            onClick={openModal}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition-opacity hover:opacity-90"
-            style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
-          >
-            <Plus size={15} /> Aggiungi pneumatico
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleGeneraQR}
+              disabled={generatingQR}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ background: "#f3f4f6", color: "#111", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
+              title="Scarica QR code della gabbia"
+            >
+              {generatingQR ? <Loader2 size={15} className="animate-spin" /> : <QrCode size={15} />}
+              QR
+            </button>
+            <button
+              onClick={openModal}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition-opacity hover:opacity-90"
+              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+            >
+              <Plus size={15} /> Aggiungi pneumatico
+            </button>
+          </div>
         </div>
       </div>
 

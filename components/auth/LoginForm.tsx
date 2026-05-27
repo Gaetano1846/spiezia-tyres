@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
@@ -11,6 +11,7 @@ import Link from "next/link";
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
@@ -43,11 +44,12 @@ export default function LoginForm() {
         });
       } catch { /* non bloccare il login se il doc non esiste */ }
 
-      // Admin va sempre all'area admin, indipendentemente dal flag CRM
-      if (Ruolo === "Admin") router.replace("/admin/ordini");
-      else if (Ruolo === "Magazziniere") router.replace("/magazzino");
-      else if (CRM) router.replace("/dashboard");
-      else router.replace("/");
+      const redirect = searchParams.get("redirect");
+      const rolePath =
+        Ruolo === "Admin" ? "/admin/ordini" :
+        Ruolo === "Magazziniere" ? "/magazzino" :
+        CRM ? "/dashboard" : "/";
+      router.replace(redirect ?? rolePath);
     } catch (err: unknown) {
       if (err instanceof FirebaseError) console.error("[auth]", err.code, err.message);
       let msg = "Email o password errati";

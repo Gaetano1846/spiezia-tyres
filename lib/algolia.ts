@@ -147,43 +147,36 @@ export async function searchProdotti(
     withFacets = false,
   } = params;
 
-  const numericFilters: (string | string[])[] = [];
+  const filterParts: string[] = [];
 
-  // Stock filter (OR across depots)
   if (soloDisponibili) {
-    numericFilters.push([
-      "Stock_Nola>=1",
-      "Stock_Nola_2>=1",
-      "Stock_Volla>=1",
-      "Stock_Roma>=1",
-      "Stock_Portici>=1",
-      "Stock_OCP>=1",
-      "Stock_T24>=16",
-    ]);
+    filterParts.push(
+      "(Stock_Nola>=1 OR Stock_Nola_2>=1 OR Stock_Volla>=1 OR Stock_Roma>=1 OR Stock_Portici>=1 OR Stock_OCP>=1 OR Stock_T24>=16)"
+    );
   }
 
-  // Filtri dimensione — usa numericFilters di Algolia (molto più efficiente)
-  // NOTA: Larghezza, Altezza, Diametro devono essere in numericAttributesForFiltering su Algolia dashboard
-  if (largezza) numericFilters.push(`Larghezza=${largezza}`);
-  if (altezza)  numericFilters.push(`Altezza=${altezza}`);
-  if (diametro) numericFilters.push(`Diametro=${diametro}`);
+  // Filtri numerici esatti su Larghezza/Altezza/Diametro (ora in numericAttributesForFiltering)
+  if (largezza) filterParts.push(`Larghezza=${largezza}`);
+  if (altezza)  filterParts.push(`Altezza=${altezza}`);
+  if (diametro) filterParts.push(`Diametro=${diametro}`);
 
   const facetFilters: string[][] = [];
   if (stagioni.length > 0) facetFilters.push(stagioni.map((s) => `Stagione:${s}`));
   if (marche.length > 0)   facetFilters.push(marche.map((m) => `Marca:${m}`));
   if (categoria)            facetFilters.push([`Categoria:${categoria}`]);
 
-  // Base search params
-  const baseParams = {
+  const searchParams: Record<string, unknown> = {
     query,
-    numericFilters: numericFilters.length > 0 ? numericFilters : undefined,
-    facetFilters: facetFilters.length > 0 ? facetFilters : undefined,
-    facets: withFacets ? ["Marca", "Stagione"] : undefined,
+    page,
+    hitsPerPage,
   };
+  if (filterParts.length > 0)  searchParams.filters      = filterParts.join(" AND ");
+  if (facetFilters.length > 0) searchParams.facetFilters = facetFilters;
+  if (withFacets)              searchParams.facets        = ["Marca", "Stagione"];
 
   const raw = (await algoliaClient.searchSingleIndex({
     indexName: INDEX_NAME,
-    searchParams: { ...baseParams, page, hitsPerPage },
+    searchParams,
   })) as unknown as AlgoliaRaw;
 
   return {

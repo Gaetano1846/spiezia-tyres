@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Image from "next/image";
 import LoginForm from "@/components/auth/LoginForm";
 
@@ -54,7 +55,9 @@ export default function LoginPage() {
           <p className="text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
             Accedi al gestionale Spiezia Tyres
           </p>
-          <LoginForm />
+          <Suspense fallback={null}>
+            <LoginForm />
+          </Suspense>
         </div>
 
         <p className="text-center text-white/40 text-xs mt-6">
