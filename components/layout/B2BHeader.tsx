@@ -12,11 +12,24 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
 
-type ModalTipo = "cerchi" | "camere";
+type ModalTipo = "pneumatici" | "cerchi" | "camere";
 
-const CATEGORIA_MAP: Record<ModalTipo, string> = {
+const CATEGORIA_MAP: Partial<Record<ModalTipo, string>> = {
   cerchi: "Categoria_Prodotti/Cerchi Autocarro",
   camere: "Categoria_Prodotti/Camere D Aria",
+};
+
+type ModalState = {
+  tipo: ModalTipo | null;
+  misura: string;
+  marchio: string;
+  indVelocita: string;
+  stagioni: string[];
+  accoppiata: boolean;
+};
+
+const MODAL_EMPTY: ModalState = {
+  tipo: null, misura: "", marchio: "", indVelocita: "", stagioni: [], accoppiata: false,
 };
 
 const MARCHE = [
@@ -50,10 +63,8 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
   const [indiceVelocita, setIndiceVelocita] = useState("");
   const [stagioni,       setStagioni]       = useState<string[]>([]);
 
-  // Modal cerchi/camere
-  const [modal, setModal] = useState<{ tipo: ModalTipo | null; misura: string }>({
-    tipo: null, misura: "",
-  });
+  // Modal pneumatici / cerchi / camere
+  const [modal, setModal] = useState<ModalState>(MODAL_EMPTY);
 
   // Notifiche non viste
   const [notifCount, setNotifCount] = useState(0);
@@ -84,19 +95,38 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
     router.push(`/prodotti?${params.toString()}`);
   }
 
-  function openModal(tipo: ModalTipo) { setModal({ tipo, misura: "" }); }
-  function closeModal()                { setModal({ tipo: null, misura: "" }); }
+  function openModal(tipo: ModalTipo) { setModal({ ...MODAL_EMPTY, tipo }); }
+  function closeModal()               { setModal(MODAL_EMPTY); }
+
+  function toggleModalStagione(s: string) {
+    setModal((p) => ({
+      ...p,
+      stagioni: p.stagioni.includes(s) ? p.stagioni.filter((x) => x !== s) : [...p.stagioni, s],
+    }));
+  }
 
   function handleCercaModal() {
     if (!modal.tipo) return;
     const params = new URLSearchParams();
-    params.set("categoria", CATEGORIA_MAP[modal.tipo]);
-    if (modal.misura.trim()) params.set("q", modal.misura.trim());
+    if (modal.tipo === "pneumatici") {
+      if (modal.misura.trim())       params.set("q",        modal.misura.trim());
+      if (modal.marchio)             params.set("marca",    modal.marchio);
+      if (modal.indVelocita)         params.set("iv",       modal.indVelocita);
+      if (modal.stagioni.length > 0) params.set("stagione", modal.stagioni.join(","));
+      if (modal.accoppiata)          params.set("accoppiata", "true");
+    } else {
+      const cat = CATEGORIA_MAP[modal.tipo];
+      if (cat) params.set("categoria", cat);
+      if (modal.misura.trim()) params.set("q", modal.misura.trim());
+    }
     router.push(`/prodotti?${params.toString()}`);
     closeModal();
   }
 
-  const modalTitle = modal.tipo === "cerchi" ? "Ricerca Cerchi" : "Ricerca Camere D'Aria";
+  const modalTitle =
+    modal.tipo === "pneumatici" ? "Ricerca Pneumatici" :
+    modal.tipo === "cerchi"     ? "Ricerca Cerchi" :
+                                  "Ricerca Camere D’Aria";
 
   return (
     <>
@@ -195,13 +225,13 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
             <span className="text-xs font-semibold hidden md:inline" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
               Ricerca Avanzata:
             </span>
-            <Link
-              href="/prodotti"
+            <button
+              onClick={() => openModal("pneumatici")}
               className="text-xs font-semibold px-3 py-1.5 rounded-full transition-colors hover:bg-[#FFC803] hover:text-[#111]"
               style={{ border: "1.5px solid #FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
             >
               Pneumatici
-            </Link>
+            </button>
             <button
               onClick={() => openModal("cerchi")}
               className="text-xs font-semibold px-3 py-1.5 rounded-full transition-colors hover:bg-[#FFC803] hover:text-[#111]"
@@ -301,11 +331,13 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
         )}
       </header>
 
-      {/* ── Modal Ricerca Cerchi / Camere D'Aria ── */}
+      {/* ── Modal Ricerca ── */}
       {modal.tipo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeModal} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" style={{ fontFamily: "var(--font-montserrat)" }}>
+
+            {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
                 <Search size={20} style={{ color: "#FFC803" }} />
@@ -315,17 +347,96 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
                 <X size={20} style={{ color: "#111" }} />
               </button>
             </div>
-            <input
-              type="text"
-              placeholder="Misura"
-              value={modal.misura}
-              onChange={(e) => setModal((p) => ({ ...p, misura: e.target.value }))}
-              onKeyDown={(e) => e.key === "Enter" && handleCercaModal()}
-              className="w-full rounded-xl px-4 py-3 text-sm mb-4 outline-none"
-              style={{ border: "2px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
-              // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus
-            />
+
+            {/* ── Pneumatici ── */}
+            {modal.tipo === "pneumatici" && (
+              <>
+                {/* Riga 1: Misura + Marchio */}
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Es. 2055516"
+                    value={modal.misura}
+                    onChange={(e) => setModal((p) => ({ ...p, misura: e.target.value }))}
+                    onKeyDown={(e) => e.key === "Enter" && handleCercaModal()}
+                    className="flex-1 rounded-xl px-4 py-2.5 text-sm outline-none"
+                    style={{ border: "2px solid #FFC803" }}
+                    // eslint-disable-next-line jsx-a11y/no-autofocus
+                    autoFocus
+                  />
+                  <select
+                    value={modal.marchio}
+                    onChange={(e) => setModal((p) => ({ ...p, marchio: e.target.value }))}
+                    className="rounded-xl px-3 py-2.5 text-sm outline-none"
+                    style={{ border: "1.5px solid #e5e7eb", color: modal.marchio ? "#111" : "#9ca3af", minWidth: 110 }}
+                  >
+                    <option value="">Marchio</option>
+                    {MARCHE.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+
+                {/* Riga 2: Indice velocità + stagioni */}
+                <div className="flex items-center gap-2 mb-4">
+                  <select
+                    value={modal.indVelocita}
+                    onChange={(e) => setModal((p) => ({ ...p, indVelocita: e.target.value }))}
+                    className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none"
+                    style={{ border: "1.5px solid #e5e7eb", color: modal.indVelocita ? "#111" : "#9ca3af" }}
+                  >
+                    <option value="">Indice di Velocità</option>
+                    {INDICI_VELOCITA.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                  <div className="flex gap-1.5 flex-shrink-0">
+                    {STAGIONI.map((s) => {
+                      const active = modal.stagioni.includes(s.key);
+                      return (
+                        <button
+                          key={s.key}
+                          onClick={() => toggleModalStagione(s.key)}
+                          title={s.label}
+                          className="w-9 h-9 rounded-full flex items-center justify-center transition-all"
+                          style={{
+                            border: `2px solid ${active ? "#FFC803" : "#e5e7eb"}`,
+                            background: active ? "#FFF8DC" : "#fff",
+                          }}
+                        >
+                          {s.icon === "flame"     && <Flame     size={13} style={{ color: active ? "#EF4444" : "#9ca3af" }} />}
+                          {s.icon === "4stagioni" && <Image src="/icon-4stagioni.png" width={14} height={14} alt="4 stagioni" unoptimized />}
+                          {s.icon === "snowflake" && <Snowflake size={13} style={{ color: active ? "#3B82F6" : "#9ca3af" }} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Accoppiata */}
+                <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={modal.accoppiata}
+                    onChange={(e) => setModal((p) => ({ ...p, accoppiata: e.target.checked }))}
+                    className="w-4 h-4 rounded accent-[#FFC803]"
+                  />
+                  <span className="text-sm font-semibold" style={{ color: "#111" }}>Accoppiata</span>
+                </label>
+              </>
+            )}
+
+            {/* ── Cerchi / Camere ── */}
+            {modal.tipo !== "pneumatici" && (
+              <input
+                type="text"
+                placeholder="Misura"
+                value={modal.misura}
+                onChange={(e) => setModal((p) => ({ ...p, misura: e.target.value }))}
+                onKeyDown={(e) => e.key === "Enter" && handleCercaModal()}
+                className="w-full rounded-xl px-4 py-3 text-sm mb-4 outline-none"
+                style={{ border: "2px solid #FFC803" }}
+                // eslint-disable-next-line jsx-a11y/no-autofocus
+                autoFocus
+              />
+            )}
+
             <button
               onClick={handleCercaModal}
               className="w-full py-3 rounded-xl font-bold text-sm transition-opacity hover:opacity-85 active:opacity-70"
