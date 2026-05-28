@@ -7,9 +7,10 @@ import {
   type DocumentReference, type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, Calendar } from "lucide-react";
+import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays } from "lucide-react";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
+import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import toast from "react-hot-toast";
 import type { Ordine, OrdineStato, OrdineSource } from "@/lib/types";
 
@@ -511,28 +512,20 @@ export default function OrdiniAdminPage() {
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-colors hover:bg-[#f9fafb]"
             style={{ background: "#fff", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "#374151" }}
           >
-            <Calendar size={13} style={{ color: "#6b7280" }} />
+            <CalendarDays size={13} style={{ color: "#6b7280" }} />
             {dateRangeLabel}
           </button>
 
           {showDatePicker && (
             <div
-              className="absolute top-full left-0 mt-1.5 p-3 rounded-xl shadow-xl z-30 flex gap-2 items-center"
-              style={{ background: "#fff", border: "1px solid var(--border)", minWidth: 300 }}
+              className="absolute top-full left-0 mt-1.5 rounded-2xl shadow-2xl z-30 overflow-hidden"
+              style={{ background: "#fff", border: "1px solid #e5e7eb" }}
             >
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Da</span>
-                <input type="date" value={dataDa} onChange={(e) => setDataDa(e.target.value)}
-                  className="px-3 py-1.5 rounded-lg text-sm outline-none"
-                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
-              </div>
-              <div className="mt-4 text-sm" style={{ color: "var(--text-muted)" }}>→</div>
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>A</span>
-                <input type="date" value={dataA} onChange={(e) => setDataA(e.target.value)}
-                  className="px-3 py-1.5 rounded-lg text-sm outline-none"
-                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
-              </div>
+              <CalendarRangePicker
+                dataDa={dataDa}
+                dataA={dataA}
+                onChange={(da, a) => { setDataDa(da); setDataA(a); }}
+              />
             </div>
           )}
         </div>
