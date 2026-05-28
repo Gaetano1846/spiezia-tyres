@@ -13,11 +13,12 @@ import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
 import type { Appuntamento, AppuntamentoStato } from "@/lib/types";
 
-const statoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
-  Completato:  "success",
-  "In corso":  "brand",
-  Programmato: "neutral",
-  Annullato:   "error",
+const statoVariant: Record<string, "success" | "brand" | "warning" | "neutral" | "error"> = {
+  "In Attesa":  "neutral",
+  "In corso":   "brand",
+  Programmato:  "warning",
+  Completato:   "success",
+  Annullato:    "error",
 };
 
 type AppEntry = {
@@ -154,8 +155,9 @@ export default function AppuntamentiPage() {
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }}
           >
             <option value="">Tutti gli stati</option>
-            <option value="Programmato">Programmato</option>
+            <option value="In Attesa">In Attesa</option>
             <option value="In corso">In corso</option>
+            <option value="Programmato">Programmato</option>
             <option value="Completato">Completato</option>
             <option value="Annullato">Annullato</option>
           </select>
@@ -204,13 +206,13 @@ export default function AppuntamentiPage() {
                   className="rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:bg-[#F1F4F8] transition-colors cursor-pointer"
                   style={{ border: "1px solid var(--border)" }}
                 >
-                  <div className="flex items-center gap-2 w-20 flex-shrink-0" style={{ color: "var(--text-muted)" }}>
-                    <Calendar size={13} />
-                    <div>
-                      <p className="text-sm font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
-                        {formatOra(app.DataOra as Timestamp)}
-                      </p>
-                      <p className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  <div className="flex-shrink-0 w-20">
+                    <p className="text-sm font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+                      {formatOra(app.DataOra as Timestamp)}
+                    </p>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <Calendar size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                      <p className="text-xs leading-tight" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                         {formatData(app.DataOra as Timestamp)}
                       </p>
                     </div>
@@ -230,8 +232,8 @@ export default function AppuntamentiPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <MapPin size={13} style={{ color: "var(--text-muted)" }} />
-                      <span className="text-sm" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
+                      <MapPin size={13} style={{ color: "#2563EB" }} />
+                      <span className="text-sm font-medium" style={{ fontFamily: "var(--font-montserrat)", color: "#2563EB" }}>
                         {sedeNome}
                       </span>
                     </div>

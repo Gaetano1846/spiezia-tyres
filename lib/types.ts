@@ -252,7 +252,7 @@ export type ServiziItem = {
 
 // ─── Appuntamento ─────────────────────────────────────────────────────────────
 
-export type AppuntamentoStato = "Programmato" | "Completato" | "Annullato";
+export type AppuntamentoStato = "In Attesa" | "In corso" | "Programmato" | "Completato" | "Annullato";
 
 export type Appuntamento = {
   id: string;
