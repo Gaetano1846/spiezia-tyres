@@ -3,8 +3,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
   collection, query, orderBy, getDocs, getDoc, getCountFromServer,
-  where, limit, onSnapshot, doc,
-  type DocumentReference, type Timestamp,
+  where, limit, onSnapshot, doc, Timestamp,
+  type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays } from "lucide-react";
@@ -77,12 +77,6 @@ function formatData(ts: Timestamp | null | undefined): string {
   const d = ts.toDate();
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" })
     + " " + d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
-}
-
-function toISODate(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "";
-  const d = ts.toDate();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function formatEuro(n: number | undefined | null) {
@@ -258,12 +252,24 @@ export default function OrdiniAdminPage() {
   }, []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
+  // Re-fetch whenever the date range changes — server-side date filter for accuracy
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
+        const daDate = new Date(dataDa + "T00:00:00");
+        const aDate  = new Date(dataA  + "T23:59:59");
+        const daTsamp = Timestamp.fromDate(daDate);
+        const aTsamp  = Timestamp.fromDate(aDate);
+
         const [ordiniSnap, kpiTotale, kpiDaEvadere, kpiTransito, kpiAnnullati] = await Promise.all([
-          getDocs(query(collection(db, "Ordini"), orderBy("DataOra", "desc"), limit(300))),
+          getDocs(query(
+            collection(db, "Ordini"),
+            where("DataOra", ">=", daTsamp),
+            where("DataOra", "<=", aTsamp),
+            orderBy("DataOra", "desc"),
+            limit(2000),
+          )),
           getCountFromServer(collection(db, "Ordini")),
           getCountFromServer(query(collection(db, "Ordini"), where("Stato", "in", ["Confermato", "In lavorazione"]))),
           getCountFromServer(query(collection(db, "Ordini"), where("Stato", "==", "Spedito"))),
@@ -308,9 +314,10 @@ export default function OrdiniAdminPage() {
         setLoading(false);
       }
     })();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataDa, dataA]);
 
-  // ── Filter ─────────────────────────────────────────────────────────────────
+  // ── Filter (date already filtered server-side) ─────────────────────────────
   const filtered = useMemo(() => {
     return entries.filter(({ ordine, clienteNome }) => {
       if (search) {
@@ -319,12 +326,9 @@ export default function OrdiniAdminPage() {
       }
       if (stato && ordine.Stato  !== stato) return false;
       if (fonte && ordine.Source !== fonte) return false;
-      const iso = toISODate(getTs(ordine));
-      if (dataDa && iso < dataDa) return false;
-      if (dataA  && iso > dataA)  return false;
       return true;
     });
-  }, [entries, search, stato, fonte, dataDa, dataA]);
+  }, [entries, search, stato, fonte]);
 
   // Fatturato del periodo (escludi annullati/rimborsati)
   const fatturato = useMemo(() => {
@@ -339,6 +343,9 @@ export default function OrdiniAdminPage() {
 
   function reset() {
     setSearch(""); setStato(""); setFonte("");
+  }
+
+  function resetRange() {
     setDataDa(today); setDataA(today);
   }
 
@@ -533,7 +540,7 @@ export default function OrdiniAdminPage() {
         {/* Reset — torna ad oggi */}
         {!isDefaultRange && (
           <button
-            onClick={reset}
+            onClick={resetRange}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-colors hover:bg-[#f9fafb]"
             style={{ background: "#fff", border: "1px solid var(--border)", color: "#374151", fontFamily: "var(--font-montserrat)" }}
           >
