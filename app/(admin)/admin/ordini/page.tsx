@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   collection, query, orderBy, getDocs, getDoc, getCountFromServer,
   where, limit, onSnapshot, doc,
   type DocumentReference, type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, ChevronDown } from "lucide-react";
+import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, Calendar } from "lucide-react";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
@@ -46,10 +46,14 @@ const STATO_VARIANT: Record<string, "success" | "brand" | "neutral" | "error" | 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type OrdineEntry = { ordine: Ordine; clienteNome: string; docId: string };
-
 type KPIs = { totale: number; daEvadere: number; inTransito: number; annullati: number };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
+
+function getTodayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Record<string, unknown>>> {
   if (refs.length === 0) return new Map();
@@ -62,7 +66,6 @@ async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Reco
   return map;
 }
 
-// Prova tutti i nomi di campo timestamp usati da Flutter/FlutterFlow
 function getTs(ordine: Ordine): Timestamp | undefined {
   const o = ordine as unknown as Record<string, Timestamp>;
   return o.DataOra ?? o.dataOra ?? o.data_ora ?? o.DataCreazione ?? o.createdAt ?? o.created_time;
@@ -84,6 +87,12 @@ function toISODate(ts: Timestamp | null | undefined): string {
 function formatEuro(n: number | undefined | null) {
   if (n == null) return "—";
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+}
+
+function formatISOToDisplay(iso: string) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
 }
 
 // ─── SpedizioneModal ───────────────────────────────────────────────────────────
@@ -132,7 +141,6 @@ function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: 
         className="relative bg-white rounded-2xl shadow-2xl w-full overflow-hidden"
         style={{ maxWidth: 520, fontFamily: "var(--font-montserrat)" }}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #f3f4f6" }}>
           <div className="flex items-center gap-2.5">
             <Truck size={18} style={{ color: "#FFC803" }} />
@@ -148,7 +156,6 @@ function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: 
           </button>
         </div>
 
-        {/* Contenuto */}
         <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
           {loading ? (
             <div className="space-y-3">
@@ -170,20 +177,17 @@ function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: 
                   <div key={s.id} className="rounded-xl p-3.5" style={{ border: "1px solid #e5e7eb" }}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {/* Corriere badge */}
                         <span
                           className="px-2 py-0.5 rounded-full text-xs font-bold"
                           style={{ background: s.corriere === "GLS" ? "#003DA5" : "#E8001C", color: "#fff" }}
                         >
                           {s.corriere ?? "—"}
                         </span>
-                        {/* Sede */}
                         {s.corriere === "GLS" && s.contractIndex != null && (
                           <span className="text-xs font-semibold" style={{ color: "#6b7280" }}>
                             {SEDE[s.contractIndex] ?? `Sede ${s.contractIndex}`}
                           </span>
                         )}
-                        {/* Stato */}
                         <span
                           className="px-2 py-0.5 rounded-full text-xs font-semibold"
                           style={{ background: statusStyle.bg, color: statusStyle.text }}
@@ -192,30 +196,22 @@ function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: 
                         </span>
                       </div>
                     </div>
-
-                    {/* Parcel ID */}
                     {s.parcelId && (
                       <p className="mt-2 text-sm font-bold font-mono" style={{ color: "#111" }}>
                         {s.parcelId}
                       </p>
                     )}
-
-                    {/* Destinazione */}
                     {s.destinationName && (
                       <p className="mt-1 text-xs" style={{ color: "#6b7280" }}>
                         <MapPin size={10} className="inline mr-1" />
                         {s.destinationName}
                       </p>
                     )}
-
-                    {/* Motivo annullamento */}
                     {s.motivoAnnullamento && (
                       <p className="mt-1.5 text-xs px-2 py-1 rounded-lg" style={{ background: "#FEE2E2", color: "#991B1B" }}>
                         {s.motivoAnnullamento}
                       </p>
                     )}
-
-                    {/* Note */}
                     {s.noteAggiuntive && (
                       <p className="mt-1 text-xs" style={{ color: "#9ca3af" }}>{s.noteAggiuntive}</p>
                     )}
@@ -237,21 +233,28 @@ export default function OrdiniAdminPage() {
   const [kpis, setKpis]       = useState<KPIs | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Filters — always visible (like Flutter)
-  const [search, setSearch]       = useState("");
-  const [stato, setStato]         = useState<OrdineStato | "">("");
-  const [fonte, setFonte]         = useState("");
-  const [dataDa, setDataDa]       = useState("");
-  const [dataA, setDataA]         = useState("");
+  const [search, setSearch] = useState("");
+  const [stato, setStato]   = useState<OrdineStato | "">("");
+  const [fonte, setFonte]   = useState("");
+  const [dataDa, setDataDa] = useState(getTodayISO);
+  const [dataA, setDataA]   = useState(getTodayISO);
 
-  // Multi-selezione
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const datePickerRef = useRef<HTMLDivElement>(null);
+
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-
-  // Modal spedizioni
   const [spedizioneModal, setSpedizioneModal] = useState<{ docId: string; orderId: string } | null>(null);
 
-  // Search inline (aperto da 🔍 nell'header)
-  const [showSearch, setShowSearch] = useState(false);
+  // Close date picker on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
+        setShowDatePicker(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -313,8 +316,8 @@ export default function OrdiniAdminPage() {
         const hay = [ordine.id, clienteNome, String(ordine.Totale ?? "")].join(" ").toLowerCase();
         if (!hay.includes(search.toLowerCase())) return false;
       }
-      if (stato  && ordine.Stato  !== stato)  return false;
-      if (fonte  && ordine.Source !== fonte)  return false;
+      if (stato && ordine.Stato  !== stato) return false;
+      if (fonte && ordine.Source !== fonte) return false;
       const iso = toISODate(getTs(ordine));
       if (dataDa && iso < dataDa) return false;
       if (dataA  && iso > dataA)  return false;
@@ -322,14 +325,24 @@ export default function OrdiniAdminPage() {
     });
   }, [entries, search, stato, fonte, dataDa, dataA]);
 
+  // Fatturato del periodo (escludi annullati/rimborsati)
+  const fatturato = useMemo(() => {
+    return filtered
+      .filter(({ ordine }) => ordine.Stato !== "Annullato" && ordine.Stato !== "Rimborsato")
+      .reduce((acc, { ordine }) => acc + (ordine.Totale ?? 0), 0);
+  }, [filtered]);
+
+  const today = getTodayISO();
+  const hasExtraFilters = !!(search || stato || fonte);
+  const isDefaultRange  = dataDa === today && dataA === today;
+
   function reset() {
-    setSearch(""); setStato(""); setFonte(""); setDataDa(""); setDataA("");
+    setSearch(""); setStato(""); setFonte("");
+    setDataDa(today); setDataA(today);
   }
 
-  const hasFilters = !!(stato || fonte || dataDa || dataA || search);
-
   // ── Selezione ──────────────────────────────────────────────────────────────
-  const allSelected = filtered.length > 0 && selectedIds.size === filtered.length;
+  const allSelected  = filtered.length > 0 && selectedIds.size === filtered.length;
   const someSelected = selectedIds.size > 0 && !allSelected;
 
   function toggleSelect(id: string) {
@@ -372,6 +385,11 @@ export default function OrdiniAdminPage() {
     toast(`Aggiorna Tracking: integrazione CF in arrivo (${selectedIds.size} ordini)`);
   }
 
+  // ── Date range display ─────────────────────────────────────────────────────
+  const dateRangeLabel = dataDa === dataA
+    ? formatISOToDisplay(dataDa)
+    : `${formatISOToDisplay(dataDa)} - ${formatISOToDisplay(dataA)}`;
+
   // ── KPI cards ──────────────────────────────────────────────────────────────
   const kpiCards = [
     { label: "Totale ordini",  value: kpis?.totale    ?? 0, accent: "#FFC803" },
@@ -384,25 +402,23 @@ export default function OrdiniAdminPage() {
     <div className="px-5 py-5 space-y-6">
 
       {/* Header */}
-      <div>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
-              Ordini
-            </h1>
-            <p className="text-sm mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-              Tutti i canali: B2B, eBay, Amazon, WooCommerce
-            </p>
-          </div>
-          <a
-            href="/api/admin/ordini/export"
-            download
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#FFF8DC]"
-            style={{ border: "1px solid #FFC803", color: "#111", fontFamily: "var(--font-montserrat)", background: "#fff" }}
-          >
-            <Download size={15} /> Esporta CSV
-          </a>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+            Ordini
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+            Tutti i canali: B2B, eBay, Amazon, WooCommerce
+          </p>
         </div>
+        <a
+          href="/api/admin/ordini/export"
+          download
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#FFF8DC]"
+          style={{ border: "1px solid #FFC803", color: "#111", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+        >
+          <Download size={15} /> Esporta CSV
+        </a>
       </div>
 
       {/* KPI cards */}
@@ -433,7 +449,7 @@ export default function OrdiniAdminPage() {
       </div>
 
       {/* Filter bar */}
-      <div className="flex gap-2 flex-wrap items-center mb-3">
+      <div className="flex gap-2 flex-wrap items-center">
         <div className="relative flex-1 min-w-48">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
           <input
@@ -456,15 +472,7 @@ export default function OrdiniAdminPage() {
           <option value="">Tutti gli stati</option>
           {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <input type="date" value={dataDa} onChange={(e) => setDataDa(e.target.value)}
-          className="px-3 py-2 rounded-xl text-sm outline-none"
-          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
-        {!loading && (
-          <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-            {filtered.length}/{entries.length}
-          </span>
-        )}
-        {hasFilters && (
+        {hasExtraFilters && (
           <button onClick={reset} className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm"
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
             <X size={13} />
@@ -472,10 +480,80 @@ export default function OrdiniAdminPage() {
         )}
       </div>
 
+      {/* Stats bar — fatturato + contatore + date range picker */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Fatturato */}
+        <div className="flex items-center px-4 py-2 rounded-xl" style={{ background: "#fff", border: "1px solid var(--border)" }}>
+          {loading ? (
+            <div className="h-5 w-28 rounded animate-pulse" style={{ background: "#f3f4f6" }} />
+          ) : (
+            <span className="text-sm font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+              {formatEuro(fatturato)}
+            </span>
+          )}
+        </div>
+
+        {/* Contatore */}
+        <div className="flex items-center px-4 py-2 rounded-xl" style={{ background: "#fff", border: "1px solid var(--border)" }}>
+          {loading ? (
+            <div className="h-5 w-8 rounded animate-pulse" style={{ background: "#f3f4f6" }} />
+          ) : (
+            <span className="text-sm font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+              {filtered.length}
+            </span>
+          )}
+        </div>
+
+        {/* Date range picker */}
+        <div className="relative" ref={datePickerRef}>
+          <button
+            onClick={() => setShowDatePicker((v) => !v)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-colors hover:bg-[#f9fafb]"
+            style={{ background: "#fff", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "#374151" }}
+          >
+            <Calendar size={13} style={{ color: "#6b7280" }} />
+            {dateRangeLabel}
+          </button>
+
+          {showDatePicker && (
+            <div
+              className="absolute top-full left-0 mt-1.5 p-3 rounded-xl shadow-xl z-30 flex gap-2 items-center"
+              style={{ background: "#fff", border: "1px solid var(--border)", minWidth: 300 }}
+            >
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Da</span>
+                <input type="date" value={dataDa} onChange={(e) => setDataDa(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg text-sm outline-none"
+                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
+              </div>
+              <div className="mt-4 text-sm" style={{ color: "var(--text-muted)" }}>→</div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>A</span>
+                <input type="date" value={dataA} onChange={(e) => setDataA(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg text-sm outline-none"
+                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Reset — torna ad oggi */}
+        {!isDefaultRange && (
+          <button
+            onClick={reset}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-colors hover:bg-[#f9fafb]"
+            style={{ background: "#fff", border: "1px solid var(--border)", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+          >
+            <RefreshCw size={13} />
+            Reset
+          </button>
+        )}
+      </div>
+
       {/* Table card */}
       <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)", background: "#fff" }}>
 
-        {/* Barra azioni bulk — visibile solo con selezione attiva */}
+        {/* Barra azioni bulk */}
         {selectedIds.size > 0 && (
           <div
             className="flex items-center gap-2.5 px-4 py-2.5 flex-wrap"
@@ -522,7 +600,6 @@ export default function OrdiniAdminPage() {
           </div>
         )}
 
-
         {/* Table */}
         {loading ? (
           <div className="p-4 space-y-2">
@@ -568,90 +645,78 @@ export default function OrdiniAdminPage() {
                   filtered.map(({ ordine, clienteNome, docId }) => {
                     const isSelected = selectedIds.has(docId);
                     return (
-                    <tr
-                      key={docId}
-                      className="hover:bg-[#FFFDF0] transition-colors"
-                      style={{ borderBottom: "1px solid #f3f4f6", background: isSelected ? "#FFFDF0" : undefined }}
-                    >
-                      {/* Checkbox */}
-                      <td className="pl-4 pr-2 py-3.5 w-10">
-                        <button
-                          onClick={() => toggleSelect(docId)}
-                          className="w-6 h-6 rounded-md flex items-center justify-center transition-all"
-                          style={{
-                            background: isSelected ? "#FFC803" : "#fff",
-                            border: `1.5px solid ${isSelected ? "#FFC803" : "#d1d5db"}`,
-                          }}
-                        >
-                          {isSelected && <Check size={13} style={{ color: "#111" }} />}
-                        </button>
-                      </td>
+                      <tr
+                        key={docId}
+                        className="hover:bg-[#FFFDF0] transition-colors"
+                        style={{ borderBottom: "1px solid #f3f4f6", background: isSelected ? "#FFFDF0" : undefined }}
+                      >
+                        <td className="pl-4 pr-2 py-3.5 w-10">
+                          <button
+                            onClick={() => toggleSelect(docId)}
+                            className="w-6 h-6 rounded-md flex items-center justify-center transition-all"
+                            style={{
+                              background: isSelected ? "#FFC803" : "#fff",
+                              border: `1.5px solid ${isSelected ? "#FFC803" : "#d1d5db"}`,
+                            }}
+                          >
+                            {isSelected && <Check size={13} style={{ color: "#111" }} />}
+                          </button>
+                        </td>
 
-                      {/* ID */}
-                      <td className="px-3 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
-                        {ordine.id}
-                      </td>
+                        <td className="px-3 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: "#111" }}>
+                          {ordine.id}
+                        </td>
 
-                      {/* Cliente */}
-                      <td className="px-3 py-3 max-w-[160px] truncate text-xs" style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}>
-                        {clienteNome}
-                      </td>
+                        <td className="px-3 py-3 max-w-[160px] truncate text-xs" style={{ color: "#374151" }}>
+                          {clienteNome}
+                        </td>
 
-                      {/* (search spacer) */}
-                      <td className="w-10" />
+                        <td className="px-3 py-3">
+                          <span
+                            className="px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap"
+                            style={{
+                              background: FONTE_COLORS[ordine.Source]?.bg ?? "#E8E8E8",
+                              color: FONTE_COLORS[ordine.Source]?.text ?? "#374151",
+                            }}
+                          >
+                            {ordine.Source}
+                          </span>
+                        </td>
 
-                      {/* Fonte */}
-                      <td className="px-3 py-3">
-                        <span
-                          className="px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap"
-                          style={{
-                            background: FONTE_COLORS[ordine.Source]?.bg ?? "#E8E8E8",
-                            color: FONTE_COLORS[ordine.Source]?.text ?? "#374151",
-                          }}
-                        >
-                          {ordine.Source}
-                        </span>
-                      </td>
+                        <td className="px-3 py-3 text-xs whitespace-nowrap" style={{ color: "#6b7280" }}>
+                          {formatData(getTs(ordine))}
+                        </td>
 
-                      {/* Data */}
-                      <td className="px-3 py-3 text-xs whitespace-nowrap" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-                        {formatData(getTs(ordine))}
-                      </td>
+                        <td className="px-3 py-3">
+                          <Badge variant={STATO_VARIANT[ordine.Stato] ?? "neutral"}>
+                            {ordine.Stato}
+                          </Badge>
+                        </td>
 
-                      {/* Stato */}
-                      <td className="px-3 py-3">
-                        <Badge variant={STATO_VARIANT[ordine.Stato] ?? "neutral"}>
-                          {ordine.Stato}
-                        </Badge>
-                      </td>
+                        <td className="px-3 py-3">
+                          <button
+                            className="p-1.5 rounded-lg hover:bg-[#f3f4f6] transition-colors"
+                            title="Spedizioni ordine"
+                            onClick={() => setSpedizioneModal({ docId, orderId: ordine.id ?? docId })}
+                          >
+                            <Truck size={15} style={{ color: "#374151" }} />
+                          </button>
+                        </td>
 
-                      {/* Sped — truck icon */}
-                      <td className="px-3 py-3">
-                        <button
-                          className="p-1.5 rounded-lg hover:bg-[#f3f4f6] transition-colors"
-                          title="Spedizioni ordine"
-                          onClick={() => setSpedizioneModal({ docId, orderId: ordine.id ?? docId })}
-                        >
-                          <Truck size={15} style={{ color: "#374151" }} />
-                        </button>
-                      </td>
+                        <td className="px-3 py-3 text-xs font-bold whitespace-nowrap" style={{ color: "#111" }}>
+                          {formatEuro(ordine.Totale)}
+                        </td>
 
-                      {/* Totale */}
-                      <td className="px-3 py-3 text-xs font-bold whitespace-nowrap" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
-                        {formatEuro(ordine.Totale)}
-                      </td>
-
-                      {/* Azioni */}
-                      <td className="px-3 py-3">
-                        <Link
-                          href={`/admin/ordini/${docId}`}
-                          className="p-1.5 rounded-lg hover:bg-[#FFF8DC] transition-colors inline-flex"
-                          title="Dettagli ordine"
-                        >
-                          <Eye size={15} style={{ color: "#374151" }} />
-                        </Link>
-                      </td>
-                    </tr>
+                        <td className="px-3 py-3">
+                          <Link
+                            href={`/admin/ordini/${docId}`}
+                            className="p-1.5 rounded-lg hover:bg-[#FFF8DC] transition-colors inline-flex"
+                            title="Dettagli ordine"
+                          >
+                            <Eye size={15} style={{ color: "#374151" }} />
+                          </Link>
+                        </td>
+                      </tr>
                     );
                   })
                 )}
