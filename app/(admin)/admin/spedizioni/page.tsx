@@ -274,22 +274,41 @@ export default function SpedizioniPage() {
   }
 
   async function handlePrintLabel(r: SpedizioneRow) {
-    if (!r.parcelId) { toast.error("Nessun ID spedizione disponibile"); return; }
-    const isSDA  = r.Corriere === "SDA";
-    const toastId = toast.loading(`Recupero etichetta ${isSDA ? "SDA" : "GLS"}…`);
+    const isSDA = r.Corriere === "SDA";
+
+    if (isSDA) {
+      // SDA: parcelId richiesto per reshark-shipping CF
+      if (!r.parcelId) { toast.error("Nessun ID spedizione SDA disponibile"); return; }
+      const toastId = toast.loading("Recupero etichetta SDA…");
+      try {
+        const res = await fetch(
+          `https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=label&parcelId=${r.parcelId}`
+        );
+        if (!res.ok) throw new Error(`CF error ${res.status}`);
+        const blob = await res.blob();
+        window.open(URL.createObjectURL(blob), "_blank");
+        toast.dismiss(toastId);
+      } catch {
+        toast.dismiss(toastId);
+        toast.error("Impossibile recuperare l'etichetta SDA");
+      }
+      return;
+    }
+
+    // GLS: leggo GLS_PdfUrl dall'Ordine collegato (stesso comportamento del Flutter)
+    if (!r.orderReference) { toast.error("Ordine collegato non trovato"); return; }
+    const toastId = toast.loading("Recupero etichetta GLS…");
     try {
-      const url = isSDA
-        ? `https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=label&parcelId=${r.parcelId}`
-        : `https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy?action=label&parcelId=${r.parcelId}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`CF error ${res.status}`);
-      const blob = await res.blob();
-      const objUrl = URL.createObjectURL(blob);
-      window.open(objUrl, "_blank");
+      const ordineSnap = await getDoc(r.orderReference);
+      if (!ordineSnap.exists()) throw new Error("Ordine non trovato");
+      const pdfUrl = (ordineSnap.data() as Record<string, unknown>).GLS_PdfUrl as string | undefined;
+      if (!pdfUrl) throw new Error("GLS_PdfUrl non disponibile su questo ordine");
+      window.open(pdfUrl, "_blank");
       toast.dismiss(toastId);
-    } catch {
+    } catch (err) {
       toast.dismiss(toastId);
-      toast.error(`Impossibile recuperare l'etichetta ${isSDA ? "SDA" : "GLS"}`);
+      const msg = err instanceof Error ? err.message : "Errore sconosciuto";
+      toast.error(`Etichetta GLS non disponibile: ${msg}`);
     }
   }
 
@@ -314,32 +333,65 @@ export default function SpedizioniPage() {
       </div>
 
       {/* Top filters bar */}
-      <div className="flex gap-3 flex-wrap items-center">
+      <div className="flex gap-2 flex-wrap items-center">
         <div className="relative flex-1 min-w-48">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Cerca per ID, ordine, cliente…"
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
-            style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }} />
+            className="w-full pl-9 pr-4 py-2 rounded-xl text-sm outline-none"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }} />
         </div>
-
+        <select value={fonte} onChange={(e) => setFonte(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          <option value="">Tutte le fonti</option>
+          {fontiList.map((f) => <option key={f}>{f}</option>)}
+        </select>
+        <select value={corriere} onChange={(e) => setCorriere(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          <option value="">Tutti i corrieri</option>
+          {corrieriList.map((c) => <option key={c}>{c}</option>)}
+        </select>
+        <select value={magazzino} onChange={(e) => setMagazzino(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          <option value="">Tutti i magazzini</option>
+          {magazzinoList.map((m) => <option key={m}>{m}</option>)}
+        </select>
+        <select value={statoGLS} onChange={(e) => setStatoGLS(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          <option value="">Stato GLS</option>
+          <option value="created">Creata</option>
+          <option value="closed">Chiusa</option>
+          <option value="deleted">Eliminata</option>
+        </select>
+        <select value={statoMag} onChange={(e) => setStatoMag(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          <option value="">Stato magazzino</option>
+          <option>In Preparazione</option>
+          <option>Annullato</option>
+          <option>Spedito</option>
+        </select>
         <select value={sedeGLS} onChange={(e) => setSedeGLS(e.target.value)}
-          className="px-3 py-2.5 rounded-xl text-sm outline-none"
-          style={{ background: sedeGLS ? "#FFF8DC" : "var(--bg-secondary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
           <option value="">Sede GLS</option>
           <option value="0">GLS Nola</option>
           <option value="1">GLS Roma</option>
         </select>
-
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-          className="px-3 py-2.5 rounded-xl text-sm outline-none"
-          style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
-
-        <button onClick={reset}
-          className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-medium"
-          style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-          <RefreshCw size={14} /> Reset
-        </button>
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
+        {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || date) && (
+          <button onClick={reset}
+            className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
+            <X size={13} />
+          </button>
+        )}
       </div>
 
       {/* Bulk selection bar */}
@@ -376,74 +428,15 @@ export default function SpedizioniPage() {
                     className="w-4 h-4 cursor-pointer" style={{ accentColor: "#FFC803" }} />
                 </th>
 
-                {/* Static label columns */}
                 {[
-                  { key: "parcelId",  label: "ID Spedizione" },
-                  { key: "orderId",   label: "Ordine" },
-                  { key: "destName",  label: "Cliente" },
-                  { key: "createdAt", label: "Creato Il" },
-                ].map((c) => (
-                  <th key={c.key} className="py-3 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
-                    style={{ color: "var(--text-muted)" }}>
-                    {c.label}
+                  "ID Spedizione", "Ordine", "Cliente", "Creato Il",
+                  "Fonte", "Corriere", "Magazzino", "Stato GLS", "Stato Mag.",
+                ].map((h) => (
+                  <th key={h} className="py-3 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
+                    style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                    {h}
                   </th>
                 ))}
-
-                {/* Fonte dropdown-header */}
-                <th className="py-2 pr-2">
-                  <select value={fonte} onChange={(e) => setFonte(e.target.value)}
-                    className="w-full px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest outline-none cursor-pointer"
-                    style={{ background: fonte ? "#FFF8DC" : "#f9fafb", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                    <option value="">Fonte ▾</option>
-                    {fontiList.map((f) => <option key={f}>{f}</option>)}
-                  </select>
-                </th>
-
-                {/* Corriere dropdown-header */}
-                <th className="py-2 pr-2">
-                  <select value={corriere} onChange={(e) => setCorriere(e.target.value)}
-                    className="w-full px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest outline-none cursor-pointer"
-                    style={{ background: corriere ? "#FFF8DC" : "#f9fafb", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                    <option value="">Corriere ▾</option>
-                    {corrieriList.map((c) => <option key={c}>{c}</option>)}
-                  </select>
-                </th>
-
-                {/* Magazzino dropdown-header */}
-                <th className="py-2 pr-2">
-                  <select value={magazzino} onChange={(e) => setMagazzino(e.target.value)}
-                    className="w-full px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest outline-none cursor-pointer"
-                    style={{ background: magazzino ? "#FFF8DC" : "#f9fafb", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                    <option value="">Magazzino ▾</option>
-                    {magazzinoList.map((m) => <option key={m}>{m}</option>)}
-                  </select>
-                </th>
-
-                {/* Stato GLS dropdown-header */}
-                <th className="py-2 pr-2">
-                  <select value={statoGLS} onChange={(e) => setStatoGLS(e.target.value)}
-                    className="w-full px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest outline-none cursor-pointer"
-                    style={{ background: statoGLS ? "#FFF8DC" : "#f9fafb", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                    <option value="">Stato GLS ▾</option>
-                    <option value="created">Creata</option>
-                    <option value="closed">Chiusa</option>
-                    <option value="deleted">Eliminata</option>
-                  </select>
-                </th>
-
-                {/* Stato Magazzino dropdown-header */}
-                <th className="py-2 pr-2">
-                  <select value={statoMag} onChange={(e) => setStatoMag(e.target.value)}
-                    className="w-full px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest outline-none cursor-pointer"
-                    style={{ background: statoMag ? "#FFF8DC" : "#f9fafb", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                    <option value="">Stato Mag. ▾</option>
-                    <option>In Preparazione</option>
-                    <option>Annullato</option>
-                    <option>Spedito</option>
-                  </select>
-                </th>
-
-                {/* Actions col */}
                 <th className="py-3 pr-4 w-20" />
               </tr>
             </thead>
@@ -453,7 +446,7 @@ export default function SpedizioniPage() {
                 <RowSkeleton />
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-16 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                  <td colSpan={11} className="py-16 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                     Nessuna spedizione trovata.
                   </td>
                 </tr>

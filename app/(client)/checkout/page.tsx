@@ -138,7 +138,7 @@ function AddressFormSection({ title, data, onChange }: {
 type ClienteSearchResult = Cliente & { id: string };
 
 function clienteDisplayName(c: ClienteSearchResult): string {
-  return c.Ragione_Sociale ?? c.Nome ?? c.Telefono ?? c.id;
+  return c.Ragione_Sociale || c.Nome || c.Email || c.Telefono || c.id;
 }
 
 function SearchableClienteDropdown({
@@ -177,9 +177,10 @@ function SearchableClienteDropdown({
       if (text.trim() !== "") {
         const t = text.toLowerCase();
         docs = docs.filter((c) =>
-          (c.Ragione_Sociale ?? "").toLowerCase().includes(t) ||
-          (c.Nome ?? "").toLowerCase().includes(t) ||
-          (c.Telefono ?? "").toLowerCase().includes(t)
+          (c.Ragione_Sociale || "").toLowerCase().includes(t) ||
+          (c.Nome || "").toLowerCase().includes(t) ||
+          (c.Telefono || "").toLowerCase().includes(t) ||
+          (c.Email || "").toLowerCase().includes(t)
         );
       }
       if (after) {
@@ -332,11 +333,9 @@ function SearchableClienteDropdown({
                 }}
               >
                 <div className="font-semibold truncate">{clienteDisplayName(c)}</div>
-                {c.Telefono && (
-                  <div className="text-xs mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
-                    {c.Telefono}
-                  </div>
-                )}
+                <div className="text-xs mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
+                  {[c.Tipo, c.Telefono, c.Email].filter(Boolean).join(" · ") || c.id}
+                </div>
               </button>
             ))}
             {hasMore && (
@@ -599,8 +598,13 @@ export default function CheckoutPage() {
         <div className="space-y-3 mb-4">
           {itemsConSconto.map((item) => (
             <div key={item.id} className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--bg-primary)" }}>
-                <Package size={18} style={{ color: "var(--text-muted)" }} />
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>
+                {item.immagine ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={item.immagine} alt={item.modello} className="w-full h-full object-contain" />
+                ) : (
+                  <Package size={18} style={{ color: "var(--text-muted)" }} />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>

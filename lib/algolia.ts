@@ -38,6 +38,9 @@ export type ProdottoHit = {
   T24: boolean;
   Indice_Velocita?: string;
   Indice_Carico?: string;
+  Indice_Consumo?: string;
+  Indice_Bagnato?: string;
+  Indice_Rumorosita?: string;
   EAN?: string;
   SKU?: string;
   Label?: string;

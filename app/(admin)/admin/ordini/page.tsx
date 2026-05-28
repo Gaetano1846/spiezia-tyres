@@ -432,31 +432,48 @@ export default function OrdiniAdminPage() {
         ))}
       </div>
 
-      {/* Filters + table card */}
-      <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid #e5e7eb", background: "#fff" }}>
-
-        {/* Search inline — appare quando si clicca 🔍 */}
-        {showSearch && (
-          <div className="px-4 py-2.5" style={{ borderBottom: "1px solid #f3f4f6" }}>
-            <div className="relative">
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "#9ca3af" }} />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Cerca ID, cliente, importo…"
-                // eslint-disable-next-line jsx-a11y/no-autofocus
-                autoFocus
-                className="w-full pl-8 pr-8 py-2 rounded-xl text-sm outline-none"
-                style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
-              />
-              {search && (
-                <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <X size={12} style={{ color: "#9ca3af" }} />
-                </button>
-              )}
-            </div>
-          </div>
+      {/* Filter bar */}
+      <div className="flex gap-2 flex-wrap items-center mb-3">
+        <div className="relative flex-1 min-w-48">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Cerca ID, cliente, importo…"
+            className="w-full pl-9 pr-4 py-2 rounded-xl text-sm outline-none"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
+          />
+        </div>
+        <select value={fonte} onChange={(e) => setFonte(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          <option value="">Tutte le fonti</option>
+          {FONTI.map((f) => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <select value={stato} onChange={(e) => setStato(e.target.value as OrdineStato | "")}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+          <option value="">Tutti gli stati</option>
+          {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <input type="date" value={dataDa} onChange={(e) => setDataDa(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm outline-none"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
+        {!loading && (
+          <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+            {filtered.length}/{entries.length}
+          </span>
         )}
+        {hasFilters && (
+          <button onClick={reset} className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+            <X size={13} />
+          </button>
+        )}
+      </div>
+
+      {/* Table card */}
+      <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)", background: "#fff" }}>
 
         {/* Barra azioni bulk — visibile solo con selezione attiva */}
         {selectedIds.size > 0 && (
@@ -518,7 +535,6 @@ export default function OrdiniAdminPage() {
             <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
               <thead>
                 <tr style={{ background: "#f9fafb", borderBottom: "2px solid #e5e7eb" }}>
-                  {/* Select all */}
                   <th className="pl-4 pr-2 py-3 w-10">
                     <button
                       onClick={toggleSelectAll}
@@ -532,114 +548,19 @@ export default function OrdiniAdminPage() {
                       {someSelected && <div style={{ width: 8, height: 2, background: "#FFC803", borderRadius: 1 }} />}
                     </button>
                   </th>
-
-                  {/* ID */}
-                  <th className="px-2 py-3">
-                    <div className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-center whitespace-nowrap" style={{ background: "#ececec", color: "#374151", fontFamily: "var(--font-montserrat)" }}>
-                      ID
-                    </div>
-                  </th>
-
-                  {/* Cliente */}
-                  <th className="px-2 py-3">
-                    <div className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-center whitespace-nowrap" style={{ background: "#ececec", color: "#374151", fontFamily: "var(--font-montserrat)" }}>
-                      Cliente
-                    </div>
-                  </th>
-
-                  {/* 🔍 search toggle */}
-                  <th className="px-2 py-3 w-10">
-                    <button
-                      onClick={() => { setShowSearch((v) => !v); if (showSearch) setSearch(""); }}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
-                      style={{ background: (showSearch || search) ? "#FFF8DC" : "#ececec" }}
-                      title="Cerca"
-                    >
-                      <Search size={13} style={{ color: (showSearch || search) ? "#B45309" : "#6b7280" }} />
-                    </button>
-                  </th>
-
-                  {/* Fonte dropdown */}
-                  <th className="px-2 py-3">
-                    <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg" style={{ background: fonte ? "#FFF8DC" : "#ececec" }}>
-                      <select
-                        value={fonte}
-                        onChange={(e) => setFonte(e.target.value)}
-                        className="text-[11px] font-bold outline-none bg-transparent cursor-pointer"
-                        style={{ color: fonte ? "#B45309" : "#374151", fontFamily: "var(--font-montserrat)" }}
-                      >
-                        <option value="">Fonte</option>
-                        {FONTI.map((f) => <option key={f} value={f}>{f}</option>)}
-                      </select>
-                      <ChevronDown size={10} style={{ color: "#9ca3af", flexShrink: 0 }} />
-                    </div>
-                  </th>
-
-                  {/* Data */}
-                  <th className="px-2 py-3">
-                    <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg" style={{ background: dataDa ? "#FFF8DC" : "#ececec" }}>
-                      <input
-                        type="date"
-                        value={dataDa}
-                        onChange={(e) => setDataDa(e.target.value)}
-                        className="text-[11px] font-bold outline-none bg-transparent cursor-pointer w-24"
-                        style={{ color: dataDa ? "#B45309" : "#374151", fontFamily: "var(--font-montserrat)" }}
-                        title="Filtra per data"
-                      />
-                    </div>
-                  </th>
-
-                  {/* Stato dropdown */}
-                  <th className="px-2 py-3">
-                    <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg" style={{ background: stato ? "#FFF8DC" : "#ececec" }}>
-                      <select
-                        value={stato}
-                        onChange={(e) => setStato(e.target.value as OrdineStato | "")}
-                        className="text-[11px] font-bold outline-none bg-transparent cursor-pointer"
-                        style={{ color: stato ? "#B45309" : "#374151", fontFamily: "var(--font-montserrat)" }}
-                      >
-                        <option value="">Stato</option>
-                        {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <ChevronDown size={10} style={{ color: "#9ca3af", flexShrink: 0 }} />
-                    </div>
-                  </th>
-
-                  {/* Sped */}
-                  <th className="px-2 py-3">
-                    <div className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-center whitespace-nowrap" style={{ background: "#ececec", color: "#374151", fontFamily: "var(--font-montserrat)" }}>
-                      Sped
-                    </div>
-                  </th>
-
-                  {/* Totale */}
-                  <th className="px-2 py-3">
-                    <div className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-center whitespace-nowrap" style={{ background: "#ececec", color: "#374151", fontFamily: "var(--font-montserrat)" }}>
-                      Totale
-                    </div>
-                  </th>
-
-                  {/* Reset filtri + count */}
-                  <th className="px-3 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {!loading && (
-                        <span className="text-[10px] whitespace-nowrap" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
-                          {filtered.length}/{entries.length}
-                        </span>
-                      )}
-                      {hasFilters && (
-                        <button onClick={reset} title="Azzera filtri" className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: "#fee2e2" }}>
-                          <X size={11} style={{ color: "#ef4444" }} />
-                        </button>
-                      )}
-                    </div>
-                  </th>
+                  {["ID", "Cliente", "Fonte", "Data", "Stato", "Sped", "Totale"].map((h) => (
+                    <th key={h} className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
+                      style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                      {h}
+                    </th>
+                  ))}
+                  <th className="px-3 py-3 w-10" />
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-14 text-center text-sm" style={{ color: "#9ca3af" }}>
+                    <td colSpan={9} className="py-14 text-center text-sm" style={{ color: "#9ca3af" }}>
                       Nessun ordine trovato.
                     </td>
                   </tr>

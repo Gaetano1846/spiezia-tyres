@@ -65,13 +65,13 @@ export default function StampaOrdinePage() {
 
   const articoli = (ordine.Articoli ?? []) as Record<string, unknown>[];
   const normalized: ArticoloNorm[] = articoli.map((a) => ({
-    nome:      String(a.Nome ?? a.Titolo ?? "Articolo"),
+    nome:      String(a.Titolo ?? "Articolo"),
     marca:     String(a.Marca ?? ""),
     misura:    String(a.Misura ?? ""),
-    prezzo:    Number(a.Prezzo ?? a.PrezzoUnitario ?? 0),
+    prezzo:    Number(a.Prezzo ?? 0),
     pfu:       Number(a.PFU ?? 0),
-    logistica: Number(a.contributoLogistico ?? a.ContributoLogistico ?? 0),
-    qty:       Number(a.Quantita ?? a.Qty ?? 1),
+    logistica: Number(a.Contributo_Logistico ?? 0),
+    qty:       Number(a.Quantita ?? 1),
   }));
 
   const subtotale   = normalized.reduce((s, a) => s + a.prezzo * a.qty, 0);

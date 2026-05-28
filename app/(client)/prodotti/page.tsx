@@ -38,6 +38,31 @@ function euro(n: number | undefined | null) {
   return (n ?? 0).toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 }
 
+const EU_LABEL_COLORS: Record<string, { bg: string; text: string }> = {
+  A: { bg: "#15803d", text: "#fff" },
+  B: { bg: "#65a30d", text: "#fff" },
+  C: { bg: "#ca8a04", text: "#fff" },
+  D: { bg: "#ea580c", text: "#fff" },
+  E: { bg: "#dc2626", text: "#fff" },
+  F: { bg: "#991b1b", text: "#fff" },
+  G: { bg: "#450a0a", text: "#fff" },
+};
+
+function EuLabelBadge({ value }: { value?: string }) {
+  if (!value) return <span className="text-[9px]" style={{ color: "#d1d5db" }}>—</span>;
+  const grade = value.toUpperCase().charAt(0);
+  const c = EU_LABEL_COLORS[grade];
+  if (!c) return <span className="text-[9px] font-semibold" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>{value}</span>;
+  return (
+    <span
+      className="inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-black"
+      style={{ background: c.bg, color: c.text, fontFamily: "var(--font-montserrat)" }}
+    >
+      {grade}
+    </span>
+  );
+}
+
 function StockPill({ value, color }: { value: number; color: string }) {
   const label = value > 20 ? "20+" : String(value);
   return (
@@ -181,7 +206,7 @@ export default function ProdottiPage() {
     const qty = getQty(hit.objectID);
     add({ id: hit.objectID, marca: hit.Marca, modello: hit.Modello,
           misura: formatMisura(hit), stagione: hit.Stagione,
-          prezzo, pfu, stockMax: stock, quantita: qty });
+          prezzo, pfu, stockMax: stock, quantita: qty, immagine: hit.Immagine });
     toast.success(`${qty} × ${hit.Marca} ${hit.Modello} aggiunto`);
     setQuantities((p) => ({ ...p, [hit.objectID]: 4 }));
   }
@@ -454,7 +479,7 @@ export default function ProdottiPage() {
             {/* Intestazione colonne — stile Flutter: header scuro */}
             <div className="hidden xl:grid px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider"
               style={{
-                gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
+                gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
                 background: "#111",
                 borderBottom: "1px solid #333",
                 color: "#fff",
@@ -463,7 +488,11 @@ export default function ProdottiPage() {
               }}>
               <span>Marca</span>
               <span>Prodotto</span>
+              <span className="text-center">CAI</span>
               <span className="text-center">S.</span>
+              <span className="text-center">Con.</span>
+              <span className="text-center">Bag.</span>
+              <span className="text-center">Rum.</span>
               <span className="text-right">Prezzo</span>
               <span className="text-right">PFU</span>
               <span className="text-right">P. Finito</span>
@@ -495,7 +524,7 @@ export default function ProdottiPage() {
                   key={hit.objectID}
                   className="flex xl:grid items-center gap-2 px-4 py-2.5 transition-colors hover:bg-[#FFFDF0]"
                   style={{
-                    gridTemplateColumns: "110px 1fr 28px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
+                    gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
                     borderBottom: idx < sortedHits.length - 1 ? "1px solid #f3f4f6" : "none",
                     opacity: esaurito ? 0.5 : 1,
                     gap: "8px",
@@ -542,9 +571,33 @@ export default function ProdottiPage() {
                     )}
                   </div>
 
+                  {/* CAI */}
+                  <div className="hidden xl:flex items-center justify-center">
+                    <span className="text-[9px] font-mono text-center leading-tight" style={{ color: "#6b7280" }}>
+                      {hit.CAI ?? "—"}
+                    </span>
+                  </div>
+
                   {/* Stagione icon */}
                   <div className="hidden xl:flex items-center justify-center">
                     <StagioneIcon stagione={hit.Stagione} />
+                  </div>
+
+                  {/* Consumo carburante (EU label) */}
+                  <div className="hidden xl:flex items-center justify-center">
+                    <EuLabelBadge value={hit.Indice_Consumo} />
+                  </div>
+
+                  {/* Bagnato (EU label) */}
+                  <div className="hidden xl:flex items-center justify-center">
+                    <EuLabelBadge value={hit.Indice_Bagnato} />
+                  </div>
+
+                  {/* Rumorosità */}
+                  <div className="hidden xl:flex items-center justify-center">
+                    <span className="text-[9px] font-semibold text-center" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                      {hit.Indice_Rumorosita ?? "—"}
+                    </span>
                   </div>
 
                   {/* Prezzo netto */}

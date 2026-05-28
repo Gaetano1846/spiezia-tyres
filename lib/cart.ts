@@ -8,6 +8,7 @@ export type CartItem = {
   pfu: number;
   quantita: number;
   stockMax: number;
+  immagine?: string;
 };
 
 const CART_KEY = "spiezia_cart";

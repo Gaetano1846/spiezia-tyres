@@ -11,6 +11,7 @@ import { useAuth } from "@/components/layout/AuthProvider";
 import {
   ChevronRight, ArrowLeft, Printer, Mail, XCircle, ExternalLink,
   Plus, Send, CheckCircle2, Package, Truck, Clock, RotateCcw, Box,
+  Pencil, X, Tag,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -99,13 +100,13 @@ function fmtData(ts: Timestamp | null | undefined): string {
 
 function normalizeArticolo(a: Record<string, unknown>) {
   return {
-    titolo:    String(a.Titolo ?? a.titolo ?? "Prodotto"),
-    marca:     String(a.Marca  ?? a.marca  ?? ""),
-    qty:       Number(a.Quantita ?? a.quantita ?? 0),
-    prezzo:    Number(a.PrezzoUnitario ?? a.prezzo ?? 0),
-    pfu:       Number(a.PFU ?? a.pfu ?? 0),
-    logistica: Number(a.contributoLogistico ?? 0),
-    sku:       String(a.SKU ?? a.sku ?? a.Prodotto ?? ""),
+    titolo:    String(a.Titolo ?? "Prodotto"),
+    marca:     String(a.Marca  ?? ""),
+    qty:       Number(a.Quantita ?? 0),
+    prezzo:    Number(a.Prezzo ?? 0),
+    pfu:       Number(a.PFU ?? 0),
+    logistica: Number(a.Contributo_Logistico ?? 0),
+    sku:       String(a.SKU ?? ""),
   };
 }
 
@@ -126,6 +127,11 @@ export default function OrdineAdminDetailPage() {
   const [savingTracking, setSavingTracking] = useState(false);
   const [creatingSDA,    setCreatingSDA]    = useState(false);
   const [creatingGLS,    setCreatingGLS]    = useState(false);
+  const [sendingEmail,   setSendingEmail]   = useState(false);
+  const [aggiornandoGLS, setAggiornandoGLS] = useState(false);
+  const [editingAddr,    setEditingAddr]    = useState<"fatturazione" | "spedizione" | null>(null);
+  const [addrForm,       setAddrForm]       = useState<Record<string, string>>({});
+  const [savingAddr,     setSavingAddr]     = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -345,6 +351,113 @@ export default function OrdineAdminDetailPage() {
       toast.error(`Errore nella creazione della spedizione GLS (${sedeName})`);
     } finally {
       setCreatingGLS(false);
+    }
+  }
+
+  async function handleInviaEmail() {
+    if (!ordine || sendingEmail) return;
+    setSendingEmail(true);
+    const toastId = toast.loading("Invio email conferma…");
+    try {
+      const arts  = (ordine.Articoli ?? []) as Record<string, unknown>[];
+      const items = arts.map(normalizeArticolo);
+      const baseTotal = items.reduce((s, a) => s + (a.prezzo + a.pfu + a.logistica) * a.qty, 0);
+      const total = ordine.Totale ?? baseTotal * 1.22;
+      const products = items.map((a) => ({
+        name:  `${a.marca} ${a.titolo}`.trim(),
+        qty:   a.qty,
+        price: a.prezzo,
+        pfu:   a.pfu,
+        total: (a.prezzo + a.pfu + a.logistica) * a.qty,
+      }));
+      const emails = [clienteInfo?.email].filter(Boolean);
+      const res = await fetch(
+        "https://europe-west3-crm-3iuocs.cloudfunctions.net/Order_Email",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_name: clienteInfo?.nome ?? "",
+            order_number:  ordine.Numero ?? id,
+            order_total:   total,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            order_date:    fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp),
+            fatturazione:  ordine.IndirizzoFatturazione ?? {},
+            spedizione:    ordine.IndirizzoSpedizione ?? {},
+            products,
+            emails,
+          }),
+        }
+      );
+      toast.dismiss(toastId);
+      if (!res.ok) throw new Error(`CF ${res.status}`);
+      toast.success("Email conferma inviata");
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Errore nell'invio email");
+    } finally {
+      setSendingEmail(false);
+    }
+  }
+
+  async function handleAggiornaEtichetteGLS() {
+    if (aggiornandoGLS) return;
+    setAggiornandoGLS(true);
+    const toastId = toast.loading("Aggiornamento etichette GLS…");
+    try {
+      const res = await fetch(
+        "https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "getZplBySped", ordiniId: id }),
+        }
+      );
+      toast.dismiss(toastId);
+      if (!res.ok) throw new Error(`CF ${res.status}`);
+      toast.success("Etichette GLS aggiornate");
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Errore aggiornamento etichette GLS");
+    } finally {
+      setAggiornandoGLS(false);
+    }
+  }
+
+  function openEditAddr(tipo: "fatturazione" | "spedizione") {
+    const raw  = tipo === "fatturazione" ? ordine?.IndirizzoFatturazione : ordine?.IndirizzoSpedizione;
+    const addr = raw as Record<string, string> | undefined;
+    setAddrForm({
+      Destinatario: addr?.Destinatario ?? addr?.Nome ?? "",
+      Azienda:      addr?.Azienda ?? "",
+      Via:          addr?.Via ?? "",
+      Civico:       addr?.Civico ?? "",
+      CAP:          addr?.CAP ?? "",
+      Citta:        addr?.Citta ?? "",
+      Provincia:    addr?.Provincia ?? "",
+      Paese:        addr?.Paese ?? "IT",
+      Telefono:     addr?.Telefono ?? "",
+      PEC:          addr?.PEC ?? "",
+      CF:           addr?.CF ?? "",
+      PIVA:         addr?.PIVA ?? addr?.PartitaIVA ?? "",
+    });
+    setEditingAddr(tipo);
+  }
+
+  async function handleSaveAddr() {
+    if (!editingAddr || savingAddr) return;
+    setSavingAddr(true);
+    const key = editingAddr === "fatturazione" ? "IndirizzoFatturazione" : "IndirizzoSpedizione";
+    try {
+      await updateDoc(doc(db, "Ordini", id), { [key]: addrForm });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setOrdine((o) => o ? { ...o, [key]: addrForm } as any : o);
+      setEditingAddr(null);
+      toast.success("Indirizzo aggiornato");
+    } catch {
+      toast.error("Errore aggiornamento indirizzo");
+    } finally {
+      setSavingAddr(false);
     }
   }
 
@@ -634,9 +747,18 @@ export default function OrdineAdminDetailPage() {
           {/* Indirizzi */}
           {inFat && (
             <Card padding="sm">
-              <h2 className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                Indirizzo fatturazione
-              </h2>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  Indirizzo fatturazione
+                </h2>
+                <button
+                  onClick={() => openEditAddr("fatturazione")}
+                  className="p-1 rounded-lg hover:bg-[#F1F4F8] transition-colors"
+                  title="Modifica indirizzo"
+                >
+                  <Pencil size={13} style={{ color: "var(--text-muted)" }} />
+                </button>
+              </div>
               <div className="text-sm space-y-0.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
                 {inFat.Azienda && <p className="font-semibold">{inFat.Azienda}</p>}
                 {inFat.PartitaIVA && <p className="text-xs" style={{ color: "var(--text-muted)" }}>P.IVA {inFat.PartitaIVA}</p>}
@@ -648,12 +770,27 @@ export default function OrdineAdminDetailPage() {
 
           {inSpe && (
             <Card padding="sm">
-              <h2 className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                Indirizzo spedizione
-              </h2>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  Indirizzo spedizione
+                </h2>
+                <button
+                  onClick={() => openEditAddr("spedizione")}
+                  className="p-1 rounded-lg hover:bg-[#F1F4F8] transition-colors"
+                  title="Modifica indirizzo"
+                >
+                  <Pencil size={13} style={{ color: "var(--text-muted)" }} />
+                </button>
+              </div>
               <div className="text-sm space-y-0.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
+                {(inSpe as Record<string, string>).Destinatario && (
+                  <p className="font-semibold">{(inSpe as Record<string, string>).Destinatario}</p>
+                )}
                 <p>{inSpe.Via} {inSpe.Civico}</p>
                 <p>{inSpe.CAP} {inSpe.Citta} ({inSpe.Provincia})</p>
+                {(inSpe as Record<string, string>).Telefono && (
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>{(inSpe as Record<string, string>).Telefono}</p>
+                )}
               </div>
             </Card>
           )}
@@ -719,7 +856,7 @@ export default function OrdineAdminDetailPage() {
             </h2>
             <div className="space-y-2">
               <Link
-                href={`/admin/ordini/${id}/stampa`}
+                href={`/stampa/ordini/${id}`}
                 target="_blank"
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8]"
                 style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
@@ -727,11 +864,33 @@ export default function OrdineAdminDetailPage() {
                 <Printer size={15} /> Stampa ordine PDF
               </Link>
               <button
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8]"
+                onClick={handleInviaEmail}
+                disabled={sendingEmail}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8] disabled:opacity-40"
                 style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
               >
-                <Mail size={15} /> Invia email conferma
+                <Mail size={15} /> {sendingEmail ? "Invio…" : "Invia email conferma"}
               </button>
+
+              {/* GLS label — visible only when PDF URL is set */}
+              {(ordine as Record<string, unknown>).GLS_PdfUrl && (
+                <button
+                  onClick={() => window.open(String((ordine as Record<string, unknown>).GLS_PdfUrl), "_blank")}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8]"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+                >
+                  <Tag size={15} /> Stampa etichetta GLS
+                </button>
+              )}
+              <button
+                onClick={handleAggiornaEtichetteGLS}
+                disabled={aggiornandoGLS}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8] disabled:opacity-40"
+                style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+              >
+                <Truck size={15} /> {aggiornandoGLS ? "Aggiornamento…" : "Aggiorna etichette GLS"}
+              </button>
+
               <button
                 onClick={handleCreaSDA}
                 disabled={creatingSDA}
@@ -778,6 +937,85 @@ export default function OrdineAdminDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* Address edit modal */}
+      {editingAddr && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setEditingAddr(null); }}
+        >
+          <div className="w-full max-w-md rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+                {editingAddr === "fatturazione" ? "Indirizzo fatturazione" : "Indirizzo spedizione"}
+              </h3>
+              <button onClick={() => setEditingAddr(null)} className="p-1 rounded-lg hover:bg-[#F1F4F8]">
+                <X size={18} style={{ color: "var(--text-muted)" }} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {([
+                { key: "Destinatario", label: "Destinatario / Nome" },
+                { key: "Azienda",      label: "Azienda" },
+                { key: "Via",          label: "Via" },
+                { key: "Civico",       label: "Civico" },
+                { key: "CAP",          label: "CAP" },
+                { key: "Citta",        label: "Città" },
+                { key: "Provincia",    label: "Provincia" },
+                { key: "Paese",        label: "Paese" },
+                { key: "Telefono",     label: "Telefono" },
+                ...(editingAddr === "fatturazione"
+                  ? [
+                      { key: "PEC",  label: "PEC" },
+                      { key: "CF",   label: "Codice Fiscale" },
+                      { key: "PIVA", label: "Partita IVA" },
+                    ]
+                  : []),
+              ] as { key: string; label: string }[]).map(({ key, label }) => (
+                <div key={key}>
+                  <label
+                    className="text-xs font-semibold mb-1 block"
+                    style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+                  >
+                    {label}
+                  </label>
+                  <input
+                    value={addrForm[key] ?? ""}
+                    onChange={(e) => setAddrForm((f) => ({ ...f, [key]: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                    style={{
+                      background: "var(--bg-secondary)",
+                      border: "1px solid var(--border)",
+                      fontFamily: "var(--font-montserrat)",
+                      color: "var(--text-primary)",
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setEditingAddr(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#F1F4F8] transition-colors"
+                style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+              >
+                Annulla
+              </button>
+              <button
+                onClick={handleSaveAddr}
+                disabled={savingAddr}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40"
+                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+              >
+                {savingAddr ? "Salvataggio…" : "Salva"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
