@@ -369,7 +369,7 @@ export default function OrdinePage() {
           )}
 
           {/* Tracking */}
-          {ordine.Tracking && (
+          {ordine.GLS_TrackingNumber && (
             <Card padding="md">
               <div className="flex items-center gap-2 mb-2">
                 <Truck size={16} style={{ color: "var(--text-muted)" }} />
@@ -378,7 +378,7 @@ export default function OrdinePage() {
                 </h2>
               </div>
               <p className="text-sm break-all" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-                {ordine.Tracking}
+                {ordine.GLS_TrackingNumber}
               </p>
             </Card>
           )}

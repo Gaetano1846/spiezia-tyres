@@ -132,6 +132,9 @@ export default function OrdineAdminDetailPage() {
   const [editingAddr,    setEditingAddr]    = useState<"fatturazione" | "spedizione" | null>(null);
   const [addrForm,       setAddrForm]       = useState<Record<string, string>>({});
   const [savingAddr,     setSavingAddr]     = useState(false);
+  const [annullaOpen,    setAnnullaOpen]    = useState(false);
+  const [motivoAnnulla,  setMotivoAnnulla]  = useState("");
+  const [annullando,     setAnnullando]     = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -144,7 +147,7 @@ export default function OrdineAdminDetailPage() {
         }
         const o = { id: snap.id, ...snap.data() } as Ordine;
         setOrdine(o);
-        setTracking(o.Tracking ?? "");
+        setTracking(o.GLS_TrackingNumber ?? "");
 
         const [cronSnap, noteSnap] = await Promise.all([
           getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc"))),
@@ -228,29 +231,15 @@ export default function OrdineAdminDetailPage() {
     if (!ordine || savingTracking) return;
     setSavingTracking(true);
     try {
-      await updateDoc(doc(db, "Ordini", id), { Tracking: tracking });
-      setOrdine({ ...ordine, Tracking: tracking });
+      await updateDoc(doc(db, "Ordini", id), { GLS_TrackingNumber: tracking });
+      setOrdine({ ...ordine, GLS_TrackingNumber: tracking });
 
-      // Sync tracking to eBay / Amazon (fire-and-forget)
-      if (tracking && ordine.Source === "eBay" && ordine.eBay_OrderID) {
-        fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/ExternalApiIntegrationsV2", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ callName: "ebay-tracking", orderId: ordine.eBay_OrderID, tracking }),
-        }).catch(() => {});
-      }
-      if (tracking && ordine.Source === "Amazon" && ordine.Amazon_MarketplaceID) {
-        fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/ExternalApiIntegrationsV2", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ callName: "amazon-tracking", orderId: ordine.Amazon_MarketplaceID, tracking }),
-        }).catch(() => {});
-      }
+      // AdTyres sync — la CF accetta {orderDocId, tracking} (vedi sendADTyresTracking)
       if (tracking && (ordine.Source as string) === "AdTyres") {
         fetch("https://europe-west1-crm-3iuocs.cloudfunctions.net/sendADTyresTracking", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ orderId: ordine.Numero ?? id, tracking }),
+          body: JSON.stringify({ orderDocId: id, tracking }),
         }).catch(() => {});
       }
 
@@ -267,35 +256,26 @@ export default function OrdineAdminDetailPage() {
     setCreatingSDA(true);
     const toastId = toast.loading("Creazione spedizione SDA…");
     try {
-      const inSped = ordine.IndirizzoSpedizione ?? ordine.IndirizzoFatturazione;
+      // Payload identico al FF (api_manager._createShippingSDACall)
       const res = await fetch(
-        "https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping",
+        "https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=create_order",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action:          "create",
-            orderId:         ordine.Numero ?? id,
-            destinationName: inSped?.Azienda || inSped?.Nome || clienteInfo?.nome || "",
-            address:         `${inSped?.Via ?? ""} ${inSped?.Civico ?? ""}`.trim(),
-            city:            inSped?.Citta ?? "",
-            zip:             inSped?.CAP ?? "",
-            province:        inSped?.Provincia ?? "",
-            country:         "IT",
-            colli:           1,
-            weight:          (ordine.Articoli as unknown[])?.length ?? 1,
-            notes:           (ordine as Record<string, unknown>).NoteCliente as string ?? "",
+            orderIds:                [id],
+            CourierConfigurationId:  197,
           }),
         }
       );
-      if (!res.ok) throw new Error(`CF ${res.status}`);
-      const data = await res.json() as { parcelId?: string; tracking?: string };
+      const data = await res.json().catch(() => null) as { tracking?: string; ldv?: string; parcelId?: string; error?: string } | null;
+      if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
       toast.dismiss(toastId);
-      toast.success(`Spedizione SDA creata${data.parcelId ? ` · ID ${data.parcelId}` : ""}`);
-      if (data.tracking) {
+      toast.success(`Spedizione SDA creata${data?.ldv ? ` · LDV ${data.ldv}` : data?.parcelId ? ` · ID ${data.parcelId}` : ""}`);
+      if (data?.tracking) {
         setTracking(data.tracking);
-        await updateDoc(doc(db, "Ordini", id), { Tracking: data.tracking });
-        setOrdine((o) => o ? { ...o, Tracking: data.tracking } : o);
+        await updateDoc(doc(db, "Ordini", id), { GLS_TrackingNumber: data.tracking, Corriere: "SDA" });
+        setOrdine((o) => o ? { ...o, GLS_TrackingNumber: data.tracking, Corriere: "SDA" } : o);
       }
     } catch {
       toast.dismiss(toastId);
@@ -311,40 +291,30 @@ export default function OrdineAdminDetailPage() {
     const sedeName = contractIndex === 0 ? "Nola" : "Roma";
     const toastId = toast.loading(`Creazione spedizione GLS (${sedeName})…`);
     try {
-      const inSped = ordine.IndirizzoSpedizione ?? ordine.IndirizzoFatturazione;
+      // Payload identico al FF: ProcessMultipleOrdersGLSCall sul singolo ordine
       const res = await fetch(
         "https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action:          "create",
+            action:        "processMultipleOrders",
             contractIndex,
-            orderId:         ordine.Numero ?? id,
-            destinationName: inSped?.Azienda || inSped?.Nome || clienteInfo?.nome || "",
-            address:         `${inSped?.Via ?? ""} ${inSped?.Civico ?? ""}`.trim(),
-            city:            inSped?.Citta ?? "",
-            zip:             inSped?.CAP ?? "",
-            province:        inSped?.Provincia ?? "",
-            country:         "IT",
-            colli:           1,
-            weight:          (ordine.Articoli as unknown[])?.length ?? 1,
-            notes:           (ordine as Record<string, unknown>).NoteCliente as string ?? "",
+            ordiniIds:     [id],
           }),
         }
       );
-      if (!res.ok) throw new Error(`CF ${res.status}`);
-      const data = await res.json() as { parcelId?: string; tracking?: string };
+      const data = await res.json().catch(() => null) as { tracking?: string; pdfUrl?: string; error?: string } | null;
+      if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
       toast.dismiss(toastId);
-      toast.success(`Spedizione GLS ${sedeName} creata${data.parcelId ? ` · ID ${data.parcelId}` : ""}`);
-      if (data.tracking) {
-        setTracking(data.tracking);
-        await updateDoc(doc(db, "Ordini", id), {
-          Tracking: data.tracking,
-          Corriere: "GLS",
-          contractIndex,
-        });
-        setOrdine((o) => o ? { ...o, Tracking: data.tracking } : o);
+      toast.success(`Spedizione GLS ${sedeName} creata`);
+      // La CF aggiorna direttamente Firestore (GLS_TrackingNumber, GLS_PdfUrl).
+      // Rileggo l'ordine per riflettere immediatamente i nuovi valori in UI.
+      const fresh = await getDoc(doc(db, "Ordini", id));
+      if (fresh.exists()) {
+        const o = { id: fresh.id, ...fresh.data() } as Ordine;
+        setOrdine(o);
+        setTracking(o.GLS_TrackingNumber ?? "");
       }
     } catch {
       toast.dismiss(toastId);
@@ -378,8 +348,9 @@ export default function OrdineAdminDetailPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             customer_name: clienteInfo?.nome ?? "",
-            order_number:  ordine.Numero ?? id,
-            order_total:   total,
+            order_number:  String(ordine.Numero ?? id),
+            // FF invia order_total come stringa interpolata — manteniamo lo stesso shape
+            order_total:   total.toFixed(2),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             order_date:    fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp),
             fatturazione:  ordine.IndirizzoFatturazione ?? {},
@@ -442,6 +413,39 @@ export default function OrdineAdminDetailPage() {
       PIVA:         addr?.PIVA ?? addr?.PartitaIVA ?? "",
     });
     setEditingAddr(tipo);
+  }
+
+  async function handleConfermaAnnulla() {
+    if (!ordine || annullando) return;
+    const motivo = motivoAnnulla.trim();
+    if (!motivo) {
+      toast.error("Inserisci il motivo dell'annullamento");
+      return;
+    }
+    setAnnullando(true);
+    try {
+      await updateDoc(doc(db, "Ordini", id), {
+        Stato:               "Annullato",
+        Motivo_Annullamento: motivo,
+        DataAggiornamento:   serverTimestamp(),
+      });
+      await addDoc(collection(db, "Ordini", id, "Cronologia"), {
+        DataOra:   serverTimestamp(),
+        Operatore: user?.displayName || user?.email || "Operatore",
+        Azione:    "Stato → Annullato",
+        Nota:      motivo,
+      });
+      setOrdine({ ...ordine, Stato: "Annullato", Motivo_Annullamento: motivo });
+      const newCron = await getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc")));
+      setCronologia(newCron.docs.map((d) => ({ id: d.id, ...d.data() } as CronologiaEntry)));
+      setAnnullaOpen(false);
+      setMotivoAnnulla("");
+      toast.success("Ordine annullato");
+    } catch {
+      toast.error("Errore annullamento ordine");
+    } finally {
+      setAnnullando(false);
+    }
   }
 
   async function handleSaveAddr() {
@@ -873,9 +877,9 @@ export default function OrdineAdminDetailPage() {
               </button>
 
               {/* GLS label — visible only when PDF URL is set */}
-              {(ordine as Record<string, unknown>).GLS_PdfUrl && (
+              {ordine.GLS_PdfUrl && (
                 <button
-                  onClick={() => window.open(String((ordine as Record<string, unknown>).GLS_PdfUrl), "_blank")}
+                  onClick={() => window.open(ordine.GLS_PdfUrl, "_blank")}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8]"
                   style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
                 >
@@ -926,12 +930,12 @@ export default function OrdineAdminDetailPage() {
               </div>
 
               <button
-                onClick={() => handleStatoChange("Annullato")}
-                disabled={ordine.Stato === "Annullato" || savingStato}
+                onClick={() => { setMotivoAnnulla(ordine.Motivo_Annullamento ?? ""); setAnnullaOpen(true); }}
+                disabled={ordine.Stato === "Annullato"}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors disabled:opacity-40"
                 style={{ background: "#FEE2E2", color: "#991B1B", fontFamily: "var(--font-montserrat)", border: "1px solid #FECACA" }}
               >
-                <XCircle size={15} /> Annulla ordine
+                <XCircle size={15} /> {ordine.Stato === "Annullato" ? "Ordine annullato" : "Annulla ordine"}
               </button>
             </div>
           </Card>
@@ -1011,6 +1015,73 @@ export default function OrdineAdminDetailPage() {
                 style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
               >
                 {savingAddr ? "Salvataggio…" : "Salva"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Annulla ordine modal — richiede motivo (mirror FF MotivoAnnullamentoWidget) */}
+      {annullaOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={(e) => { if (e.target === e.currentTarget && !annullando) setAnnullaOpen(false); }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+                Annulla ordine
+              </h3>
+              <button
+                onClick={() => { if (!annullando) setAnnullaOpen(false); }}
+                className="p-1 rounded-lg hover:bg-[#F1F4F8] disabled:opacity-40"
+                disabled={annullando}
+              >
+                <X size={18} style={{ color: "var(--text-muted)" }} />
+              </button>
+            </div>
+
+            <label
+              className="text-xs font-semibold mb-1 block"
+              style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+            >
+              Motivo
+            </label>
+            <textarea
+              value={motivoAnnulla}
+              onChange={(e) => setMotivoAnnulla(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder="Scrivi motivo dell'annullamento"
+              className="w-full px-3 py-2 rounded-xl text-sm outline-none resize-none"
+              style={{
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border)",
+                fontFamily: "var(--font-montserrat)",
+                color: "var(--text-primary)",
+              }}
+            />
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setAnnullaOpen(false)}
+                disabled={annullando}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#F1F4F8] disabled:opacity-40"
+                style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+              >
+                Indietro
+              </button>
+              <button
+                onClick={handleConfermaAnnulla}
+                disabled={annullando || !motivoAnnulla.trim()}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40"
+                style={{ background: "#DC2626", color: "#fff", fontFamily: "var(--font-montserrat)" }}
+              >
+                {annullando ? "Annullamento…" : "Conferma annullamento"}
               </button>
             </div>
           </div>

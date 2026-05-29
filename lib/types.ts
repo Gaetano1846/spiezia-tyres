@@ -110,7 +110,16 @@ export type Promozione = {
 
 // ─── Ordine ───────────────────────────────────────────────────────────────────
 
-export type OrdineSource = "B2B" | "eBay" | "Amazon" | "WooCommerce";
+export type OrdineSource =
+  | "B2B"
+  | "eBay"
+  | "Amazon"
+  | "WooCommerce"
+  | "Tyre24"
+  | "Anonimo"
+  | "AdTyres"
+  | "T24"
+  | "Prezzo-Gomme";
 export type OrdineStato =
   | "In attesa di pagamento"
   | "Confermato"
@@ -165,7 +174,11 @@ export type Ordine = {
   eBay_OrderID?: string;
   Amazon_MarketplaceID?: string;
   WC_OrderNumber?: string;
-  Tracking?: string;
+  GLS_TrackingNumber?: string;
+  GLS_PdfUrl?: string;
+  Motivo_Annullamento?: string;
+  Corriere?: string;
+  T24_Country?: string;
   CorriereLogo?: string;
 };
 
