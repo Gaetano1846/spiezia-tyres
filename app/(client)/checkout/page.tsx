@@ -506,7 +506,7 @@ export default function CheckoutPage() {
       const orderData: Record<string, unknown> = {
         Utente: doc(db, "users", user.uid),
         Source: "B2B",
-        Stato: "In attesa di pagamento",
+        Stato: "In Preparazione",
         Numero: formatNumeroOrdine(n),
         Articoli: itemsConSconto.map((i) => ({
           Prodotto: i.id,

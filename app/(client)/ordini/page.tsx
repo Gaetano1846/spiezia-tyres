@@ -12,13 +12,14 @@ import toast from "react-hot-toast";
 import type { Ordine, OrdineStato } from "@/lib/types";
 
 const statoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
-  "Confermato":              "success",
-  "Consegnato":              "success",
-  "In lavorazione":          "brand",
-  "Spedito":                 "brand",
-  "In attesa di pagamento":  "neutral",
-  "Annullato":               "error",
-  "Rimborsato":              "error",
+  "In Lavorazione":     "brand",
+  "In Preparazione":    "brand",
+  "Spedito":            "brand",
+  "Consegnato":         "success",
+  "Annullato":          "error",
+  "Out of Stock":       "neutral",
+  "Cancellato Tyre24":  "neutral",
+  "Cancellato Cliente": "neutral",
 };
 
 function formatEuro(n: number) {
@@ -110,12 +111,12 @@ export default function OrdiniPage() {
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
           >
             <option value="">Tutti gli stati</option>
-            <option value="In attesa di pagamento">In attesa</option>
-            <option value="Confermato">Confermato</option>
-            <option value="In lavorazione">In lavorazione</option>
+            <option value="In Lavorazione">In Lavorazione</option>
+            <option value="In Preparazione">In Preparazione</option>
             <option value="Spedito">Spedito</option>
             <option value="Consegnato">Consegnato</option>
             <option value="Annullato">Annullato</option>
+            <option value="Out of Stock">Out of Stock</option>
           </select>
           <button
             onClick={() => { setSearch(""); setStatoFiltro(""); }}

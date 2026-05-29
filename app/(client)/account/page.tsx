@@ -68,13 +68,14 @@ function initials(name?: string | null, email?: string | null): string {
 }
 
 const statoVariant: Record<string, "success" | "brand" | "warning" | "error" | "neutral"> = {
-  "In attesa di pagamento": "neutral",
-  "Confermato":             "brand",
-  "In lavorazione":         "warning",
-  "Spedito":                "brand",
-  "Consegnato":             "success",
-  "Annullato":              "error",
-  "Rimborsato":             "error",
+  "In Lavorazione":     "warning",
+  "In Preparazione":    "warning",
+  "Spedito":            "brand",
+  "Consegnato":         "success",
+  "Annullato":          "error",
+  "Out of Stock":       "neutral",
+  "Cancellato Tyre24":  "neutral",
+  "Cancellato Cliente": "neutral",
 };
 
 const TABS = [

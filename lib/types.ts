@@ -120,14 +120,18 @@ export type OrdineSource =
   | "AdTyres"
   | "T24"
   | "Prezzo-Gomme";
+// Allineato a FFAppConstants.StatoOrdine del FlutterFlow.
+// "Cancellato Tyre24" e "Cancellato Cliente" sono read-only nell'UI
+// (impostabili solo da CF). Vedi stato_ordine_widget.dart.
 export type OrdineStato =
-  | "In attesa di pagamento"
-  | "Confermato"
-  | "In lavorazione"
+  | "In Lavorazione"
+  | "In Preparazione"
   | "Spedito"
   | "Consegnato"
   | "Annullato"
-  | "Rimborsato";
+  | "Out of Stock"
+  | "Cancellato Tyre24"
+  | "Cancellato Cliente";
 
 export type ArticoloOrdine = {
   Prodotto: string;

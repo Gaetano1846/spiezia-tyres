@@ -3,23 +3,33 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
   collection, query, orderBy, getDocs, getDoc, getCountFromServer,
-  where, limit, onSnapshot, doc, Timestamp,
+  where, limit, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, Timestamp,
   type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays } from "lucide-react";
+import { useAuth } from "@/components/layout/AuthProvider";
+import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown } from "lucide-react";
 import Link from "next/link";
-import Badge from "@/components/ui/Badge";
 import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import toast from "react-hot-toast";
 import type { Ordine, OrdineStato, OrdineSource } from "@/lib/types";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
+// Allineato a FFAppConstants.StatoOrdine
 const STATI: OrdineStato[] = [
-  "In attesa di pagamento", "Confermato", "In lavorazione",
-  "Spedito", "Consegnato", "Annullato", "Rimborsato",
+  "In Lavorazione",
+  "In Preparazione",
+  "Spedito",
+  "Consegnato",
+  "Annullato",
+  "Out of Stock",
+  "Cancellato Tyre24",
+  "Cancellato Cliente",
 ];
+
+// Stati che un admin NON può impostare manualmente (gestiti dal sistema)
+const STATI_READONLY: ReadonlySet<string> = new Set(["Cancellato Tyre24", "Cancellato Cliente"]);
 
 const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "T24", "Prezzo-Gomme", "AdTyres", "Anonimo"];
 
@@ -34,14 +44,16 @@ const FONTE_COLORS: Record<string, { bg: string; text: string }> = {
   Anonimo:        { bg: "#E8E8E8", text: "#374151" },
 };
 
-const STATO_VARIANT: Record<string, "success" | "brand" | "neutral" | "error" | "warning"> = {
-  "Confermato":             "brand",
-  "In lavorazione":         "warning",
-  "Spedito":                "brand",
-  "Consegnato":             "success",
-  "In attesa di pagamento": "neutral",
-  "Annullato":              "error",
-  "Rimborsato":             "error",
+// Colore di sfondo del trigger del dropdown stato (ispirato al FF)
+const STATO_PILL: Record<string, { bg: string; text: string; border: string }> = {
+  "In Lavorazione":     { bg: "#FFFBEB", text: "#92400E", border: "#FDE68A" },
+  "In Preparazione":    { bg: "#FFF8DC", text: "#854D0E", border: "#FCD34D" },
+  "Spedito":            { bg: "#DBEAFE", text: "#1E40AF", border: "#93C5FD" },
+  "Consegnato":         { bg: "#DCFCE7", text: "#166534", border: "#86EFAC" },
+  "Annullato":          { bg: "#FEE2E2", text: "#991B1B", border: "#FCA5A5" },
+  "Out of Stock":       { bg: "#FEF3C7", text: "#92400E", border: "#FDE68A" },
+  "Cancellato Tyre24":  { bg: "#F3F4F6", text: "#4B5563", border: "#D1D5DB" },
+  "Cancellato Cliente": { bg: "#F3F4F6", text: "#4B5563", border: "#D1D5DB" },
 };
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -240,6 +252,12 @@ export default function OrdiniAdminPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [spedizioneModal, setSpedizioneModal] = useState<{ docId: string; orderId: string } | null>(null);
 
+  const [savingStato, setSavingStato] = useState<string | null>(null);
+  const [annullaModal, setAnnullaModal] = useState<{ docId: string; orderId: string } | null>(null);
+  const [motivoAnnulla, setMotivoAnnulla] = useState("");
+  const [annullando, setAnnullando] = useState(false);
+  const { user } = useAuth();
+
   // Close date picker on outside click
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -271,7 +289,7 @@ export default function OrdiniAdminPage() {
             limit(2000),
           )),
           getCountFromServer(collection(db, "Ordini")),
-          getCountFromServer(query(collection(db, "Ordini"), where("Stato", "in", ["Confermato", "In lavorazione"]))),
+          getCountFromServer(query(collection(db, "Ordini"), where("Stato", "in", ["In Lavorazione", "In Preparazione"]))),
           getCountFromServer(query(collection(db, "Ordini"), where("Stato", "==", "Spedito"))),
           getCountFromServer(query(collection(db, "Ordini"), where("Stato", "==", "Annullato"))),
         ]);
@@ -330,10 +348,11 @@ export default function OrdiniAdminPage() {
     });
   }, [entries, search, stato, fonte]);
 
-  // Fatturato del periodo (escludi annullati/rimborsati)
+  // Fatturato del periodo (escludi tutti gli stati di cancellazione)
   const fatturato = useMemo(() => {
+    const excluded = new Set(["Annullato", "Out of Stock", "Cancellato Tyre24", "Cancellato Cliente"]);
     return filtered
-      .filter(({ ordine }) => ordine.Stato !== "Annullato" && ordine.Stato !== "Rimborsato")
+      .filter(({ ordine }) => !excluded.has(ordine.Stato))
       .reduce((acc, { ordine }) => acc + (ordine.Totale ?? 0), 0);
   }, [filtered]);
 
@@ -363,6 +382,82 @@ export default function OrdiniAdminPage() {
 
   function toggleSelectAll() {
     setSelectedIds(allSelected ? new Set() : new Set(filtered.map((e) => e.docId)));
+  }
+
+  // ── Cambio stato inline (per riga) ─────────────────────────────────────────
+  async function handleRowStatoChange(docId: string, nuovoStato: OrdineStato, prevStato: OrdineStato, orderId: string) {
+    if (savingStato || nuovoStato === prevStato) return;
+
+    // Stati impostabili solo dal sistema: blocco con avviso
+    if (STATI_READONLY.has(nuovoStato)) {
+      toast.error("Non sei autorizzato a impostare questo stato");
+      return;
+    }
+
+    // Annullato: apri modal motivo (mirror MotivoAnnullamentoWidget del FF)
+    if (nuovoStato === "Annullato") {
+      setAnnullaModal({ docId, orderId });
+      setMotivoAnnulla("");
+      return;
+    }
+
+    setSavingStato(docId);
+    try {
+      await updateDoc(doc(db, "Ordini", docId), {
+        Stato:             nuovoStato,
+        DataAggiornamento: serverTimestamp(),
+      });
+      await addDoc(collection(db, "Ordini", docId, "Cronologia"), {
+        DataOra:   serverTimestamp(),
+        Operatore: user?.displayName || user?.email || "Operatore",
+        Azione:    `Stato → ${nuovoStato}`,
+        Nota:      "",
+      });
+      // Aggiornamento ottimistico in lista
+      setEntries((prev) =>
+        prev.map((e) => e.docId === docId ? { ...e, ordine: { ...e.ordine, Stato: nuovoStato } } : e)
+      );
+      toast.success(`Stato: ${nuovoStato}`);
+    } catch {
+      toast.error("Errore aggiornamento stato");
+    } finally {
+      setSavingStato(null);
+    }
+  }
+
+  async function handleConfermaAnnulla() {
+    if (!annullaModal || annullando) return;
+    const motivo = motivoAnnulla.trim();
+    if (!motivo) {
+      toast.error("Inserisci il motivo dell'annullamento");
+      return;
+    }
+    setAnnullando(true);
+    try {
+      await updateDoc(doc(db, "Ordini", annullaModal.docId), {
+        Stato:               "Annullato",
+        Motivo_Annullamento: motivo,
+        DataAggiornamento:   serverTimestamp(),
+      });
+      await addDoc(collection(db, "Ordini", annullaModal.docId, "Cronologia"), {
+        DataOra:   serverTimestamp(),
+        Operatore: user?.displayName || user?.email || "Operatore",
+        Azione:    "Stato → Annullato",
+        Nota:      motivo,
+      });
+      setEntries((prev) =>
+        prev.map((e) => e.docId === annullaModal.docId
+          ? { ...e, ordine: { ...e.ordine, Stato: "Annullato", Motivo_Annullamento: motivo } }
+          : e)
+      );
+      setAnnullaModal(null);
+      setMotivoAnnulla("");
+      toast.success("Ordine annullato");
+    } catch {
+      toast.error("Errore annullamento ordine");
+    } finally {
+      setAnnullando(false);
+    }
   }
 
   function handleExportSelected() {
@@ -688,9 +783,39 @@ export default function OrdiniAdminPage() {
                         </td>
 
                         <td className="px-3 py-3">
-                          <Badge variant={STATO_VARIANT[ordine.Stato] ?? "neutral"}>
-                            {ordine.Stato}
-                          </Badge>
+                          {(() => {
+                            const cur = ordine.Stato as OrdineStato;
+                            const style = STATO_PILL[cur] ?? { bg: "#F3F4F6", text: "#4B5563", border: "#D1D5DB" };
+                            const isSaving = savingStato === docId;
+                            const isReadOnly = STATI_READONLY.has(cur);
+                            return (
+                              <div className="relative inline-block">
+                                <select
+                                  value={cur}
+                                  disabled={isSaving || isReadOnly}
+                                  onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine.id ?? docId)}
+                                  className="appearance-none pl-2.5 pr-7 py-1 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                                  style={{
+                                    background: style.bg,
+                                    color: style.text,
+                                    border: `1px solid ${style.border}`,
+                                    fontFamily: "var(--font-montserrat)",
+                                    outline: "none",
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {/* Stato corrente sempre selezionabile (anche se read-only) */}
+                                  {isReadOnly && <option value={cur}>{cur}</option>}
+                                  {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                                <ChevronDown
+                                  size={11}
+                                  className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                                  style={{ color: style.text }}
+                                />
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         <td className="px-3 py-3">
@@ -732,6 +857,78 @@ export default function OrdiniAdminPage() {
           orderId={spedizioneModal.orderId}
           onClose={() => setSpedizioneModal(null)}
         />
+      )}
+
+      {/* Modal annulla ordine — mirror FF MotivoAnnullamentoWidget */}
+      {annullaModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={(e) => { if (e.target === e.currentTarget && !annullando) setAnnullaModal(null); }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6"
+            style={{ background: "#fff", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+                  Annulla ordine
+                </h3>
+                <p className="text-xs mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                  {annullaModal.orderId}
+                </p>
+              </div>
+              <button
+                onClick={() => { if (!annullando) setAnnullaModal(null); }}
+                className="p-1 rounded-lg hover:bg-[#F1F4F8] disabled:opacity-40"
+                disabled={annullando}
+              >
+                <X size={18} style={{ color: "#6b7280" }} />
+              </button>
+            </div>
+
+            <label
+              className="text-xs font-semibold mb-1 block"
+              style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}
+            >
+              Motivo
+            </label>
+            <textarea
+              value={motivoAnnulla}
+              onChange={(e) => setMotivoAnnulla(e.target.value)}
+              rows={4}
+              autoFocus
+              placeholder="Scrivi motivo dell'annullamento"
+              className="w-full px-3 py-2 rounded-xl text-sm outline-none resize-none"
+              style={{
+                background: "#F8F8F8",
+                border: "1px solid #e5e7eb",
+                fontFamily: "var(--font-montserrat)",
+                color: "#111",
+              }}
+            />
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setAnnullaModal(null)}
+                disabled={annullando}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#F1F4F8] disabled:opacity-40"
+                style={{ border: "1px solid #e5e7eb", color: "#111", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+              >
+                Indietro
+              </button>
+              <button
+                onClick={handleConfermaAnnulla}
+                disabled={annullando || !motivoAnnulla.trim()}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40"
+                style={{ background: "#DC2626", color: "#fff", fontFamily: "var(--font-montserrat)" }}
+              >
+                {annullando ? "Annullamento…" : "Conferma"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

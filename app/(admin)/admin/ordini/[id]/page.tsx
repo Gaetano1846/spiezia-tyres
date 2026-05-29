@@ -43,13 +43,14 @@ type ClienteInfo = {
 };
 
 const statoVariant: Record<string, "success" | "brand" | "warning" | "error" | "neutral"> = {
-  "Confermato":             "brand",
-  "In lavorazione":         "warning",
-  "Spedito":                "success",
-  "Consegnato":             "success",
-  "In attesa di pagamento": "neutral",
-  "Annullato":              "error",
-  "Rimborsato":             "error",
+  "In Lavorazione":     "warning",
+  "In Preparazione":    "warning",
+  "Spedito":            "brand",
+  "Consegnato":         "success",
+  "Annullato":          "error",
+  "Out of Stock":       "neutral",
+  "Cancellato Tyre24":  "neutral",
+  "Cancellato Cliente": "neutral",
 };
 
 const fonteColors: Record<string, { bg: string; text: string }> = {
@@ -64,23 +65,23 @@ const fonteColors: Record<string, { bg: string; text: string }> = {
 };
 
 const statoIcons: Record<string, React.ElementType> = {
-  "In attesa di pagamento": Clock,
-  "Confermato":             CheckCircle2,
-  "In lavorazione":         Package,
-  "Spedito":                Truck,
-  "Consegnato":             CheckCircle2,
-  "Annullato":              XCircle,
-  "Rimborsato":             RotateCcw,
+  "In Lavorazione":     Package,
+  "In Preparazione":    Clock,
+  "Spedito":            Truck,
+  "Consegnato":         CheckCircle2,
+  "Annullato":          XCircle,
+  "Out of Stock":       RotateCcw,
+  "Cancellato Tyre24":  XCircle,
+  "Cancellato Cliente": XCircle,
 };
 
 const STATI: OrdineStato[] = [
-  "In attesa di pagamento",
-  "Confermato",
-  "In lavorazione",
+  "In Lavorazione",
+  "In Preparazione",
   "Spedito",
   "Consegnato",
   "Annullato",
-  "Rimborsato",
+  "Out of Stock",
 ];
 
 function euro(n: number | undefined) {
