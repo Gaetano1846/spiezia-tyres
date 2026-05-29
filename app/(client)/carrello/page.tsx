@@ -215,10 +215,13 @@ export default function CarrelloPage() {
                   <div className="flex items-center justify-between mt-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => update(item.id, item.quantita - 1)}
-                        disabled={item.quantita <= 1}
-                        className="w-7 h-7 rounded-full border flex items-center justify-center transition-colors hover:bg-gray-50 disabled:opacity-30"
+                        onClick={() => {
+                          if (item.quantita <= 1) remove(item.id);
+                          else update(item.id, item.quantita - 1);
+                        }}
+                        className="w-7 h-7 rounded-full border flex items-center justify-center transition-colors hover:bg-gray-50"
                         style={{ border: "1px solid var(--border)" }}
+                        title={item.quantita <= 1 ? "Rimuovi dal carrello" : "Diminuisci quantità"}
                       >
                         <Minus size={12} />
                       </button>

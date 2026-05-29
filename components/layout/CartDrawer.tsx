@@ -121,9 +121,12 @@ export default function CartDrawer({ open, onClose }: Props) {
                     style={{ border: "1px solid #e5e7eb" }}
                   >
                     <button
-                      onClick={() => update(item.id, item.quantita - 1)}
-                      disabled={item.quantita <= 1}
-                      className="w-7 h-7 flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40"
+                      onClick={() => {
+                        if (item.quantita <= 1) remove(item.id);
+                        else update(item.id, item.quantita - 1);
+                      }}
+                      className="w-7 h-7 flex items-center justify-center hover:bg-gray-100 transition-colors"
+                      title={item.quantita <= 1 ? "Rimuovi dal carrello" : "Diminuisci quantità"}
                     >
                       <Minus size={12} />
                     </button>
