@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   collection,
   query,
@@ -12,9 +12,10 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
-import { Truck, Search, Printer, Eye, RefreshCw, X, ChevronDown, SlidersHorizontal } from "lucide-react";
+import { Truck, Search, Printer, Eye, RefreshCw, X, ChevronDown, SlidersHorizontal, CalendarDays } from "lucide-react";
 import StatCard from "@/components/ui/StatCard";
-import DateField from "@/components/ui/DateField";
+import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
+import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import toast from "react-hot-toast";
 
 // ---------------------------------------------------------------------------
@@ -89,13 +90,6 @@ function formatDateTime(ts?: Timestamp): string {
   });
 }
 
-function isOnDate(ts?: Timestamp, dateStr?: string): boolean {
-  if (!ts || !dateStr) return true;
-  const d = ts.toDate();
-  const [y, m, day] = dateStr.split("-").map(Number);
-  return d.getFullYear() === y && d.getMonth() + 1 === m && d.getDate() === day;
-}
-
 function todayStr(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -106,6 +100,19 @@ function isToday(ts?: Timestamp): boolean {
   const d = ts.toDate();
   const now = new Date();
   return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+}
+
+function formatISOToDisplay(iso: string): string {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+// Filtro per intervallo [dataDa 00:00 → dataA 23:59]. Lenient: se manca la data, non nasconde.
+function inDateRange(ts: Timestamp | undefined, dataDa: string, dataA: string): boolean {
+  if (!ts?.toDate) return true;
+  const t = ts.toDate().getTime();
+  return t >= new Date(dataDa + "T00:00:00").getTime() && t <= new Date(dataA + "T23:59:59.999").getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +169,37 @@ function HeaderFilter({
   );
 }
 
+// Selettore intervallo date (da–a): trigger + calendario in popover ancorato.
+// Stessa UX della pagina Ordini (CalendarRangePicker + AnchoredPopover).
+function DateRangeField({
+  dataDa, dataA, onChange,
+}: {
+  dataDa: string;
+  dataA: string;
+  onChange: (da: string, a: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const label = dataDa === dataA
+    ? formatISOToDisplay(dataDa)
+    : `${formatISOToDisplay(dataDa)} – ${formatISOToDisplay(dataA)}`;
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white"
+        style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}
+      >
+        <CalendarDays size={14} style={{ color: "#6b7280" }} />
+        {label}
+      </button>
+      <AnchoredPopover open={open} onClose={() => setOpen(false)} anchorRef={ref} width={320} align="right">
+        <CalendarRangePicker dataDa={dataDa} dataA={dataA} onChange={onChange} />
+      </AnchoredPopover>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -187,7 +225,8 @@ export default function SpedizioniPage() {
 
   // Top-bar filters
   const [search,  setSearch]  = useState("");
-  const [date,    setDate]    = useState(todayStr());
+  const [dataDa,  setDataDa]  = useState(todayStr());
+  const [dataA,   setDataA]   = useState(todayStr());
   const [sedeGLS, setSedeGLS] = useState("");   // "" | "0" | "1"
 
   // In-column header filters
@@ -253,7 +292,7 @@ export default function SpedizioniPage() {
 
   // ── Filtered rows ───────────────────────────────────────────────────────
   const filtered = useMemo(() => rows.filter((r) => {
-    if (date     && !isOnDate(r.createdAt, date)) return false;
+    if (!inDateRange(r.createdAt, dataDa, dataA)) return false;
     if (sedeGLS  !== "" && r.contractIndex !== Number(sedeGLS)) return false;
     if (fonte    && r.Source        !== fonte)    return false;
     if (corriere && r.Corriere      !== corriere) return false;
@@ -265,7 +304,10 @@ export default function SpedizioniPage() {
       if (![r.parcelId, r.orderId, r.destinationName].some((v) => v?.toLowerCase().includes(q))) return false;
     }
     return true;
-  }), [rows, date, sedeGLS, fonte, corriere, magazzino, statoGLS, statoMag, search]);
+  }), [rows, dataDa, dataA, sedeGLS, fonte, corriere, magazzino, statoGLS, statoMag, search]);
+
+  const today = todayStr();
+  const isDefaultRange = dataDa === today && dataA === today;
 
   // ── Dynamic dropdown options ────────────────────────────────────────────
   const fontiList    = useMemo(() => [...new Set(rows.map((r) => r.Source).filter(Boolean))].sort()     as string[], [rows]);
@@ -280,7 +322,7 @@ export default function SpedizioniPage() {
   }
 
   function reset() {
-    setSearch(""); setDate(todayStr()); setSedeGLS("");
+    setSearch(""); setDataDa(todayStr()); setDataA(todayStr()); setSedeGLS("");
     setFonte(""); setCorriere(""); setMagazzino(""); setStatoGLS(""); setStatoMag("");
     setSelected(new Set());
   }
@@ -402,8 +444,8 @@ export default function SpedizioniPage() {
             <option value="0">GLS Nola</option>
             <option value="1">GLS Roma</option>
           </select>
-          <DateField value={date} onChange={setDate} placeholder="Data" />
-          {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || date) && (
+          <DateRangeField dataDa={dataDa} dataA={dataA} onChange={(da, a) => { setDataDa(da); setDataA(a); }} />
+          {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || !isDefaultRange) && (
             <button onClick={reset}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white"
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
@@ -417,12 +459,12 @@ export default function SpedizioniPage() {
           className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold flex-shrink-0 transition-colors"
           style={{ background: showFilters ? "#FFC803" : "var(--bg-primary)", border: "1px solid var(--border)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
           <SlidersHorizontal size={14} /> Filtri
-          {(() => { const n = [fonte, corriere, magazzino, statoGLS, statoMag, sedeGLS, date].filter(Boolean).length; return n > 0 ? (
+          {(() => { const n = [fonte, corriere, magazzino, statoGLS, statoMag, sedeGLS, !isDefaultRange].filter(Boolean).length; return n > 0 ? (
             <span className="w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: "#111", color: "#FFC803" }}>{n}</span>
           ) : null; })()}
           <ChevronDown size={14} style={{ transform: showFilters ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
         </button>
-        {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || date) && (
+        {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || !isDefaultRange) && (
           <button onClick={reset}
             className="md:hidden flex items-center gap-1 px-3 py-2 rounded-xl text-sm flex-shrink-0"
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
@@ -474,7 +516,7 @@ export default function SpedizioniPage() {
           <option value="0">GLS Nola</option>
           <option value="1">GLS Roma</option>
         </select>
-        <DateField value={date} onChange={setDate} placeholder="Data" />
+        <DateRangeField dataDa={dataDa} dataA={dataA} onChange={(da, a) => { setDataDa(da); setDataA(a); }} />
        </div>
       </div>
 
