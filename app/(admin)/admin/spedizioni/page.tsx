@@ -126,6 +126,42 @@ function RowSkeleton() {
   );
 }
 
+// Filtro a tendina nell'intestazione tabella: chevron custom + padding adeguato
+// così l'etichetta non viene mai tagliata dalla freccia nativa del browser.
+function HeaderFilter({
+  value, onChange, title, children,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const active = !!value;
+  return (
+    <div className="relative w-full min-w-[7rem]">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        title={title}
+        className="appearance-none w-full truncate pl-2.5 pr-7 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer transition-colors"
+        style={{
+          background: active ? "#FFF8DC" : "#fff",
+          border: `1px solid ${active ? "#FFC803" : "var(--border)"}`,
+          color: "#111",
+          fontFamily: "var(--font-montserrat)",
+        }}
+      >
+        {children}
+      </select>
+      <ChevronDown
+        size={13}
+        className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+        style={{ color: active ? "#9a7b00" : "#9ca3af" }}
+      />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -488,48 +524,38 @@ export default function SpedizioniPage() {
 
                 {/* Colonne filtro — dropdown nell'intestazione, allineati alle colonne */}
                 <th className="py-2.5 pr-3">
-                  <select value={fonte} onChange={(e) => setFonte(e.target.value)} title="Filtra per fonte"
-                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
-                    style={{ background: fonte ? "#FFF8DC" : "#fff", border: `1px solid ${fonte ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  <HeaderFilter value={fonte} onChange={setFonte} title="Filtra per fonte">
                     <option value="">Fonte</option>
                     {fontiList.map((f) => <option key={f} value={f}>{f}</option>)}
-                  </select>
+                  </HeaderFilter>
                 </th>
                 <th className="py-2.5 pr-3">
-                  <select value={corriere} onChange={(e) => setCorriere(e.target.value)} title="Filtra per corriere"
-                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
-                    style={{ background: corriere ? "#FFF8DC" : "#fff", border: `1px solid ${corriere ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  <HeaderFilter value={corriere} onChange={setCorriere} title="Filtra per corriere">
                     <option value="">Corriere</option>
                     {corrieriList.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  </HeaderFilter>
                 </th>
                 <th className="py-2.5 pr-3">
-                  <select value={magazzino} onChange={(e) => setMagazzino(e.target.value)} title="Filtra per magazzino"
-                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
-                    style={{ background: magazzino ? "#FFF8DC" : "#fff", border: `1px solid ${magazzino ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  <HeaderFilter value={magazzino} onChange={setMagazzino} title="Filtra per magazzino">
                     <option value="">Magazzino</option>
                     {magazzinoList.map((m) => <option key={m} value={m}>{m}</option>)}
-                  </select>
+                  </HeaderFilter>
                 </th>
                 <th className="py-2.5 pr-3">
-                  <select value={statoGLS} onChange={(e) => setStatoGLS(e.target.value)} title="Filtra per stato GLS"
-                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
-                    style={{ background: statoGLS ? "#FFF8DC" : "#fff", border: `1px solid ${statoGLS ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  <HeaderFilter value={statoGLS} onChange={setStatoGLS} title="Filtra per stato GLS">
                     <option value="">Stato GLS</option>
                     <option value="created">Creata</option>
                     <option value="closed">Chiusa</option>
                     <option value="deleted">Eliminata</option>
-                  </select>
+                  </HeaderFilter>
                 </th>
                 <th className="py-2.5 pr-3">
-                  <select value={statoMag} onChange={(e) => setStatoMag(e.target.value)} title="Filtra per stato magazzino"
-                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
-                    style={{ background: statoMag ? "#FFF8DC" : "#fff", border: `1px solid ${statoMag ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  <HeaderFilter value={statoMag} onChange={setStatoMag} title="Filtra per stato magazzino">
                     <option value="">Stato Mag.</option>
                     <option>In Preparazione</option>
                     <option>Annullato</option>
                     <option>Spedito</option>
-                  </select>
+                  </HeaderFilter>
                 </th>
                 <th className="py-2.5 pr-4 w-20" />
               </tr>
