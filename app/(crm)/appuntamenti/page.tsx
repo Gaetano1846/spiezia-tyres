@@ -25,8 +25,26 @@ type AppEntry = {
   app: Appuntamento;
   clienteNome: string;
   sedeNome: string;
-  // Targa from first veicolo sub — we skip for now
+  servizioNome: string;
 };
+
+// Nome cliente robusto: azienda → Ragione_Sociale, persona → Nome; fallback all'altro campo
+// (gli appuntamenti storici hanno spesso solo Ragione_Sociale, senza il flag Azienda).
+function nomeClienteFrom(c: Record<string, unknown>): string {
+  const rs   = (c.Ragione_Sociale as string)?.trim();
+  const nome = (c.Nome as string)?.trim();
+  if (c.Azienda === true && rs) return rs;
+  return nome || rs || "—";
+}
+
+// Intervento/servizio: campo "Intervento" (stringa, app Flutter) oppure array "Servizi" (app nuova).
+function interventoFrom(app: Appuntamento): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const intervento = ((app as any).Intervento as string)?.trim();
+  if (intervento) return intervento;
+  const servizi = (app.Servizi ?? []).map((s) => s.Titolo).filter(Boolean);
+  return servizi.length ? servizi.join(", ") : "—";
+}
 
 async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Record<string, unknown>>> {
   if (refs.length === 0) return new Map();
@@ -81,11 +99,10 @@ export default function AppuntamentiPage() {
         const resolved: AppEntry[] = apps.map((app) => {
           const c = app.Cliente ? clientiMap.get(app.Cliente.path) : undefined;
           const s = app.Sede ? sediMap.get(app.Sede.path) : undefined;
-          const clienteNome = c
-            ? ((c.Azienda && c.Ragione_Sociale) ? (c.Ragione_Sociale as string) : ((c.Nome as string)?.trim() || "—"))
-            : "—";
-          const sedeNome = s ? (s.Nome as string) ?? "—" : "—";
-          return { app, clienteNome, sedeNome };
+          const clienteNome  = c ? nomeClienteFrom(c) : "—";
+          const sedeNome     = s ? (s.Nome as string) ?? "—" : "—";
+          const servizioNome = interventoFrom(app);
+          return { app, clienteNome, sedeNome, servizioNome };
         });
 
         setEntries(resolved);
@@ -99,9 +116,8 @@ export default function AppuntamentiPage() {
     fetchAll();
   }, []);
 
-  const filtered = entries.filter(({ app, clienteNome }) => {
+  const filtered = entries.filter(({ app, clienteNome, servizioNome }) => {
     const byTab = activeTab === "Oggi" ? isToday(app.DataOra as Timestamp) : true;
-    const servizioNome = app.Servizi?.map((s) => s.Titolo).join(", ") ?? "";
     const matchSearch = !search || [clienteNome, servizioNome].join(" ").toLowerCase().includes(search.toLowerCase());
     const matchStato  = !stato || app.Stato === stato;
     return byTab && matchSearch && matchStato;
@@ -198,8 +214,7 @@ export default function AppuntamentiPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {filtered.map(({ app, clienteNome, sedeNome }) => {
-              const servizioNome = app.Servizi?.map((s) => s.Titolo).join(", ") ?? "—";
+            {filtered.map(({ app, clienteNome, sedeNome, servizioNome }) => {
               return (
                 <div
                   key={app.id}
