@@ -46,6 +46,15 @@ function formatData(ts: Timestamp | null | undefined): string {
   return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function contaPezzi(prev: Preventivo): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw = prev as any;
+  const src = raw.Pneumatici_Nuovi?.length ? raw.Pneumatici_Nuovi : raw.Articoli ?? [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tot = src.reduce((s: number, p: any) => s + (p.Quantita ?? p.quantita ?? p.qta ?? 0), 0);
+  return tot > 0 ? `${tot} pz` : "—";
+}
+
 
 export default function PreventiviPage() {
   const [entries, setEntries] = useState<PrevRow[]>([]);
@@ -114,7 +123,7 @@ export default function PreventiviPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
             Preventivi
@@ -125,7 +134,7 @@ export default function PreventiviPage() {
         </div>
         <Link
           href="/preventivi/nuova"
-          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl"
+          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl flex-shrink-0"
           style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
         >
           <Plus size={16} />
@@ -199,89 +208,136 @@ export default function PreventiviPage() {
               <div key={i} className="h-12 rounded-xl animate-pulse" style={{ background: "var(--bg-primary)" }} />
             ))}
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["Numero", "Cliente", "Data", "Accettazione", "Pezzi", "Stato", "Azioni"].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(({ prev, clienteNome, stato: s }) => {
-                  const numero = prev.ID != null ? `#${prev.ID}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
-                  return (
-                  <tr
-                    key={prev.id}
-                    className="hover:bg-[#F1F4F8] transition-colors cursor-pointer"
-                    style={{ borderBottom: "1px solid var(--border)" }}
-                  >
-                    <td className="px-2 py-3 font-semibold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-                      {numero}
-                    </td>
-                    <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {clienteNome}
-                    </td>
-                    <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {prev.Data ?? formatData(prev.Data_Creazione)}
-                    </td>
-                    <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {prev.Data_Accettazione ? formatData(prev.Data_Accettazione) : "—"}
-                    </td>
-                    <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {(() => {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const raw = prev as any;
-                        const src = raw.Pneumatici_Nuovi?.length ? raw.Pneumatici_Nuovi : raw.Articoli ?? [];
-                        const tot = src.reduce((s: number, p: any) => s + (p.Quantita ?? p.quantita ?? p.qta ?? 0), 0);
-                        return tot > 0 ? `${tot} pz` : "—";
-                      })()}
-                    </td>
-                    <td className="px-2 py-3">
-                      <Badge variant={statoVariant[s]}>{s}</Badge>
-                    </td>
-                    <td className="px-2 py-3">
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`/preventivi/${prev._clienteId}/${prev.id}`}
-                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
-                          style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
-                        >
-                          <Eye size={13} />
-                          Visualizza
-                        </Link>
-                        <Link
-                          href={`/preventivi/${prev._clienteId}/${prev.id}/modifica`}
-                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
-                          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
-                        >
-                          <Pencil size={13} />
-                          Modifica
-                        </Link>
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-2 py-12 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                      <FileText size={32} className="mx-auto mb-2 opacity-40" />
-                      <p>Nessun preventivo trovato</p>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+        ) : filtered.length === 0 ? (
+          <div className="px-2 py-12 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+            <FileText size={32} className="mx-auto mb-2 opacity-40" />
+            <p>Nessun preventivo trovato</p>
           </div>
+        ) : (
+          <>
+            {/* Mobile: lista a card */}
+            <div className="md:hidden space-y-2.5">
+              {filtered.map(({ prev, clienteNome, stato: s }) => {
+                const numero = prev.ID != null ? `#${prev.ID}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
+                return (
+                  <div
+                    key={prev.id}
+                    className="rounded-xl p-3.5"
+                    style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="font-bold text-sm" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                        {numero}
+                      </span>
+                      <Badge variant={statoVariant[s]}>{s}</Badge>
+                    </div>
+                    <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                      {clienteNome}
+                    </p>
+                    <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mt-1.5 text-xs" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                      <span>{prev.Data ?? formatData(prev.Data_Creazione)}</span>
+                      <span style={{ color: "var(--text-muted)" }}>·</span>
+                      <span>{contaPezzi(prev)}</span>
+                      {prev.Data_Accettazione && (
+                        <>
+                          <span style={{ color: "var(--text-muted)" }}>·</span>
+                          <span>Acc. {formatData(prev.Data_Accettazione)}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-3">
+                      <Link
+                        href={`/preventivi/${prev._clienteId}/${prev.id}`}
+                        className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
+                        style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                      >
+                        <Eye size={13} />
+                        Visualizza
+                      </Link>
+                      <Link
+                        href={`/preventivi/${prev._clienteId}/${prev.id}/modifica`}
+                        className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
+                        style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                      >
+                        <Pencil size={13} />
+                        Modifica
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop: tabella */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    {["Numero", "Cliente", "Data", "Accettazione", "Pezzi", "Stato", "Azioni"].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
+                        style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(({ prev, clienteNome, stato: s }) => {
+                    const numero = prev.ID != null ? `#${prev.ID}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
+                    return (
+                    <tr
+                      key={prev.id}
+                      className="hover:bg-[#F1F4F8] transition-colors cursor-pointer"
+                      style={{ borderBottom: "1px solid var(--border)" }}
+                    >
+                      <td className="px-2 py-3 font-semibold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+                        {numero}
+                      </td>
+                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                        {clienteNome}
+                      </td>
+                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                        {prev.Data ?? formatData(prev.Data_Creazione)}
+                      </td>
+                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                        {prev.Data_Accettazione ? formatData(prev.Data_Accettazione) : "—"}
+                      </td>
+                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                        {contaPezzi(prev)}
+                      </td>
+                      <td className="px-2 py-3">
+                        <Badge variant={statoVariant[s]}>{s}</Badge>
+                      </td>
+                      <td className="px-2 py-3">
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/preventivi/${prev._clienteId}/${prev.id}`}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
+                            style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                          >
+                            <Eye size={13} />
+                            Visualizza
+                          </Link>
+                          <Link
+                            href={`/preventivi/${prev._clienteId}/${prev.id}/modifica`}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                            style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                          >
+                            <Pencil size={13} />
+                            Modifica
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Card>
     </div>

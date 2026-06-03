@@ -6,7 +6,7 @@ import {
   type DocumentReference, type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Search, Plus, Eye, Wrench, X, FileDown, Clock, ChevronDown, Pencil, Printer } from "lucide-react";
+import { Search, Plus, Eye, Wrench, X, FileDown, Clock, ChevronDown, Pencil, Printer, Car, User } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
@@ -216,7 +216,7 @@ export default function FogliDiLavoroPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
             Fogli di lavoro
@@ -227,7 +227,7 @@ export default function FogliDiLavoroPage() {
         </div>
         <Link
           href="/fogli-di-lavoro/nuovo"
-          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl"
+          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl flex-shrink-0"
           style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
         >
           <Plus size={16} />
@@ -337,108 +337,186 @@ export default function FogliDiLavoroPage() {
               <div key={i} className="h-12 rounded-xl animate-pulse" style={{ background: "var(--bg-primary)" }} />
             ))}
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["N.", "Cliente", "Veicolo", "Operatore", "Orario", "Stato", ""].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(({ foglio, clienteNome, veicoloTag, operatoreNome, statoCalc }) => {
-                  const fd     = foglio as Record<string, unknown>;
-                  const num    = fd.ID?.toString() ?? foglio.id.slice(0, 6).toUpperCase();
-                  const pdfUrl = (fd.URL as string | undefined) ?? (foglio as Record<string, unknown>).PDF as string | undefined;
-                  return (
-                    <tr
-                      key={foglio.id}
-                      className="hover:bg-[#F1F4F8] transition-colors"
-                      style={{ borderBottom: "1px solid var(--border)" }}
-                    >
-                      <td className="px-2 py-3 font-bold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-                        {num}
-                      </td>
-                      <td className="px-2 py-3 font-medium" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                        {clienteNome}
-                      </td>
-                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {veicoloTag}
-                      </td>
-                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {operatoreNome}
-                      </td>
-                      <td className="px-2 py-3 whitespace-nowrap" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                        <span className="flex items-center gap-1">
-                          <Clock size={12} />
-                          {formatOrario(foglio)}
-                        </span>
-                      </td>
-                      <td className="px-2 py-3">
-                        <Badge variant={statoVariant[statoCalc] ?? "neutral"}>{statoCalc}</Badge>
-                      </td>
-                      <td className="px-2 py-3">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/fogli-di-lavoro/${foglio.id}`}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
-                            style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
-                          >
-                            <Eye size={13} />
-                            Apri
-                          </Link>
-                          <Link
-                            href={`/fogli-di-lavoro/${foglio.id}/modifica`}
-                            className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors hover:bg-[#FFF8DC]"
-                            style={{ color: "#111", fontFamily: "var(--font-montserrat)", border: "1px solid #FFC803" }}
-                          >
-                            <Pencil size={13} />
-                          </Link>
-                          <Link
-                            href={`/fogli-di-lavoro/${foglio.id}/stampa`}
-                            target="_blank"
-                            className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
-                            style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
-                          >
-                            <Printer size={13} />
-                          </Link>
-                          {pdfUrl && (
-                            <a
-                              href={pdfUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg"
-                              style={{ color: "#249689", fontFamily: "var(--font-montserrat)", border: "1px solid #24968940" }}
-                            >
-                              <FileDown size={13} />
-                              PDF
-                            </a>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-2 py-12 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                      <Wrench size={32} className="mx-auto mb-2 opacity-40" />
-                      <p>Nessun foglio trovato</p>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+        ) : filtered.length === 0 ? (
+          <div className="px-2 py-12 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+            <Wrench size={32} className="mx-auto mb-2 opacity-40" />
+            <p>Nessun foglio trovato</p>
           </div>
+        ) : (
+          <>
+            {/* Mobile: lista a card */}
+            <div className="md:hidden space-y-2.5">
+              {filtered.map(({ foglio, clienteNome, veicoloTag, operatoreNome, statoCalc }) => {
+                const fd     = foglio as Record<string, unknown>;
+                const num    = fd.ID?.toString() ?? foglio.id.slice(0, 6).toUpperCase();
+                const pdfUrl = (fd.URL as string | undefined) ?? (foglio as Record<string, unknown>).PDF as string | undefined;
+                return (
+                  <div
+                    key={foglio.id}
+                    className="rounded-xl p-3.5"
+                    style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="font-bold text-sm" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                        #{num}
+                      </span>
+                      <Badge variant={statoVariant[statoCalc] ?? "neutral"}>{statoCalc}</Badge>
+                    </div>
+                    <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                      {clienteNome}
+                    </p>
+                    <div className="mt-1.5 space-y-1 text-xs" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                      <div className="flex items-center gap-2">
+                        <Car size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
+                        <span className="truncate">{veicoloTag}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <User size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
+                        <span className="truncate">{operatoreNome}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Clock size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
+                        <span className="truncate">{formatOrario(foglio)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-3">
+                      <Link
+                        href={`/fogli-di-lavoro/${foglio.id}`}
+                        className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
+                        style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                      >
+                        <Eye size={13} />
+                        Apri
+                      </Link>
+                      <Link
+                        href={`/fogli-di-lavoro/${foglio.id}/modifica`}
+                        className="flex items-center justify-center px-3 py-2 rounded-lg"
+                        style={{ color: "#111", fontFamily: "var(--font-montserrat)", border: "1px solid #FFC803" }}
+                        aria-label="Modifica"
+                      >
+                        <Pencil size={14} />
+                      </Link>
+                      <Link
+                        href={`/fogli-di-lavoro/${foglio.id}/stampa`}
+                        target="_blank"
+                        className="flex items-center justify-center px-3 py-2 rounded-lg"
+                        style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                        aria-label="Stampa"
+                      >
+                        <Printer size={14} />
+                      </Link>
+                      {pdfUrl && (
+                        <a
+                          href={pdfUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center justify-center px-3 py-2 rounded-lg"
+                          style={{ color: "#249689", fontFamily: "var(--font-montserrat)", border: "1px solid #24968940" }}
+                          aria-label="Scarica PDF"
+                        >
+                          <FileDown size={14} />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop: tabella */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    {["N.", "Cliente", "Veicolo", "Operatore", "Orario", "Stato", ""].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
+                        style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(({ foglio, clienteNome, veicoloTag, operatoreNome, statoCalc }) => {
+                    const fd     = foglio as Record<string, unknown>;
+                    const num    = fd.ID?.toString() ?? foglio.id.slice(0, 6).toUpperCase();
+                    const pdfUrl = (fd.URL as string | undefined) ?? (foglio as Record<string, unknown>).PDF as string | undefined;
+                    return (
+                      <tr
+                        key={foglio.id}
+                        className="hover:bg-[#F1F4F8] transition-colors"
+                        style={{ borderBottom: "1px solid var(--border)" }}
+                      >
+                        <td className="px-2 py-3 font-bold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+                          {num}
+                        </td>
+                        <td className="px-2 py-3 font-medium" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                          {clienteNome}
+                        </td>
+                        <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                          {veicoloTag}
+                        </td>
+                        <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                          {operatoreNome}
+                        </td>
+                        <td className="px-2 py-3 whitespace-nowrap" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                          <span className="flex items-center gap-1">
+                            <Clock size={12} />
+                            {formatOrario(foglio)}
+                          </span>
+                        </td>
+                        <td className="px-2 py-3">
+                          <Badge variant={statoVariant[statoCalc] ?? "neutral"}>{statoCalc}</Badge>
+                        </td>
+                        <td className="px-2 py-3">
+                          <div className="flex items-center gap-2">
+                            <Link
+                              href={`/fogli-di-lavoro/${foglio.id}`}
+                              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
+                              style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                            >
+                              <Eye size={13} />
+                              Apri
+                            </Link>
+                            <Link
+                              href={`/fogli-di-lavoro/${foglio.id}/modifica`}
+                              className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors hover:bg-[#FFF8DC]"
+                              style={{ color: "#111", fontFamily: "var(--font-montserrat)", border: "1px solid #FFC803" }}
+                            >
+                              <Pencil size={13} />
+                            </Link>
+                            <Link
+                              href={`/fogli-di-lavoro/${foglio.id}/stampa`}
+                              target="_blank"
+                              className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
+                              style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                            >
+                              <Printer size={13} />
+                            </Link>
+                            {pdfUrl && (
+                              <a
+                                href={pdfUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg"
+                                style={{ color: "#249689", fontFamily: "var(--font-montserrat)", border: "1px solid #24968940" }}
+                              >
+                                <FileDown size={13} />
+                                PDF
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Card>
     </div>

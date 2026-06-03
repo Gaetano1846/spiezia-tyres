@@ -192,24 +192,24 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+        <h1 className="text-xl sm:text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
           Dashboard
         </h1>
-        <p className="text-sm mt-1 capitalize" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+        <p className="text-sm mt-0.5 sm:mt-1 capitalize" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
           {today}
         </p>
       </div>
 
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
         {statCards.map(({ label, value, sub, icon: Icon, accent }) => (
           <div
             key={label}
-            className="rounded-2xl p-5"
+            className="rounded-2xl p-4 sm:p-5"
             style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}
           >
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2 sm:mb-3">
               <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                 {label}
               </span>
@@ -220,7 +220,7 @@ export default function DashboardPage() {
             {loading ? (
               <div className="h-8 w-16 rounded animate-pulse" style={{ background: "var(--bg-primary)" }} />
             ) : (
-              <p className="text-3xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+              <p className="text-2xl sm:text-3xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
                 {value}
               </p>
             )}
@@ -231,11 +231,11 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
         {/* Appuntamenti oggi */}
         <div className="xl:col-span-2">
-          <Card>
-            <div className="flex items-center justify-between mb-5">
+          <Card padding="none" className="p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-3 sm:mb-5">
               <h2 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)" }}>
                 Appuntamenti di oggi
               </h2>
@@ -255,7 +255,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : appOggi.length === 0 ? (
-              <div className="text-center py-10" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+              <div className="text-center py-6 sm:py-10" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                 <Calendar size={28} className="mx-auto mb-2 opacity-40" />
                 <p className="text-sm">Nessun appuntamento per oggi</p>
               </div>
@@ -293,8 +293,8 @@ export default function DashboardPage() {
 
         {/* Promemoria */}
         <div className="xl:col-span-1">
-          <Card>
-            <div className="flex items-center justify-between mb-5">
+          <Card padding="none" className="p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-3 sm:mb-5">
               <div className="flex items-center gap-2">
                 <Bell size={16} style={{ color: "var(--brand)" }} />
                 <h2 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)" }}>
@@ -318,7 +318,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : promemoria.length === 0 ? (
-              <div className="text-center py-8" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+              <div className="text-center py-5 sm:py-8" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                 <CheckCircle2 size={28} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">Nessun promemoria in scadenza</p>
               </div>

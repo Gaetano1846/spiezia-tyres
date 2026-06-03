@@ -84,9 +84,15 @@ export async function POST(req: NextRequest) {
     const CRM = Boolean(data.CRM);
 
     const sessionCookie = await adminAuth().createSessionCookie(idToken, { expiresIn: TTL_MS });
+    const sessionPayload = { uid: decoded.uid, email: decoded.email ?? "", Ruolo, CRM };
     const res = NextResponse.json({ ok: true, Ruolo, CRM });
     res.headers.append("Set-Cookie", buildSessionCookie(sessionCookie));
     res.headers.append("Set-Cookie", buildRoleCookie(Ruolo, CRM));
+    // In development, getSession() reads spiezia_dev_session (plain JSON, no Admin SDK call).
+    // Set it alongside the production session cookie so both dev and prod paths work locally.
+    if (process.env.NODE_ENV === "development") {
+      res.headers.append("Set-Cookie", buildDevCookie(sessionPayload));
+    }
     return res;
   } catch (err) {
     console.error("[auth/login]", err);

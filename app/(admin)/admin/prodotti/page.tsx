@@ -1,16 +1,15 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Package, Search, Eye, Pencil, Trash2, X, ChevronLeft, ChevronRight, Plus, Save, Loader2 } from "lucide-react";
+import { Package, Search, Eye, Pencil, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, Plus, Save, Loader2, Flame, Snowflake, CloudSun } from "lucide-react";
 import Card from "@/components/ui/Card";
-import Badge from "@/components/ui/Badge";
 import StatCard from "@/components/ui/StatCard";
 import toast from "react-hot-toast";
 import {
   searchProdotti, stockTotale, formatMisura, pfuDaDiametro,
   type ProdottoHit,
 } from "@/lib/algolia";
-import { doc, addDoc, updateDoc, deleteDoc, collection } from "firebase/firestore";
+import { doc, addDoc, updateDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 const PAGE_SIZE = 50;
@@ -19,11 +18,36 @@ function formatEuro(n: number | undefined | null) {
   return (n ?? 0).toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-const stagioneVariant: Record<string, "brand" | "neutral" | "success"> = {
-  Estive: "brand",
-  Invernali: "neutral",
-  "4-Stagioni": "success",
-};
+// Mappa la stagione (anche con etichette verbose tipo "Pneumatici 4 stagioni") a icona + colore
+const STAGIONE_ICONS = {
+  estive:    { Icon: Flame,     color: "#EE8B60", label: "Estive" },
+  invernali: { Icon: Snowflake, color: "#3B82F6", label: "Invernali" },
+  quattro:   { Icon: CloudSun,  color: "#249689", label: "4 Stagioni" },
+} as const;
+
+function stagioneMeta(stagione?: string) {
+  if (!stagione) return null;
+  const s = stagione.toLowerCase();
+  if (s.includes("estiv"))  return STAGIONE_ICONS.estive;
+  if (s.includes("invern")) return STAGIONE_ICONS.invernali;
+  return STAGIONE_ICONS.quattro;
+}
+
+function StagioneIcon({ stagione, size = 32 }: { stagione?: string; size?: number }) {
+  const meta = stagioneMeta(stagione);
+  if (!meta) return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
+  const { Icon, color, label } = meta;
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className="rounded-full flex items-center justify-center flex-shrink-0"
+      style={{ width: size, height: size, background: `${color}1A` }}
+    >
+      <Icon size={Math.round(size * 0.52)} style={{ color }} />
+    </span>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Tipi pannello
@@ -206,9 +230,8 @@ function SidePanel({
 
       {/* Panel */}
       <div
-        className="fixed top-0 right-0 h-full z-50 flex flex-col"
+        className="fixed top-0 right-0 h-full z-50 flex flex-col w-full sm:w-[480px]"
         style={{
-          width: 480,
           background: "var(--bg-secondary)",
           borderLeft: "1px solid var(--border)",
           boxShadow: "-8px 0 32px rgba(0,0,0,0.18)",
@@ -418,8 +441,8 @@ function SidePanel({
             <button
               onClick={onSave}
               disabled={saving}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-opacity disabled:opacity-50"
-              style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-all disabled:opacity-50 hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+              style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
               {mode === "create" ? "Crea prodotto" : "Salva modifiche"}
@@ -450,6 +473,35 @@ export default function ProdottiPage() {
   const [form, setForm] = useState<FormState>(emptyForm());
   const [saving, setSaving] = useState(false);
   const [prezziExpanded, setPrezziExpanded] = useState(true);
+
+  // Dettagli prodotto espandibili (solo mobile) — set degli objectID aperti
+  const [expandedProdotti, setExpandedProdotti] = useState<Set<string>>(new Set());
+  function toggleProdottoDetails(id: string) {
+    setExpandedProdotti((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // Loghi marca (collezione Marca_Prodotto) — mappa nome-marca-normalizzato → URL logo
+  const [brandLogos, setBrandLogos] = useState<Record<string, string>>({});
+  useEffect(() => {
+    getDocs(collection(db, "Marca_Prodotto"))
+      .then((snap) => {
+        const map: Record<string, string> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data() as { Nome?: string; Logo?: string };
+          if (data.Nome && data.Logo) map[data.Nome.trim().toLowerCase()] = data.Logo;
+        });
+        setBrandLogos(map);
+      })
+      .catch(console.warn);
+  }, []);
+  const logoForMarca = useCallback(
+    (m: string | undefined) => (m ? brandLogos[m.trim().toLowerCase()] : undefined),
+    [brandLogos]
+  );
 
   // ---------------------------------------------------------------------------
   // Caricamento lista
@@ -630,7 +682,7 @@ export default function ProdottiPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Prodotti</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
@@ -639,8 +691,8 @@ export default function ProdottiPage() {
         </div>
         <button
           onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-opacity"
-          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-all hover:brightness-[1.04] active:scale-[.98]"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
         >
           <Plus size={15} />
           Aggiungi prodotto
@@ -655,7 +707,7 @@ export default function ProdottiPage() {
       <Card padding="sm">
         {/* Toolbar */}
         <div className="flex gap-2 mb-3 flex-wrap items-center">
-          <div className="flex-1 min-w-48 relative">
+          <div className="flex-1 min-w-[150px] relative">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
             <input
               value={search}
@@ -694,12 +746,12 @@ export default function ProdottiPage() {
           )}
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
+        {/* Table — solo desktop */}
+        <div className="overflow-x-auto hidden md:block">
           <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
             <thead>
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                {["", "Marca / Modello", "Misura", "Stagione", "Stock totale", "P. Gommista", "P. Acquisto", ""].map((h, i) => (
+                {["", "Marca / Modello", "Foto", "Misura", "Stagione", "Stock totale", "P. Gommista", "P. Acquisto", ""].map((h, i) => (
                   <th key={i} className="pb-2.5 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
                     style={{ color: "var(--text-muted)" }}>
                     {h}
@@ -711,7 +763,7 @@ export default function ProdottiPage() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i}>
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 9 }).map((_, j) => (
                       <td key={j} className="py-3 pr-3">
                         <div className="h-3.5 rounded animate-pulse"
                           style={{ background: "var(--border)", width: j === 0 ? "2.5rem" : "75%" }} />
@@ -721,7 +773,7 @@ export default function ProdottiPage() {
                 ))
               ) : paginated.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                  <td colSpan={9} className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                     Nessun prodotto trovato.
                   </td>
                 </tr>
@@ -731,17 +783,17 @@ export default function ProdottiPage() {
                   return (
                     <tr key={p.objectID} className="border-t hover:bg-[#FFFDF0] transition-colors cursor-pointer"
                       style={{ borderColor: "var(--border)" }}>
-                      {/* Immagine */}
+                      {/* Logo marca */}
                       <td className="py-2.5 pr-3">
-                        {p.Immagine ? (
+                        {logoForMarca(p.Marca) ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.Immagine} alt={p.Marca}
+                          <img src={logoForMarca(p.Marca)} alt={p.Marca}
                             className="w-9 h-9 object-contain rounded-lg"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                         ) : (
                           <div className="w-9 h-9 rounded-lg flex items-center justify-center text-[9px] font-bold"
                             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                            IMG
+                            {(p.Marca ?? "?").slice(0, 3).toUpperCase()}
                           </div>
                         )}
                       </td>
@@ -750,6 +802,14 @@ export default function ProdottiPage() {
                         <div className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{p.Marca}</div>
                         <div className="text-xs" style={{ color: "var(--text-secondary)" }}>{p.Modello}</div>
                       </td>
+                      {/* Foto prodotto — subito dopo il nome */}
+                      <td className="py-2.5 pr-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={p.Foto || p.Immagine || "/placeholder-tyre.jpg"} alt={p.Modello}
+                          className="w-10 h-10 object-cover rounded-lg"
+                          style={{ border: "1px solid var(--border)", background: "#fff" }}
+                          onError={(e) => { const el = e.currentTarget as HTMLImageElement; if (!el.src.endsWith("/placeholder-tyre.jpg")) el.src = "/placeholder-tyre.jpg"; }} />
+                      </td>
                       {/* Misura */}
                       <td className="py-2.5 pr-3 text-sm font-medium whitespace-nowrap"
                         style={{ color: "var(--text-primary)" }}>
@@ -757,9 +817,7 @@ export default function ProdottiPage() {
                       </td>
                       {/* Stagione */}
                       <td className="py-2.5 pr-3">
-                        {p.Stagione
-                          ? <Badge variant={stagioneVariant[p.Stagione] ?? "neutral"}>{p.Stagione}</Badge>
-                          : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                        <StagioneIcon stagione={p.Stagione} size={28} />
                       </td>
                       {/* Stock */}
                       <td className="py-2.5 pr-3 text-sm font-semibold"
@@ -811,6 +869,120 @@ export default function ProdottiPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Lista a card — solo mobile */}
+        <div className="md:hidden">
+          {loading ? (
+            <div className="space-y-2.5">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: "var(--border)" }} />
+              ))}
+            </div>
+          ) : paginated.length === 0 ? (
+            <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+              Nessun prodotto trovato.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {paginated.map((p) => {
+                const ts = stockTotale(p);
+                const isOpen = expandedProdotti.has(p.objectID);
+                return (
+                  <div
+                    key={p.objectID}
+                    className="rounded-xl p-3"
+                    style={{ border: "1px solid var(--border)", background: "#fff" }}
+                  >
+                    {/* Riga principale */}
+                    <div className="flex items-center gap-2.5">
+                      {logoForMarca(p.Marca) ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={logoForMarca(p.Marca)} alt={p.Marca}
+                          className="w-11 h-11 object-contain rounded-lg flex-shrink-0"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                      ) : (
+                        <div className="w-11 h-11 rounded-lg flex items-center justify-center text-[9px] font-bold flex-shrink-0"
+                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                          {(p.Marca ?? "?").slice(0, 3).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-sm truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>{p.Marca}</div>
+                        <div className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{p.Modello}</div>
+                        <div className="text-xs font-medium mt-0.5" style={{ color: "var(--text-primary)" }}>{formatMisura(p)}</div>
+                      </div>
+                      {/* Foto prodotto — subito dopo il nome */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.Foto || p.Immagine || "/placeholder-tyre.jpg"} alt={p.Modello}
+                        className="w-11 h-11 object-cover rounded-lg flex-shrink-0"
+                        style={{ border: "1px solid var(--border)", background: "#fff" }}
+                        onError={(e) => { const el = e.currentTarget as HTMLImageElement; if (!el.src.endsWith("/placeholder-tyre.jpg")) el.src = "/placeholder-tyre.jpg"; }} />
+                      <StagioneIcon stagione={p.Stagione} size={32} />
+                    </div>
+
+                    {/* Riga sintesi: stock + prezzo + toggle */}
+                    <div className="flex items-center justify-between gap-2 mt-2.5">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold" style={{ color: ts === 0 ? "#EF4444" : "var(--text-primary)" }}>
+                          Stock: {ts}
+                        </span>
+                        <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
+                          {formatEuro(p.Prezzo_Gommista)}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => toggleProdottoDetails(p.objectID)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                        style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                      >
+                        Dettagli
+                        <ChevronDown size={14} className="transition-transform" style={{ transform: isOpen ? "rotate(180deg)" : "none" }} />
+                      </button>
+                    </div>
+
+                    {/* Tendina dettagli */}
+                    {isOpen && (
+                      <div className="mt-2.5 pt-2.5 flex flex-col gap-2" style={{ borderTop: "1px dashed var(--border)" }}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>P. Gommista</span>
+                          <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{formatEuro(p.Prezzo_Gommista)}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>P. Acquisto</span>
+                          <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{p.Prezzo_Acquisto != null ? formatEuro(p.Prezzo_Acquisto) : "—"}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <button
+                            onClick={() => openView(p)}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold"
+                            style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                          >
+                            <Eye size={13} /> Vedi
+                          </button>
+                          <button
+                            onClick={() => openEdit(p)}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all hover:brightness-[1.04] active:scale-[.98]"
+                            style={{ background: "#FFC803", color: "#111", boxShadow: "var(--shadow-brand)" }}
+                          >
+                            <Pencil size={13} /> Modifica
+                          </button>
+                          <button
+                            onClick={() => handleDelete(p.objectID, p.Marca, p.Modello)}
+                            className="flex items-center justify-center px-3 py-2 rounded-lg"
+                            style={{ border: "1px solid var(--border)" }}
+                            title="Elimina"
+                          >
+                            <Trash2 size={13} style={{ color: "#DC2626" }} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Pagination */}

@@ -264,12 +264,12 @@ export default function EmailPage() {
         </p>
       </div>
 
-      <div className="flex gap-3" style={{ height: "calc(100vh - 200px)", minHeight: 520 }}>
+      <div className="flex flex-col md:flex-row gap-3 md:h-[calc(100vh-200px)]" style={{ minHeight: 520 }}>
         {/* ── Left panel — list ── */}
         <Card
           padding="sm"
-          className="flex flex-col overflow-hidden"
-          style={{ width: selected ? "38%" : "100%", flexShrink: 0, minWidth: 280 }}
+          className={`flex flex-col overflow-hidden w-full flex-shrink-0 ${selected ? "md:w-[38%]" : ""}`}
+          style={{ minWidth: 0 }}
         >
           {/* Filtro direzione */}
           <div className="mb-2 flex-shrink-0">
@@ -416,7 +416,7 @@ export default function EmailPage() {
 
         {/* ── Right panel — detail + reply ── */}
         {selected && (
-          <Card padding="sm" className="flex flex-col flex-1 min-w-0 overflow-hidden">
+          <Card padding="sm" className="flex flex-col flex-1 min-w-0 overflow-hidden md:max-h-[calc(100vh-200px)]">
             {/* Header */}
             <div className="flex items-start justify-between mb-3 flex-shrink-0">
               <div className="flex-1 min-w-0 pr-2">
@@ -529,8 +529,8 @@ export default function EmailPage() {
                 <button
                   onClick={handleSend}
                   disabled={sending || !risposta.trim()}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-50 hover:opacity-80 transition-opacity"
-                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-50 hover:opacity-80 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
                 >
                   {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                   {sending ? "Invio…" : "Invia risposta"}

@@ -1,22 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-// Public paths: accessible without authentication
 const PUBLIC_PATHS = ["/login", "/recupera-password"];
 
-// Paths that require CRM or Admin role
-const CRM_PATHS = [
-  "/dashboard",
-  "/clienti",
-  "/preventivi",
-  "/appuntamenti",
-  "/fogli-di-lavoro",
-  "/notifiche",
-];
-const ADMIN_PATHS = ["/admin"];
-const MAGAZZINO_PATHS = ["/magazzino"];
-
-// Check either session cookie (prod or dev). Auth verification (signature check) happens
-// server-side in getSession(). Here we only need presence for routing decisions.
 function getSessionCookie(req: NextRequest): string | undefined {
   return (
     req.cookies.get("spiezia_session")?.value ||
@@ -34,55 +19,39 @@ function getRoleData(req: NextRequest): { Ruolo: string; CRM: boolean } | null {
   }
 }
 
-export function proxy(req: NextRequest) {
+export default function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // ── Public paths ────────────────────────────────────────────────────────────
-  // Already authenticated → redirect away from login. Not authenticated → pass through.
-  // Unauthenticated access to protected routes is handled by server-side layouts
-  // (getSession() + redirect("/login")) — this avoids RSC navigation 404 issues
-  // that occur when proxy redirects mid-client-navigation in Next.js 16.
   const isPublic = PUBLIC_PATHS.some(
     (p) => pathname === p || pathname.startsWith(p + "/"),
   );
+
   if (isPublic) {
-    if (getSessionCookie(req)) {
-      return NextResponse.redirect(new URL("/", req.url));
+    // Se ha ENTRAMBI i cookie (sessione + ruolo), rimanda alla home corretta.
+    // Se manca uno dei due (es. sessione stantia senza ruolo), lascia andare
+    // al login così il layout pulisce lo stato.
+    const session = getSessionCookie(req);
+    const role = getRoleData(req);
+    if (session && role) {
+      const ruolo = role.Ruolo?.toLowerCase() ?? "";
+      const dest =
+        ruolo === "admin"       ? "/admin/ordini" :
+        ruolo === "magazziniere"? "/magazzino" :
+        role.CRM                ? "/dashboard" : "/";
+      return NextResponse.redirect(new URL(dest, req.url));
     }
     return NextResponse.next();
   }
 
-  // ── Role-based routing (only for authenticated sessions) ────────────────────
-  const session = getSessionCookie(req);
-  if (!session) return NextResponse.next(); // layout will redirect to /login
-
-  const role = getRoleData(req);
-  const ruolo = role?.Ruolo?.toLowerCase() ?? "";
-
-  if (CRM_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    if (!role?.CRM && ruolo !== "admin") {
-      return NextResponse.redirect(new URL("/", req.url));
-    }
-  }
-
-  if (ADMIN_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    if (ruolo !== "admin") {
-      return NextResponse.redirect(new URL("/", req.url));
-    }
-  }
-
-  if (MAGAZZINO_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    if (ruolo !== "admin" && ruolo !== "magazziniere") {
-      return NextResponse.redirect(new URL("/", req.url));
-    }
-  }
-
+  // Per le rotte protette: il gating granulare (ruolo specifico) lo fanno i layout
+  // server-side che leggono e verificano il session cookie in modo sicuro.
+  // Il middleware si limita a far passare tutto — evita falsi positivi da race condition
+  // sul cookie user-role (che può arrivare qualche millisecondo dopo la sessione).
   return NextResponse.next();
 }
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and static files. Page routes always have no dot in the path.
     "/((?!api|_next/static|_next/image|favicon\\.ico|.*\\..*).*)",
   ],
 };

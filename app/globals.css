@@ -17,17 +17,22 @@
 
   /* Borders */
   --border:       #E0E3E7;
+  --border-soft:  #ECEEF1;
 
   /* Status */
   --success: #249689;
   --warning: #F9CF58;
   --error:   #FF5963;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0,0,0,.10);
-  --shadow-md: 0 3px 6px rgba(0,0,0,.10);
-  --shadow-lg: 0 8px 15px rgba(0,0,0,.10);
-  --shadow-xl: 0 16px 25px rgba(0,0,0,.10);
+  /* Focus ring brandizzato */
+  --ring: rgba(255, 200, 3, .35);
+
+  /* Shadows — morbide e stratificate (luce ambiente + luce chiave) */
+  --shadow-sm: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.04);
+  --shadow-md: 0 2px 4px rgba(16,24,40,.05), 0 4px 10px rgba(16,24,40,.06);
+  --shadow-lg: 0 4px 12px rgba(16,24,40,.07), 0 10px 24px rgba(16,24,40,.06);
+  --shadow-xl: 0 8px 24px rgba(16,24,40,.09), 0 18px 44px rgba(16,24,40,.08);
+  --shadow-brand: 0 6px 18px rgba(255,200,3,.35);
 }
 
 * { box-sizing: border-box; }
@@ -35,7 +40,30 @@
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
+
+/* Selezione testo brandizzata */
+::selection { background: rgba(255, 200, 3, .28); color: #111; }
+
+/* Transizioni morbide sugli elementi interattivi */
+button { transition: background-color .15s ease, box-shadow .15s ease, opacity .15s ease, transform .12s ease; }
+a { transition: color .15s ease, opacity .15s ease; }
+input, select, textarea { transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease; }
+
+/* Focus ring brandizzato — accessibile e non invasivo */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--brand);
+}
+
+/* Hide scrollbar but keep scroll/swipe (used by promo carousel) */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 5px; height: 5px; }

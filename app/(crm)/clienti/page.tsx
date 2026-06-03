@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, limit } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Search, Plus, Eye, X, Check } from "lucide-react";
+import { Search, Plus, Eye, X, Check, Phone, Mail } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
@@ -215,7 +215,7 @@ export default function ClientiPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
             Clienti
@@ -226,7 +226,7 @@ export default function ClientiPage() {
         </div>
         <button
           onClick={() => { setForm(emptyForm()); setShowModal(true); }}
-          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-colors flex-shrink-0"
           style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
         >
           <Plus size={16} />
@@ -264,62 +264,102 @@ export default function ClientiPage() {
               <div key={i} className="h-12 rounded-xl animate-pulse" style={{ background: "var(--bg-primary)" }} />
             ))}
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-2 py-12 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+            Nessun cliente trovato.
+          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["Nome / Ragione Sociale", "Telefono", "Email", "P.IVA", ""].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((c) => (
-                  <tr key={c.id} className="hover:bg-[#F1F4F8] transition-colors cursor-pointer" style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td className="px-2 py-3 font-semibold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-                      <div>{nomeDisplay(c)}</div>
+          <>
+            {/* Mobile: lista a card (la tabella su schermo stretto tagliava le informazioni) */}
+            <div className="md:hidden space-y-2.5">
+              {filtered.map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/clienti/${c.id}`}
+                  className="block rounded-xl p-3.5 transition-colors active:bg-[#F1F4F8]"
+                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                        {nomeDisplay(c)}
+                      </p>
                       {c.Tipo && (
                         <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>{c.Tipo}</span>
                       )}
-                    </td>
-                    <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {c.Telefono || "—"}
-                    </td>
-                    <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {c.Email || "—"}
-                    </td>
-                    <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      {c.Partita_Iva || "—"}
-                    </td>
-                    <td className="px-2 py-3">
-                      <Link
-                        href={`/clienti/${c.id}`}
-                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
-                        style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                    </div>
+                    <Eye size={16} className="flex-shrink-0 mt-0.5" style={{ color: "var(--text-muted)" }} />
+                  </div>
+                  <div className="mt-2 space-y-1" style={{ fontFamily: "var(--font-montserrat)" }}>
+                    <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      <Mail size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
+                      <span className="truncate">{c.Email || "—"}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      <Phone size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
+                      <span className="truncate">{c.Telefono || "—"}</span>
+                    </div>
+                    {c.Partita_Iva && (
+                      <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider flex-shrink-0" style={{ color: "var(--text-muted)" }}>P.IVA</span>
+                        <span className="truncate">{c.Partita_Iva}</span>
+                      </div>
+                    )}
+                  </div>
+                </Link>
+              ))}
+            </div>
+
+            {/* Desktop: tabella */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    {["Nome / Ragione Sociale", "Telefono", "Email", "P.IVA", ""].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left pb-3 px-2 text-xs font-semibold uppercase tracking-wider"
+                        style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
                       >
-                        <Eye size={13} />
-                        Visualizza
-                      </Link>
-                    </td>
+                        {h}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-2 py-12 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                      {loading ? "" : "Nessun cliente trovato."}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filtered.map((c) => (
+                    <tr key={c.id} className="hover:bg-[#F1F4F8] transition-colors cursor-pointer" style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td className="px-2 py-3 font-semibold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+                        <div>{nomeDisplay(c)}</div>
+                        {c.Tipo && (
+                          <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>{c.Tipo}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                        {c.Telefono || "—"}
+                      </td>
+                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                        {c.Email || "—"}
+                      </td>
+                      <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+                        {c.Partita_Iva || "—"}
+                      </td>
+                      <td className="px-2 py-3">
+                        <Link
+                          href={`/clienti/${c.id}`}
+                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
+                          style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
+                        >
+                          <Eye size={13} />
+                          Visualizza
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Card>
     </div>

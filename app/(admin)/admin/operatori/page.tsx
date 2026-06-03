@@ -7,7 +7,7 @@ import {
 } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { db, auth } from "@/lib/firebase";
-import { Search, Plus, Pencil, X, Check, Loader2, User } from "lucide-react";
+import { Search, Plus, Pencil, X, Check, Loader2, User, Mail } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 import type { Ruolo } from "@/lib/types";
@@ -44,18 +44,6 @@ const FORM_DEFAULT: FormState = {
   displayName: "", email: "", password: "",
   Ruolo: "Impiegato", sedeId: "", mansioneId: "", repartoId: "",
 };
-
-function OperatoreSkeleton() {
-  return (
-    <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-      {[140, 180, 80, 100, 100, 100, 60].map((w, i) => (
-        <td key={i} className="px-4 py-3">
-          <div className="h-3 rounded animate-pulse" style={{ width: w, background: "var(--border)" }} />
-        </td>
-      ))}
-    </tr>
-  );
-}
 
 export default function OperatoriPage() {
   const [operatori, setOperatori] = useState<Operatore[]>([]);
@@ -108,7 +96,10 @@ export default function OperatoriPage() {
           return {
             uid:          d.id,
             email:        String(data.email ?? ""),
-            displayName:  data.displayName ? String(data.displayName) : undefined,
+            // Campo reale users: display_name (snake_case); displayName legacy come fallback
+            displayName:  (data.display_name ?? data.displayName)
+                            ? String(data.display_name ?? data.displayName)
+                            : undefined,
             Ruolo:        (data.Ruolo ?? "Impiegato") as Ruolo,
             CRM:          Boolean(data.CRM),
             SedeRef:      sedeRef ?? null,
@@ -165,7 +156,7 @@ export default function OperatoriPage() {
 
     try {
       const payload: Record<string, unknown> = {
-        displayName: form.displayName.trim(),
+        display_name: form.displayName.trim(),
         Ruolo:       form.Ruolo,
         CRM:         true,
         Sede:        form.sedeId     ? doc(db, "Sede",     form.sedeId)     : null,
@@ -215,7 +206,7 @@ export default function OperatoriPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Operatori CRM</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
@@ -224,8 +215,8 @@ export default function OperatoriPage() {
         </div>
         <button
           onClick={openNew}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-opacity"
-          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-all hover:brightness-[1.04] active:scale-[.98]"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
         >
           <Plus size={15} /> Nuovo operatore
         </button>
@@ -244,23 +235,77 @@ export default function OperatoriPage() {
           />
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border)", background: "#111" }}>
-                {["Nome", "Email", "Ruolo", "Sede", "Mansione", "Reparto", ""].map((h) => (
-                  <th key={h} className="text-left px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider"
-                    style={{ color: "#fff", fontFamily: "var(--font-montserrat)", whiteSpace: "nowrap" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading
-                ? Array.from({ length: 6 }).map((_, i) => <OperatoreSkeleton key={i} />)
-                : filtered.map((op) => (
+        {/* Lista operatori */}
+        {loading ? (
+          <div className="space-y-2.5">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: "var(--bg-primary)" }} />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center py-12 gap-2">
+            <User size={32} style={{ color: "#d1d5db" }} />
+            <p className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+              Nessun operatore trovato
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Mobile: lista a card (la tabella su schermo stretto tagliava email/ruolo/sede) */}
+            <div className="md:hidden space-y-2.5">
+              {filtered.map((op) => {
+                const meta = [op.SedeNome, op.MansioneNome, op.RepartoNome].filter(Boolean).join(" · ");
+                return (
+                  <div key={op.uid} className="rounded-xl p-3.5"
+                    style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}>
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                        style={{ background: "#FFC803", color: "#111" }}>
+                        {(op.displayName ?? op.email)[0]?.toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-sm truncate" style={{ color: "var(--text-primary)" }}>
+                          {op.displayName ?? "—"}
+                        </p>
+                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold mt-0.5"
+                          style={{ background: op.Ruolo === "Admin" ? "#FEF3C7" : "#F3F4F6", color: op.Ruolo === "Admin" ? "#92400E" : "#374151" }}>
+                          {op.Ruolo}
+                        </span>
+                      </div>
+                      <button onClick={() => openEdit(op)}
+                        className="flex items-center justify-center px-3 py-2 rounded-lg flex-shrink-0"
+                        style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                        aria-label="Modifica">
+                        <Pencil size={14} />
+                      </button>
+                    </div>
+                    <div className="mt-2 space-y-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      <div className="flex items-center gap-2">
+                        <Mail size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
+                        <span className="truncate">{op.email}</span>
+                      </div>
+                      {meta && <div className="truncate">{meta}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop: tabella */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)", background: "#111" }}>
+                    {["Nome", "Email", "Ruolo", "Sede", "Mansione", "Reparto", ""].map((h) => (
+                      <th key={h} className="text-left px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider"
+                        style={{ color: "#fff", fontFamily: "var(--font-montserrat)", whiteSpace: "nowrap" }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((op) => (
                     <tr key={op.uid} className="border-b hover:bg-[#FFFDF0] transition-colors"
                       style={{ borderColor: "var(--border)" }}>
                       <td className="px-4 py-3">
@@ -300,19 +345,12 @@ export default function OperatoriPage() {
                         </button>
                       </td>
                     </tr>
-                  ))
-              }
-            </tbody>
-          </table>
-          {!loading && filtered.length === 0 && (
-            <div className="flex flex-col items-center py-12 gap-2">
-              <User size={32} style={{ color: "#d1d5db" }} />
-              <p className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                Nessun operatore trovato
-              </p>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </Card>
 
       {/* ── Modal ── */}
@@ -321,7 +359,7 @@ export default function OperatoriPage() {
           style={{ background: "rgba(0,0,0,0.45)" }}
           onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
           <div className="w-full max-w-md rounded-2xl overflow-hidden"
-            style={{ background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            style={{ background: "#fff", boxShadow: "var(--shadow-xl)" }}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #e5e7eb" }}>
@@ -409,8 +447,8 @@ export default function OperatoriPage() {
                 Annulla
               </button>
               <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-opacity"
-                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}>
                 {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                 {saving ? "Salvataggio…" : "Salva"}
               </button>

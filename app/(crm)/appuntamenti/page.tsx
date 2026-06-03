@@ -116,7 +116,7 @@ export default function AppuntamentiPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
             Appuntamenti
@@ -127,11 +127,11 @@ export default function AppuntamentiPage() {
         </div>
         <Link
           href="/appuntamenti/nuova"
-          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl"
+          className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl flex-shrink-0"
           style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
         >
           <Plus size={16} />
-          Nuovo appuntamento
+          Nuovo
         </Link>
       </div>
 
@@ -218,7 +218,7 @@ export default function AppuntamentiPage() {
                     </div>
                   </div>
 
-                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="flex items-center gap-1.5">
                       <User size={13} style={{ color: "var(--text-muted)" }} />
                       <span className="text-sm font-semibold truncate" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>

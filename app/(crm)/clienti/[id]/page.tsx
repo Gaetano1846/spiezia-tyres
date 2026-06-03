@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
+import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
 import type { Cliente, Preventivo, Veicolo, Appuntamento, Ordine, FoglioStato } from "@/lib/types";
 
@@ -158,29 +159,30 @@ export default function ClienteDetailPage() {
             where("Cliente", "==", clienteRef),
             limit(50),
           )),
+          // Niente orderBy: where + orderBy richiederebbe un indice composito. Ordiniamo lato client (come per Appuntamenti/Ordini qui sotto).
           getDocs(query(
             collection(db, "Foglio_di_Lavoro"),
             where("Cliente", "==", clienteRef),
-            orderBy("DataOra", "desc"),
             limit(50),
           )),
           getDocs(query(
             collectionGroup(db, "Promemoria"),
             where("Cliente", "==", clienteRef),
-            orderBy("Data_Scadenza", "asc"),
             limit(50),
           )),
         ]);
 
-        setPromemoria(proSnap.docs.map((d) => ({
-          id: d.id,
-          Nome:          d.data().Nome ?? "",
-          Descrizione:   d.data().Descrizione,
-          Mittente:      d.data().Mittente,
-          Data_Scadenza: d.data().Data_Scadenza as Timestamp | undefined,
-          Data_Creazione: d.data().Data_Creazione as Timestamp | undefined,
-          Completata:    d.data().Completata ?? false,
-        })));
+        setPromemoria(proSnap.docs
+          .map((d) => ({
+            id: d.id,
+            Nome:          d.data().Nome ?? "",
+            Descrizione:   d.data().Descrizione,
+            Mittente:      d.data().Mittente,
+            Data_Scadenza: d.data().Data_Scadenza as Timestamp | undefined,
+            Data_Creazione: d.data().Data_Creazione as Timestamp | undefined,
+            Completata:    d.data().Completata ?? false,
+          }))
+          .sort((a, b) => (a.Data_Scadenza?.seconds ?? Infinity) - (b.Data_Scadenza?.seconds ?? Infinity)));
 
         setVeicoli(veicoliSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
         setPreventivi(preventiviSnap.docs.map((d) => ({
@@ -203,13 +205,19 @@ export default function ClienteDetailPage() {
             })
         );
         setFogli(
-          fogliSnap.docs.map((d) => ({
-            id: d.id,
-            Numero: d.data().Numero,
-            Stato: (d.data().Stato ?? "In attesa") as FoglioStato,
-            DataOra: d.data().DataOra as Timestamp | undefined,
-            Data_Creazione: d.data().Data_Creazione as Timestamp | undefined,
-          }))
+          fogliSnap.docs
+            .map((d) => ({
+              id: d.id,
+              Numero: d.data().Numero,
+              Stato: (d.data().Stato ?? "In attesa") as FoglioStato,
+              DataOra: d.data().DataOra as Timestamp | undefined,
+              Data_Creazione: d.data().Data_Creazione as Timestamp | undefined,
+            }))
+            .sort((a, b) => {
+              const ta = (a.DataOra ?? a.Data_Creazione)?.seconds ?? 0;
+              const tb = (b.DataOra ?? b.Data_Creazione)?.seconds ?? 0;
+              return tb - ta;
+            })
         );
       } catch (e) {
         toast.error("Errore nel caricamento cliente");
@@ -1247,12 +1255,11 @@ export default function ClienteDetailPage() {
                         <label className="block text-xs font-semibold mb-1" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                           Scadenza
                         </label>
-                        <input
-                          type="date"
+                        <DateField
                           value={proForm.scadenza}
-                          onChange={(e) => setProForm((f) => ({ ...f, scadenza: e.target.value }))}
-                          className="w-full px-3 py-2 rounded-xl text-sm"
-                          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }}
+                          onChange={(iso) => setProForm((f) => ({ ...f, scadenza: iso }))}
+                          fullWidth
+                          placeholder="Nessuna scadenza"
                         />
                       </div>
                     </div>

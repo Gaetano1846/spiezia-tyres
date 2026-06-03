@@ -123,7 +123,7 @@ export default function CarrelloPage() {
   return (
     <>
       {logisticaModal}
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="px-4 md:px-6 py-6 max-w-6xl mx-auto">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         <div className="lg:col-span-2 space-y-4">
           <h1
@@ -341,8 +341,8 @@ export default function CarrelloPage() {
               <div className="mt-5 space-y-3">
                 <Link
                   href="/checkout"
-                  className="w-full flex items-center justify-center py-3 rounded-full font-semibold text-sm transition-opacity hover:opacity-90"
-                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                  className="w-full flex items-center justify-center py-3 rounded-full font-semibold text-sm transition-all hover:brightness-[1.04] active:scale-[.99]"
+                  style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
                 >
                   Procedi al checkout
                 </Link>

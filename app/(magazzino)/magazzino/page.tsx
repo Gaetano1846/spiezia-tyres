@@ -234,29 +234,29 @@ export default function MagazzinoPage() {
   const gabbieVuote = gabbie.filter((g) => g.pzTotali === 0).length;
 
   return (
-    <div className="px-5 py-5 space-y-6">
+    <div className="px-4 md:px-5 py-4 sm:py-5 space-y-4 sm:space-y-6">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+          <h1 className="text-xl sm:text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
             Magazzino
           </h1>
-          <p className="text-sm mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+          <p className="text-xs sm:text-sm mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
             Gestione gabbie e stoccaggio pneumatici
           </p>
         </div>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold flex-shrink-0"
           style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
         >
-          <Plus size={16} /> Nuova gabbia
+          <Plus size={16} /> <span className="hidden sm:inline">Nuova gabbia</span><span className="sm:hidden">Nuova</span>
         </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
         {[
           { label: "GABBIE TOTALI",       value: gabbie.length,    sub: "in magazzino",  color: "#FFF8DC" },
           { label: "PNEUMATICI STOCCATI", value: totalePneumatici, sub: "pezzi totali",  color: "#DCFCE7" },
@@ -264,23 +264,23 @@ export default function MagazzinoPage() {
         ].map((s) => (
           <div
             key={s.label}
-            className="rounded-2xl p-4 flex items-center gap-4"
+            className="rounded-2xl p-3 sm:p-4 flex flex-col items-center text-center gap-1.5 sm:flex-row sm:items-center sm:text-left sm:gap-3"
             style={{ background: "#fff", border: "1px solid #e5e7eb" }}
           >
             <div
-              className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+              className="w-9 h-9 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl flex items-center justify-center flex-shrink-0"
               style={{ background: s.color }}
             >
-              <Package size={22} style={{ color: "#111" }} />
+              <Package className="w-[18px] h-[18px] sm:w-[22px] sm:h-[22px]" style={{ color: "#111" }} />
             </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide sm:tracking-widest leading-tight" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
                 {s.label}
               </p>
-              <p className="text-2xl font-black" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+              <p className="text-xl sm:text-2xl font-black leading-tight" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
                 {loading ? "…" : s.value}
               </p>
-              <p className="text-xs" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+              <p className="hidden sm:block text-xs" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
                 {s.sub}
               </p>
             </div>
@@ -295,7 +295,7 @@ export default function MagazzinoPage() {
             <button
               key={s}
               onClick={() => setSedeFilter(s)}
-              className="px-4 py-2 rounded-full text-xs font-semibold transition-colors"
+              className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs font-semibold transition-colors flex-shrink-0"
               style={{
                 background: sedeFilter === s ? "#FFC803" : "#fff",
                 border: "1px solid #e5e7eb",
@@ -311,8 +311,8 @@ export default function MagazzinoPage() {
 
       {/* Modal nuova gabbia */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.45)" }}>
-          <div className="rounded-2xl p-6 w-full max-w-sm mx-4" style={{ background: "#fff" }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }}>
+          <div className="rounded-2xl p-6 w-full max-w-sm" style={{ background: "#fff" }}>
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>Nuova gabbia</h3>
               <button onClick={() => setShowModal(false)}><X size={18} /></button>

@@ -12,8 +12,9 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
-import { Truck, Search, Printer, Eye, RefreshCw, X } from "lucide-react";
+import { Truck, Search, Printer, Eye, RefreshCw, X, ChevronDown, SlidersHorizontal } from "lucide-react";
 import StatCard from "@/components/ui/StatCard";
+import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
 
 // ---------------------------------------------------------------------------
@@ -135,6 +136,18 @@ export default function SpedizioniPage() {
   const [rows, setRows]       = useState<SpedizioneRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Card mobile espandibili (tendina)
+  const [expandedSpedizioni, setExpandedSpedizioni] = useState<Set<string>>(new Set());
+  function toggleSpedDetails(id: string) {
+    setExpandedSpedizioni((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  // Filtri collassabili su mobile
+  const [showFilters, setShowFilters] = useState(false);
 
   // Top-bar filters
   const [search,  setSearch]  = useState("");
@@ -314,33 +327,76 @@ export default function SpedizioniPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-5">
+    <div className="space-y-2.5 md:space-y-5">
 
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Spedizioni</h1>
+        <h1 className="text-xl md:text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Spedizioni</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
           {loading ? "Caricamento…" : `${filtered.length} spedizioni`}
         </p>
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 md:gap-4">
         {stats.map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} sub={s.sub}
-            icon={<Truck size={22} />} accent={s.accent} />
+            icon={<Truck className="w-4 h-4 md:w-[22px] md:h-[22px]" />} accent={s.accent} />
         ))}
       </div>
 
-      {/* Top filters bar */}
-      <div className="flex gap-2 flex-wrap items-center">
-        <div className="relative flex-1 min-w-48">
+      {/* Top toolbar — ricerca + (desktop: Sede GLS · Data · Reset) / (mobile: toggle filtri).
+          Su desktop Fonte/Corriere/Magazzino/Stato GLS/Stato Mag. sono nell'intestazione tabella. */}
+      <div className="space-y-2">
+       <div className="flex gap-2 items-center flex-wrap">
+        <div className="relative flex-1 min-w-[150px]">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Cerca per ID, ordine, cliente…"
             className="w-full pl-9 pr-4 py-2 rounded-xl text-sm outline-none"
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }} />
         </div>
+
+        {/* Desktop: Sede GLS + Data + Reset a destra */}
+        <div className="hidden md:flex items-center gap-2 ml-auto">
+          <select value={sedeGLS} onChange={(e) => setSedeGLS(e.target.value)}
+            className="px-3 py-2 rounded-xl text-sm outline-none cursor-pointer"
+            style={{ background: sedeGLS ? "#FFF8DC" : "var(--bg-primary)", border: `1px solid ${sedeGLS ? "#FFC803" : "var(--border)"}`, fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+            <option value="">Sede GLS</option>
+            <option value="0">GLS Nola</option>
+            <option value="1">GLS Roma</option>
+          </select>
+          <DateField value={date} onChange={setDate} placeholder="Data" />
+          {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || date) && (
+            <button onClick={reset}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
+              <RefreshCw size={13} /> Reset
+            </button>
+          )}
+        </div>
+
+        {/* Mobile: toggle Filtri + reset */}
+        <button onClick={() => setShowFilters((v) => !v)}
+          className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold flex-shrink-0 transition-colors"
+          style={{ background: showFilters ? "#FFC803" : "var(--bg-primary)", border: "1px solid var(--border)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+          <SlidersHorizontal size={14} /> Filtri
+          {(() => { const n = [fonte, corriere, magazzino, statoGLS, statoMag, sedeGLS, date].filter(Boolean).length; return n > 0 ? (
+            <span className="w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: "#111", color: "#FFC803" }}>{n}</span>
+          ) : null; })()}
+          <ChevronDown size={14} style={{ transform: showFilters ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+        </button>
+        {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || date) && (
+          <button onClick={reset}
+            className="md:hidden flex items-center gap-1 px-3 py-2 rounded-xl text-sm flex-shrink-0"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+            <X size={13} />
+          </button>
+        )}
+       </div>
+
+       {/* Mobile: pannello filtri collassabile (tutti i filtri) */}
+       <div className={`${showFilters ? "flex" : "hidden"} md:hidden gap-2 flex-wrap items-center`}>
         <select value={fonte} onChange={(e) => setFonte(e.target.value)}
           className="px-3 py-2 rounded-xl text-sm outline-none"
           style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
@@ -382,16 +438,8 @@ export default function SpedizioniPage() {
           <option value="0">GLS Nola</option>
           <option value="1">GLS Roma</option>
         </select>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-          className="px-3 py-2 rounded-xl text-sm outline-none"
-          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }} />
-        {(search || fonte || corriere || magazzino || statoGLS || statoMag || sedeGLS || date) && (
-          <button onClick={reset}
-            className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-            <X size={13} />
-          </button>
-        )}
+        <DateField value={date} onChange={setDate} placeholder="Data" />
+       </div>
       </div>
 
       {/* Bulk selection bar */}
@@ -417,27 +465,73 @@ export default function SpedizioniPage() {
 
       {/* Table */}
       <div className="rounded-2xl overflow-hidden" style={{ background: "#fff", border: "1px solid var(--border)" }}>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto hidden md:block">
           <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)", minWidth: 1100 }}>
             <thead>
               <tr style={{ background: "#f9fafb", borderBottom: "1px solid var(--border)" }}>
 
                 {/* Checkbox all */}
-                <th className="py-3 pl-4 pr-2 w-10">
+                <th className="py-2.5 pl-4 pr-2 w-10">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll}
                     className="w-4 h-4 cursor-pointer" style={{ accentColor: "#FFC803" }} />
                 </th>
 
-                {[
-                  "ID Spedizione", "Ordine", "Cliente", "Creato Il",
-                  "Fonte", "Corriere", "Magazzino", "Stato GLS", "Stato Mag.",
-                ].map((h) => (
-                  <th key={h} className="py-3 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
-                    style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                    {h}
+                {/* Colonne etichetta (pill grigie) */}
+                {["ID Spedizione", "Ordine", "Cliente", "Creato Il"].map((h) => (
+                  <th key={h} className="py-2.5 pr-3 text-left whitespace-nowrap">
+                    <span className="inline-block px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                      style={{ background: "#eceef1", color: "#4b5563", fontFamily: "var(--font-montserrat)" }}>
+                      {h}
+                    </span>
                   </th>
                 ))}
-                <th className="py-3 pr-4 w-20" />
+
+                {/* Colonne filtro — dropdown nell'intestazione, allineati alle colonne */}
+                <th className="py-2.5 pr-3">
+                  <select value={fonte} onChange={(e) => setFonte(e.target.value)} title="Filtra per fonte"
+                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
+                    style={{ background: fonte ? "#FFF8DC" : "#fff", border: `1px solid ${fonte ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                    <option value="">Fonte</option>
+                    {fontiList.map((f) => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </th>
+                <th className="py-2.5 pr-3">
+                  <select value={corriere} onChange={(e) => setCorriere(e.target.value)} title="Filtra per corriere"
+                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
+                    style={{ background: corriere ? "#FFF8DC" : "#fff", border: `1px solid ${corriere ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                    <option value="">Corriere</option>
+                    {corrieriList.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </th>
+                <th className="py-2.5 pr-3">
+                  <select value={magazzino} onChange={(e) => setMagazzino(e.target.value)} title="Filtra per magazzino"
+                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
+                    style={{ background: magazzino ? "#FFF8DC" : "#fff", border: `1px solid ${magazzino ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                    <option value="">Magazzino</option>
+                    {magazzinoList.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </th>
+                <th className="py-2.5 pr-3">
+                  <select value={statoGLS} onChange={(e) => setStatoGLS(e.target.value)} title="Filtra per stato GLS"
+                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
+                    style={{ background: statoGLS ? "#FFF8DC" : "#fff", border: `1px solid ${statoGLS ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                    <option value="">Stato GLS</option>
+                    <option value="created">Creata</option>
+                    <option value="closed">Chiusa</option>
+                    <option value="deleted">Eliminata</option>
+                  </select>
+                </th>
+                <th className="py-2.5 pr-3">
+                  <select value={statoMag} onChange={(e) => setStatoMag(e.target.value)} title="Filtra per stato magazzino"
+                    className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
+                    style={{ background: statoMag ? "#FFF8DC" : "#fff", border: `1px solid ${statoMag ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                    <option value="">Stato Mag.</option>
+                    <option>In Preparazione</option>
+                    <option>Annullato</option>
+                    <option>Spedito</option>
+                  </select>
+                </th>
+                <th className="py-2.5 pr-4 w-20" />
               </tr>
             </thead>
 
@@ -557,6 +651,89 @@ export default function SpedizioniPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* ── Card — mobile ── */}
+        <div className="md:hidden">
+          {/* Seleziona tutti */}
+          <div className="flex items-center gap-2.5 px-3 py-2.5" style={{ background: "#f9fafb", borderBottom: "1px solid var(--border)" }}>
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-4 h-4 cursor-pointer" style={{ accentColor: "#FFC803" }} />
+            <span className="text-xs font-semibold" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>Seleziona tutti</span>
+          </div>
+
+          {loading ? (
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: "#f3f4f6" }} />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>Nessuna spedizione trovata.</div>
+          ) : (
+            filtered.map((r) => {
+              const srcStyle = SOURCE_COLORS[r.Source ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
+              const glsStyle = STATO_GLS_COLORS[r.status ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
+              const magStyle = STATO_MAG_COLORS[r.warehouseStatus ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
+              const isSel = selected.has(r.id);
+              const isOpen = expandedSpedizioni.has(r.id);
+              return (
+                <div key={r.id} className="p-3" style={{ borderBottom: "1px solid #f3f4f6", background: isSel ? "#FFFBEB" : undefined }}>
+                  {/* ID + Fonte */}
+                  <div className="flex items-center gap-2.5">
+                    <input type="checkbox" checked={isSel} onChange={() => toggleOne(r.id)} className="w-4 h-4 cursor-pointer flex-shrink-0" style={{ accentColor: "#FFC803" }} />
+                    <span className="font-mono text-xs font-bold flex-1 min-w-0 truncate" style={{ color: "#111" }}>
+                      {r.parcelId ?? r.id.slice(0, 8).toUpperCase()}
+                    </span>
+                    {r.Source && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold flex-shrink-0" style={{ background: srcStyle.bg, color: srcStyle.color }}>
+                        {r.Source}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Cliente */}
+                  <p className="text-xs mt-1.5 truncate" style={{ color: "var(--text-primary)" }}>{r.destinationName ?? "—"}</p>
+
+                  {/* Stati + toggle */}
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: glsStyle.bg, color: glsStyle.color }}>
+                      {STATO_GLS_LABELS[r.status ?? ""] ?? r.status ?? "—"}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: magStyle.bg, color: magStyle.color }}>
+                      {r.warehouseStatus ?? "—"}
+                    </span>
+                    <button
+                      onClick={() => toggleSpedDetails(r.id)}
+                      aria-expanded={isOpen}
+                      className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors hover:bg-gray-100"
+                      style={{ border: "1px solid #e5e7eb", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+                    >
+                      {isOpen ? "Nascondi" : "Dettagli"}
+                      <ChevronDown size={12} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+                    </button>
+                  </div>
+
+                  {/* Tendina dettagli */}
+                  {isOpen && (
+                    <div className="mt-2 pt-2 flex flex-col gap-1.5 text-xs" style={{ borderTop: "1px dashed #e5e7eb", fontFamily: "var(--font-montserrat)" }}>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Ordine</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.orderId ?? "—"}</span></div>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Creato il</span><span className="text-right" style={{ color: "var(--text-secondary)" }}>{formatDateTime(r.createdAt)}</span></div>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Corriere</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.Corriere ?? "—"} · {r.sedeLabel}</span></div>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Magazzino</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.magazzinoLabel}</span></div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <button onClick={() => handlePrintLabel(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors hover:bg-[#FFF8DC]" style={{ color: "#111", border: "1px solid #FFC803" }}>
+                          <Printer size={13} /> Etichetta
+                        </button>
+                        <button onClick={() => handleViewOrder(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors hover:bg-[#FFF8DC]" style={{ color: "#111", border: "1px solid #FFC803" }}>
+                          <Eye size={13} /> Ordine
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </div>

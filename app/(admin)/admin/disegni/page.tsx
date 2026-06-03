@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import {
   collection, query, orderBy, getDocs, doc,
   addDoc, updateDoc, writeBatch, where, arrayUnion,
-  type DocumentReference,
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "@/lib/firebase";
@@ -15,10 +14,14 @@ import toast from "react-hot-toast";
 interface Disegno {
   id: string;
   Nome: string;
-  Marca: string | DocumentReference | unknown;
-  Stagione?: string;
   Immagine?: string;
   Conteggio?: number;
+  conteggio?: number;  // alcune doc usano la variante minuscola
+}
+
+// Numero di prodotti che usano questo disegno (campo reale Conteggio / conteggio)
+function conteggioOf(d: Disegno): number {
+  return d.Conteggio ?? d.conteggio ?? 0;
 }
 
 const CHAR_COLORS: Record<string, string> = {
@@ -33,13 +36,6 @@ const CHAR_COLORS: Record<string, string> = {
 function accentFor(name: string): string {
   const key = (name ?? "")[0]?.toUpperCase();
   return CHAR_COLORS[key] ?? "#FFC803";
-}
-
-function resolveMarca(marca: Disegno["Marca"]): string {
-  if (typeof marca === "string") return marca;
-  if (marca && typeof marca === "object" && "id" in (marca as object))
-    return (marca as DocumentReference).id;
-  return "";
 }
 
 const PAGE_SIZE = 100;
@@ -60,8 +56,6 @@ export default function DisegniPage() {
   const [disegni, setDisegni] = useState<Disegno[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [brandFilter, setBrandFilter] = useState("");
-  const [stagioneFilter, setStagioneFilter] = useState("");
   const [page, setPage] = useState(0);
 
   // Modal
@@ -177,26 +171,14 @@ export default function DisegniPage() {
     }
   }
 
-  const uniqueBrands = useMemo(
-    () => [...new Set(disegni.map((d) => resolveMarca(d.Marca)).filter(Boolean))].sort(),
-    [disegni]
-  );
-  const uniqueStagioni = useMemo(
-    () => [...new Set(disegni.map((d) => d.Stagione).filter(Boolean))].sort() as string[],
-    [disegni]
-  );
-
   const filtered = useMemo(() => {
     setPage(0);
     return disegni.filter((d) => {
-      const marcaNome = resolveMarca(d.Marca);
       if (search && !d.Nome.toLowerCase().includes(search.toLowerCase())) return false;
-      if (brandFilter && marcaNome !== brandFilter) return false;
-      if (stagioneFilter && d.Stagione !== stagioneFilter) return false;
       return true;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disegni, search, brandFilter, stagioneFilter]);
+  }, [disegni, search]);
 
   const paginated = useMemo(
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
@@ -207,7 +189,7 @@ export default function DisegniPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Disegni</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
@@ -216,8 +198,8 @@ export default function DisegniPage() {
         </div>
         <button
           onClick={() => openModal()}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-opacity"
-          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-all hover:brightness-[1.04] active:scale-[.98]"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
         >
           <Plus size={15} /> Aggiungi disegno
         </button>
@@ -226,7 +208,7 @@ export default function DisegniPage() {
       <Card padding="sm">
         {/* Toolbar */}
         <div className="flex gap-2 mb-3 flex-wrap items-center">
-          <div className="flex-1 min-w-48 relative">
+          <div className="flex-1 min-w-[150px] relative">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
             <input
               placeholder="Cerca per nome disegno…"
@@ -236,20 +218,8 @@ export default function DisegniPage() {
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
             />
           </div>
-          <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl text-sm outline-none"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-            <option value="">Tutti i brand</option>
-            {uniqueBrands.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
-          <select value={stagioneFilter} onChange={(e) => setStagioneFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl text-sm outline-none"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-            <option value="">Tutte le stagioni</option>
-            {uniqueStagioni.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          {(search || brandFilter || stagioneFilter) && (
-            <button onClick={() => { setSearch(""); setBrandFilter(""); setStagioneFilter(""); }}
+          {search && (
+            <button onClick={() => setSearch("")}
               className="p-2 rounded-xl"
               style={{ border: "1px solid var(--border)", background: "var(--bg-primary)" }}>
               <X size={13} style={{ color: "var(--text-secondary)" }} />
@@ -265,8 +235,8 @@ export default function DisegniPage() {
           {loading
             ? Array.from({ length: 10 }).map((_, i) => <DisegnoSkeleton key={i} />)
             : paginated.map((d) => {
-                const marcaNome = resolveMarca(d.Marca);
-                const accent = accentFor(marcaNome || d.Nome);
+                const accent = accentFor(d.Nome);
+                const nProdotti = conteggioOf(d);
                 return (
                   <div key={d.id} className="rounded-2xl overflow-hidden"
                     style={{ border: "1px solid var(--border)", background: "var(--bg-primary)" }}>
@@ -279,7 +249,7 @@ export default function DisegniPage() {
                       ) : (
                         <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold text-white"
                           style={{ background: accent }}>
-                          {(marcaNome || d.Nome)[0]}
+                          {d.Nome[0]}
                         </div>
                       )}
                     </div>
@@ -290,7 +260,7 @@ export default function DisegniPage() {
                         {d.Nome}
                       </p>
                       <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                        {marcaNome || "—"}
+                        {nProdotti} {nProdotti === 1 ? "prodotto" : "prodotti"}
                       </p>
                       <button
                         onClick={() => openModal(d)}
@@ -345,7 +315,7 @@ export default function DisegniPage() {
           style={{ background: "rgba(0,0,0,0.45)" }}
           onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
           <div className="w-full max-w-sm rounded-2xl overflow-hidden"
-            style={{ background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            style={{ background: "#fff", boxShadow: "var(--shadow-xl)" }}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4"
@@ -435,8 +405,8 @@ export default function DisegniPage() {
                 Annulla
               </button>
               <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-opacity"
-                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}>
                 {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                 {saving ? "Salvataggio…" : "Salva"}
               </button>

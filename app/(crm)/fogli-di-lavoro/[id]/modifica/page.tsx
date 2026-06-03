@@ -389,9 +389,9 @@ export default function ModificaFoglioLavoroPage() {
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }} />
         </Card>
 
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
           <Link href={`/fogli-di-lavoro/${id}`}
-            className="px-5 py-2.5 rounded-xl text-sm font-semibold"
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-center"
             style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
             Annulla
           </Link>

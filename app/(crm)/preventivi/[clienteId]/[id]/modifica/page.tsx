@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
+import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -222,14 +223,14 @@ export default function ModificaPreventivoPage() {
         <ArrowLeft size={15} /> Torna al preventivo
       </Link>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>
           Modifica preventivo
         </h1>
         <button
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 transition-opacity hover:opacity-85"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 transition-opacity hover:opacity-85 flex-shrink-0"
           style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
         >
           <Save size={15} />
@@ -257,13 +258,7 @@ export default function ModificaPreventivoPage() {
             <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
               Scadenza
             </label>
-            <input
-              type="date"
-              value={scadenza}
-              onChange={(e) => setScadenza(e.target.value)}
-              className={inputCls}
-              style={inputStyle}
-            />
+            <DateField value={scadenza} onChange={setScadenza} fullWidth className="px-4 py-2.5" placeholder="Nessuna scadenza" />
           </div>
         </div>
       </Card>
@@ -291,7 +286,7 @@ export default function ModificaPreventivoPage() {
           )}
           {righe.map((r) => (
             <div key={r.key} className="p-3 rounded-xl space-y-2" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <input
                   placeholder="Marca"
                   value={r.marca}
@@ -303,11 +298,11 @@ export default function ModificaPreventivoPage() {
                   placeholder="Modello"
                   value={r.modello}
                   onChange={(e) => updateRiga(r.key, "modello", e.target.value)}
-                  className={`${inputCls} col-span-2`}
+                  className={`${inputCls} sm:col-span-2`}
                   style={inputStyle}
                 />
               </div>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <input
                   placeholder="Misura (es. 205/55R16)"
                   value={r.misura}
@@ -384,7 +379,7 @@ export default function ModificaPreventivoPage() {
             </p>
           )}
           {servizi.map((s) => (
-            <div key={s.key} className="grid grid-cols-4 gap-2 items-center">
+            <div key={s.key} className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-center">
               <input
                 placeholder="Descrizione servizio"
                 value={s.titolo}

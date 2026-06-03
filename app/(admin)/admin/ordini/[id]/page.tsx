@@ -111,6 +111,81 @@ function normalizeArticolo(a: Record<string, unknown>) {
   };
 }
 
+// ─── Indirizzi ordine ───────────────────────────────────────────────────────
+// Gli ordini "nuovi" (checkout B2B) salvano IndirizzoFatturazione/IndirizzoSpedizione
+// in camelCase; gli ordini storici e marketplace (AdTyres/eBay/Amazon, app Flutter)
+// usano Indirizzo_Fatturazione/Indirizzo_Spedizione in snake_case. Leggiamo entrambi.
+function rawIndirizzo(o: Ordine, tipo: "fatturazione" | "spedizione"): Record<string, string> | undefined {
+  const r = o as unknown as Record<string, unknown>;
+  const v = tipo === "fatturazione"
+    ? (r.IndirizzoFatturazione ?? r.Indirizzo_Fatturazione)
+    : (r.IndirizzoSpedizione ?? r.Indirizzo_Spedizione);
+  return v && typeof v === "object" ? (v as Record<string, string>) : undefined;
+}
+
+type IndirizzoView = {
+  azienda: string;
+  destinatario: string;
+  piva: string;
+  via: string;
+  cityLine: string;
+  paese: string;
+  telefono: string;
+  isEmpty: boolean;
+};
+
+function normIndirizzo(raw: Record<string, string> | undefined): IndirizzoView {
+  const a = raw ?? {};
+  const s = (v: unknown) => (v == null ? "" : String(v)).trim();
+  const azienda      = s(a.Azienda) || s(a.Ragione_Sociale);
+  const destinatario = s(a.Destinatario) || `${s(a.Nome)} ${s(a.Cognome)}`.trim();
+  const piva         = s(a.PartitaIVA) || s(a.PIVA) || s(a.Partita_IVA);
+  const via          = [s(a.Via), s(a.Civico)].filter(Boolean).join(" ");
+  const capCitta     = [s(a.CAP), s(a.Citta)].filter(Boolean).join(" ");
+  const cityLine     = [capCitta, s(a.Provincia) ? `(${s(a.Provincia)})` : ""].filter(Boolean).join(" ");
+  return {
+    azienda, destinatario, piva, via, cityLine,
+    paese:    s(a.Paese),
+    telefono: s(a.Telefono),
+    isEmpty:  !(azienda || destinatario || piva || via || cityLine),
+  };
+}
+
+function AddressCard({ title, view, onEdit }: { title: string; view: IndirizzoView; onEdit: () => void }) {
+  const estero = view.paese && !["IT", "ITALIA", "ITALY"].includes(view.paese.toUpperCase());
+  return (
+    <Card padding="sm">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+          {title}
+        </h2>
+        <button onClick={onEdit} className="p-1 rounded-lg hover:bg-[#F1F4F8] transition-colors" title="Modifica indirizzo">
+          <Pencil size={13} style={{ color: "var(--text-muted)" }} />
+        </button>
+      </div>
+      {view.isEmpty ? (
+        <button onClick={onEdit} className="text-sm text-left" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+          Nessun indirizzo · <span style={{ color: "var(--brand)", fontWeight: 600 }}>Aggiungi</span>
+        </button>
+      ) : (
+        <div className="text-sm space-y-0.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
+          {view.azienda && <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{view.azienda}</p>}
+          {view.destinatario && (
+            <p className={view.azienda ? "" : "font-semibold"} style={{ color: view.azienda ? "var(--text-secondary)" : "var(--text-primary)" }}>
+              {view.destinatario}
+            </p>
+          )}
+          {view.piva && <p className="text-xs" style={{ color: "var(--text-muted)" }}>P.IVA {view.piva}</p>}
+          {view.via && <p>{view.via}</p>}
+          {view.cityLine && <p>{view.cityLine}</p>}
+          {estero && <p>{view.paese}</p>}
+          {view.telefono && <p className="text-xs" style={{ color: "var(--text-muted)" }}>Tel. {view.telefono}</p>}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function OrdineAdminDetailPage() {
   const params  = useParams();
   const id      = params.id as string;
@@ -354,8 +429,8 @@ export default function OrdineAdminDetailPage() {
             order_total:   total.toFixed(2),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             order_date:    fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp),
-            fatturazione:  ordine.IndirizzoFatturazione ?? {},
-            spedizione:    ordine.IndirizzoSpedizione ?? {},
+            fatturazione:  rawIndirizzo(ordine, "fatturazione") ?? {},
+            spedizione:    rawIndirizzo(ordine, "spedizione") ?? {},
             products,
             emails,
           }),
@@ -397,8 +472,8 @@ export default function OrdineAdminDetailPage() {
   }
 
   function openEditAddr(tipo: "fatturazione" | "spedizione") {
-    const raw  = tipo === "fatturazione" ? ordine?.IndirizzoFatturazione : ordine?.IndirizzoSpedizione;
-    const addr = raw as Record<string, string> | undefined;
+    if (!ordine) return;
+    const addr = rawIndirizzo(ordine, tipo);
     setAddrForm({
       Destinatario: addr?.Destinatario ?? addr?.Nome ?? "",
       Azienda:      addr?.Azienda ?? "",
@@ -452,11 +527,14 @@ export default function OrdineAdminDetailPage() {
   async function handleSaveAddr() {
     if (!editingAddr || savingAddr) return;
     setSavingAddr(true);
-    const key = editingAddr === "fatturazione" ? "IndirizzoFatturazione" : "IndirizzoSpedizione";
+    // Scriviamo sia camelCase (ordini nuovi / app) sia snake_case (ordini storici /
+    // marketplace / email CF / PDF) così l'indirizzo resta visibile ovunque.
+    const camel = editingAddr === "fatturazione" ? "IndirizzoFatturazione"  : "IndirizzoSpedizione";
+    const snake = editingAddr === "fatturazione" ? "Indirizzo_Fatturazione" : "Indirizzo_Spedizione";
     try {
-      await updateDoc(doc(db, "Ordini", id), { [key]: addrForm });
+      await updateDoc(doc(db, "Ordini", id), { [camel]: addrForm, [snake]: addrForm });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setOrdine((o) => o ? { ...o, [key]: addrForm } as any : o);
+      setOrdine((o) => o ? { ...o, [camel]: addrForm, [snake]: addrForm } as any : o);
       setEditingAddr(null);
       toast.success("Indirizzo aggiornato");
     } catch {
@@ -506,8 +584,8 @@ export default function OrdineAdminDetailPage() {
   const ivaCalc     = baseImpon * 0.22;
   const totaleCalc  = baseImpon + ivaCalc;
 
-  const inFat = ordine.IndirizzoFatturazione;
-  const inSpe = ordine.IndirizzoSpedizione;
+  const inFatView = normIndirizzo(rawIndirizzo(ordine, "fatturazione"));
+  const inSpeView = normIndirizzo(rawIndirizzo(ordine, "spedizione"));
 
   return (
     <div className="space-y-6">
@@ -538,13 +616,13 @@ export default function OrdineAdminDetailPage() {
           </span>
           <Badge variant={statoVariant[ordine.Stato] ?? "neutral"}>{ordine.Stato}</Badge>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-2 flex-wrap">
             <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>Cambia stato:</span>
             <select
               value={ordine.Stato}
               onChange={(e) => handleStatoChange(e.target.value as OrdineStato)}
               disabled={savingStato}
-              className="px-3 py-2 rounded-xl text-sm outline-none font-medium"
+              className="px-3 py-2 rounded-xl text-sm outline-none font-medium flex-1 sm:flex-none"
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
             >
               {STATI.map((s) => (
@@ -572,43 +650,78 @@ export default function OrdineAdminDetailPage() {
             <h2 className="text-base font-bold mb-4" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
               Articoli ({normalized.length})
             </h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
-                <thead>
-                  <tr className="text-left" style={{ borderBottom: "1px solid var(--border)" }}>
-                    {["Prodotto", "Qtà", "Prezzo", "PFU", "Contrib.Log.", "Totale"].map((h) => (
-                      <th key={h} className="pb-3 pr-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
+            {normalized.length === 0 ? (
+              <p className="py-8 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                Nessun articolo
+              </p>
+            ) : (
+              <>
+                {/* Mobile: una card per articolo (la tabella a 6 colonne causava scroll orizzontale) */}
+                <div className="md:hidden space-y-2.5" style={{ fontFamily: "var(--font-montserrat)" }}>
                   {normalized.map((a, i) => (
-                    <tr key={i} className="hover:bg-[#F9FAFB] transition-colors" style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td className="py-3.5 pr-3">
-                        <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{a.marca && `${a.marca} `}{a.titolo}</p>
-                        {a.sku && <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{a.sku}</p>}
-                      </td>
-                      <td className="py-3.5 pr-3" style={{ color: "var(--text-secondary)" }}>{a.qty}</td>
-                      <td className="py-3.5 pr-3" style={{ color: "var(--text-primary)" }}>{euro(a.prezzo)}</td>
-                      <td className="py-3.5 pr-3" style={{ color: "var(--text-muted)" }}>{euro(a.pfu)}</td>
-                      <td className="py-3.5 pr-3" style={{ color: "var(--text-muted)" }}>{euro(a.logistica)}</td>
-                      <td className="py-3.5 font-bold" style={{ color: "var(--text-primary)" }}>
-                        {euro((a.prezzo + a.pfu + a.logistica) * a.qty)}
-                      </td>
-                    </tr>
+                    <div key={i} className="rounded-xl p-3.5" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{a.marca && `${a.marca} `}{a.titolo}</p>
+                          {a.sku && <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{a.sku}</p>}
+                        </div>
+                        <span className="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "#FFF8DC", color: "#111" }}>
+                          ×{a.qty}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mt-3">
+                        {[
+                          { label: "Prezzo",        val: a.prezzo,    strong: true },
+                          { label: "PFU",           val: a.pfu,       strong: false },
+                          { label: "Contrib. Log.", val: a.logistica, strong: false },
+                        ].map(({ label, val, strong }) => (
+                          <div key={label}>
+                            <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{label}</p>
+                            <p className={`text-sm ${strong ? "font-semibold" : ""}`} style={{ color: strong ? "var(--text-primary)" : "var(--text-secondary)" }}>{euro(val)}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+                        <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Totale riga</span>
+                        <span className="font-bold text-sm" style={{ color: "var(--text-primary)" }}>{euro((a.prezzo + a.pfu + a.logistica) * a.qty)}</span>
+                      </div>
+                    </div>
                   ))}
-                  {normalized.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-                        Nessun articolo
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                </div>
+
+                {/* Desktop: tabella */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
+                    <thead>
+                      <tr className="text-left" style={{ borderBottom: "1px solid var(--border)" }}>
+                        {["Prodotto", "Qtà", "Prezzo", "PFU", "Contrib.Log.", "Totale"].map((h) => (
+                          <th key={h} className="pb-3 pr-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {normalized.map((a, i) => (
+                        <tr key={i} className="hover:bg-[#F9FAFB] transition-colors" style={{ borderBottom: "1px solid var(--border)" }}>
+                          <td className="py-3.5 pr-3">
+                            <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{a.marca && `${a.marca} `}{a.titolo}</p>
+                            {a.sku && <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{a.sku}</p>}
+                          </td>
+                          <td className="py-3.5 pr-3" style={{ color: "var(--text-secondary)" }}>{a.qty}</td>
+                          <td className="py-3.5 pr-3" style={{ color: "var(--text-primary)" }}>{euro(a.prezzo)}</td>
+                          <td className="py-3.5 pr-3" style={{ color: "var(--text-muted)" }}>{euro(a.pfu)}</td>
+                          <td className="py-3.5 pr-3" style={{ color: "var(--text-muted)" }}>{euro(a.logistica)}</td>
+                          <td className="py-3.5 font-bold" style={{ color: "var(--text-primary)" }}>
+                            {euro((a.prezzo + a.pfu + a.logistica) * a.qty)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
 
             {normalized.length > 0 && (
               <div className="mt-4 pt-4 space-y-1.5 text-sm" style={{ borderTop: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}>
@@ -618,12 +731,12 @@ export default function OrdineAdminDetailPage() {
                   { label: "Contrib. Logistico",  val: logTotale },
                   { label: "IVA 22%",             val: ordine.IVA ?? ivaCalc },
                 ].map(({ label, val }) => (
-                  <div key={label} className="flex justify-end gap-16">
+                  <div key={label} className="flex justify-end gap-8 sm:gap-16">
                     <span style={{ color: "var(--text-secondary)" }}>{label}</span>
                     <span className="w-24 text-right" style={{ color: "var(--text-primary)" }}>{euro(val)}</span>
                   </div>
                 ))}
-                <div className="flex justify-end gap-16 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+                <div className="flex justify-end gap-8 sm:gap-16 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
                   <span className="font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>Totale</span>
                   <span className="w-24 text-right text-lg font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
                     {euro(ordine.Totale ?? totaleCalc)}
@@ -693,8 +806,8 @@ export default function OrdineAdminDetailPage() {
               <button
                 onClick={handleAddNota}
                 disabled={savingNota || !nuovaNota.trim()}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold self-start disabled:opacity-40"
-                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold self-start disabled:opacity-40 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
               >
                 <Send size={14} />
                 {savingNota ? "…" : "Invia"}
@@ -750,55 +863,8 @@ export default function OrdineAdminDetailPage() {
           </Card>
 
           {/* Indirizzi */}
-          {inFat && (
-            <Card padding="sm">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                  Indirizzo fatturazione
-                </h2>
-                <button
-                  onClick={() => openEditAddr("fatturazione")}
-                  className="p-1 rounded-lg hover:bg-[#F1F4F8] transition-colors"
-                  title="Modifica indirizzo"
-                >
-                  <Pencil size={13} style={{ color: "var(--text-muted)" }} />
-                </button>
-              </div>
-              <div className="text-sm space-y-0.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-                {inFat.Azienda && <p className="font-semibold">{inFat.Azienda}</p>}
-                {inFat.PartitaIVA && <p className="text-xs" style={{ color: "var(--text-muted)" }}>P.IVA {inFat.PartitaIVA}</p>}
-                <p>{inFat.Via} {inFat.Civico}</p>
-                <p>{inFat.CAP} {inFat.Citta} ({inFat.Provincia})</p>
-              </div>
-            </Card>
-          )}
-
-          {inSpe && (
-            <Card padding="sm">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                  Indirizzo spedizione
-                </h2>
-                <button
-                  onClick={() => openEditAddr("spedizione")}
-                  className="p-1 rounded-lg hover:bg-[#F1F4F8] transition-colors"
-                  title="Modifica indirizzo"
-                >
-                  <Pencil size={13} style={{ color: "var(--text-muted)" }} />
-                </button>
-              </div>
-              <div className="text-sm space-y-0.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-                {(inSpe as Record<string, string>).Destinatario && (
-                  <p className="font-semibold">{(inSpe as Record<string, string>).Destinatario}</p>
-                )}
-                <p>{inSpe.Via} {inSpe.Civico}</p>
-                <p>{inSpe.CAP} {inSpe.Citta} ({inSpe.Provincia})</p>
-                {(inSpe as Record<string, string>).Telefono && (
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>{(inSpe as Record<string, string>).Telefono}</p>
-                )}
-              </div>
-            </Card>
-          )}
+          <AddressCard title="Indirizzo fatturazione" view={inFatView} onEdit={() => openEditAddr("fatturazione")} />
+          <AddressCard title="Indirizzo spedizione"  view={inSpeView} onEdit={() => openEditAddr("spedizione")} />
 
           {/* Pagamento */}
           {ordine.Pagamento && (
@@ -845,8 +911,8 @@ export default function OrdineAdminDetailPage() {
                 <button
                   onClick={handleSaveTracking}
                   disabled={savingTracking}
-                  className="px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-40"
-                  style={{ background: "var(--brand)", color: "#111" }}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-40 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                  style={{ background: "var(--brand)", color: "#111", boxShadow: "var(--shadow-brand)" }}
                 >
                   {savingTracking ? "…" : "Salva"}
                 </button>
@@ -1012,8 +1078,8 @@ export default function OrdineAdminDetailPage() {
               <button
                 onClick={handleSaveAddr}
                 disabled={savingAddr}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40"
-                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
               >
                 {savingAddr ? "Salvataggio…" : "Salva"}
               </button>

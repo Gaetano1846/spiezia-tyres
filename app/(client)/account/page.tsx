@@ -357,18 +357,20 @@ export default function AccountPage() {
       </div>
 
       {/* ── Tab content ── */}
-      <div className="px-6 py-6">
+      <div className="px-4 md:px-6 py-6">
 
         {/* ── Ordini ── */}
         {tab === "ordini" && (
           <div
             className="rounded-2xl overflow-hidden"
-            style={{ border: "1px solid #e5e7eb", background: "#fff" }}
+            style={{ border: "1px solid var(--border)", background: "#fff", boxShadow: "var(--shadow-sm)" }}
           >
+            <div className="overflow-x-auto">
             <div
               className="grid px-5 py-3 text-xs font-bold uppercase tracking-widest"
               style={{
                 gridTemplateColumns: "1fr 130px 160px 140px 110px",
+                minWidth: 560,
                 color: "#9ca3af",
                 fontFamily: "var(--font-montserrat)",
                 borderBottom: "1px solid #e5e7eb",
@@ -386,7 +388,7 @@ export default function AccountPage() {
                 <div
                   key={i}
                   className="grid px-5 py-4 gap-4 animate-pulse"
-                  style={{ gridTemplateColumns: "1fr 130px 160px 140px 110px", borderBottom: "1px solid #f3f4f6" }}
+                  style={{ gridTemplateColumns: "1fr 130px 160px 140px 110px", minWidth: 560, borderBottom: "1px solid #f3f4f6" }}
                 >
                   <div className="h-5 w-28 rounded-lg" style={{ background: "#f3f4f6" }} />
                   <div className="h-4 w-20 rounded" style={{ background: "#f3f4f6" }} />
@@ -414,6 +416,7 @@ export default function AccountPage() {
                   className="grid items-center px-5 py-4 hover:bg-[#FFFDF0] transition-colors"
                   style={{
                     gridTemplateColumns: "1fr 130px 160px 140px 110px",
+                    minWidth: 560,
                     borderBottom: "1px solid #f3f4f6",
                   }}
                 >
@@ -440,23 +443,26 @@ export default function AccountPage() {
                   <Link
                     href={`/ordini/${o.id}`}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold"
-                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
                   >
                     Visualizza
                   </Link>
                 </div>
               ))
             )}
+            </div>
           </div>
         )}
 
         {/* ── Download ── */}
         {tab === "download" && (
-          <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid #e5e7eb", background: "#fff" }}>
+          <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)", background: "#fff", boxShadow: "var(--shadow-sm)" }}>
+            <div className="overflow-x-auto">
             <div
               className="grid px-5 py-3 text-xs font-bold uppercase tracking-widest"
               style={{
                 gridTemplateColumns: "160px 1fr 130px 120px",
+                minWidth: 500,
                 color: "#9ca3af",
                 fontFamily: "var(--font-montserrat)",
                 borderBottom: "1px solid #e5e7eb",
@@ -473,7 +479,7 @@ export default function AccountPage() {
                 <div
                   key={i}
                   className="grid px-5 py-4 gap-4 animate-pulse"
-                  style={{ gridTemplateColumns: "160px 1fr 130px 120px", borderBottom: "1px solid #f3f4f6" }}
+                  style={{ gridTemplateColumns: "160px 1fr 130px 120px", minWidth: 500, borderBottom: "1px solid #f3f4f6" }}
                 >
                   <div className="h-5 w-24 rounded-full" style={{ background: "#f3f4f6" }} />
                   <div className="h-4 w-28 rounded" style={{ background: "#f3f4f6" }} />
@@ -495,7 +501,7 @@ export default function AccountPage() {
                 <Link
                   href="/prodotti"
                   className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold mt-2"
-                  style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                  style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
                 >
                   Vai al negozio <ArrowRight size={15} />
                 </Link>
@@ -505,7 +511,7 @@ export default function AccountPage() {
                 <div
                   key={`${item.ordineId}-${idx}`}
                   className="grid items-center px-5 py-4 hover:bg-[#FFFDF0] transition-colors"
-                  style={{ gridTemplateColumns: "160px 1fr 130px 120px", borderBottom: "1px solid #f3f4f6" }}
+                  style={{ gridTemplateColumns: "160px 1fr 130px 120px", minWidth: 500, borderBottom: "1px solid #f3f4f6" }}
                 >
                   <span
                     className="text-xs font-bold px-2.5 py-1 rounded-full inline-block"
@@ -527,13 +533,14 @@ export default function AccountPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold"
-                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", width: "fit-content" }}
+                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)", width: "fit-content" }}
                   >
                     <Download size={12} /> Scarica
                   </a>
                 </div>
               ))
             )}
+            </div>
           </div>
         )}
 
@@ -550,7 +557,7 @@ export default function AccountPage() {
             {loadingIndirizzi ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[1, 2].map((i) => (
-                  <div key={i} className="rounded-2xl p-6 animate-pulse" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
+                  <div key={i} className="rounded-2xl p-6 animate-pulse" style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
                     <div className="h-3 w-40 rounded mb-4" style={{ background: "#f3f4f6" }} />
                     <div className="space-y-2">
                       {[1, 2, 3].map((j) => <div key={j} className="h-3 w-full rounded" style={{ background: "#f3f4f6" }} />)}
@@ -581,7 +588,7 @@ export default function AccountPage() {
         {tab === "dettagli" && (
           <div
             className="rounded-2xl p-6"
-            style={{ background: "#fff", border: "1px solid #e5e7eb" }}
+            style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}
           >
             <h2 className="font-bold text-base mb-6" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
               Dettagli account
@@ -607,7 +614,7 @@ export default function AccountPage() {
                     onClick={handleSaveName}
                     disabled={savingName || editName === displayName}
                     className="px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-40 transition-opacity"
-                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
                   >
                     {savingName ? "…" : "Salva"}
                   </button>
@@ -641,7 +648,7 @@ export default function AccountPage() {
         {tab === "esci" && (
           <div
             className="rounded-2xl py-14 flex flex-col items-center gap-5"
-            style={{ border: "1px solid #e5e7eb", background: "#fff" }}
+            style={{ border: "1px solid var(--border)", background: "#fff", boxShadow: "var(--shadow-sm)" }}
           >
             <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "#FEE2E2" }}>
               <LogOut size={28} style={{ color: "#991B1B" }} />
@@ -703,17 +710,17 @@ export default function AccountPage() {
               <Field label="Azienda (opzionale)" value={form.Azienda ?? ""} onChange={(v) => setForm((f) => ({ ...f, Azienda: v }))} />
 
               {/* Via + Civico */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
                   <Field label="Via / Indirizzo *" value={form.Via ?? ""} onChange={(v) => setForm((f) => ({ ...f, Via: v }))} />
                 </div>
                 <Field label="Civico" value={form.Civico ?? ""} onChange={(v) => setForm((f) => ({ ...f, Civico: v }))} />
               </div>
 
               {/* CAP + Città + Provincia */}
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <Field label="CAP" value={form.CAP ?? ""} onChange={(v) => setForm((f) => ({ ...f, CAP: v }))} />
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <Field label="Città *" value={form.Citta ?? ""} onChange={(v) => setForm((f) => ({ ...f, Citta: v }))} />
                 </div>
                 <Field label="Prov." value={form.Provincia ?? ""} onChange={(v) => setForm((f) => ({ ...f, Provincia: v }))} maxLength={2} />
@@ -753,7 +760,7 @@ export default function AccountPage() {
                 onClick={handleSaveAddress}
                 disabled={saving}
                 className="px-5 py-2.5 rounded-xl text-sm font-bold disabled:opacity-40"
-                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
               >
                 {saving ? "Salvataggio…" : "Salva indirizzo"}
               </button>
@@ -803,7 +810,7 @@ function IndirizzoPanel({
   onModifica: (ind: IndirizzoDoc) => void;
 }) {
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid #e5e7eb", background: "#fff" }}>
+    <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)", background: "#fff", boxShadow: "var(--shadow-sm)" }}>
       <div
         className="flex items-center justify-between px-5 py-3"
         style={{ borderBottom: "1px solid #e5e7eb" }}

@@ -8,9 +8,10 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
-import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown } from "lucide-react";
+import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
+import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import toast from "react-hot-toast";
 import type { Ordine, OrdineStato, OrdineSource } from "@/lib/types";
 
@@ -106,7 +107,7 @@ function formatISOToDisplay(iso: string) {
 
 type Spedizione = {
   id: string;
-  corriere?: string;
+  Corriere?: string;
   parcelId?: string;
   destinationName?: string;
   warehouseStatus?: string;
@@ -186,11 +187,11 @@ function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: 
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
                           className="px-2 py-0.5 rounded-full text-xs font-bold"
-                          style={{ background: s.corriere === "GLS" ? "#003DA5" : "#E8001C", color: "#fff" }}
+                          style={{ background: s.Corriere === "GLS" ? "#003DA5" : "#E8001C", color: "#fff" }}
                         >
-                          {s.corriere ?? "—"}
+                          {s.Corriere ?? "—"}
                         </span>
-                        {s.corriere === "GLS" && s.contractIndex != null && (
+                        {s.Corriere === "GLS" && s.contractIndex != null && (
                           <span className="text-xs font-semibold" style={{ color: "#6b7280" }}>
                             {SEDE[s.contractIndex] ?? `Sede ${s.contractIndex}`}
                           </span>
@@ -248,26 +249,26 @@ export default function OrdiniAdminPage() {
 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const datePickerRef = useRef<HTMLDivElement>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [spedizioneModal, setSpedizioneModal] = useState<{ docId: string; orderId: string } | null>(null);
+
+  // Card mobile espandibili (tendina) — set dei docId aperti
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  function toggleOrderDetails(id: string) {
+    setExpandedOrders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   const [savingStato, setSavingStato] = useState<string | null>(null);
   const [annullaModal, setAnnullaModal] = useState<{ docId: string; orderId: string } | null>(null);
   const [motivoAnnulla, setMotivoAnnulla] = useState("");
   const [annullando, setAnnullando] = useState(false);
   const { user } = useAuth();
-
-  // Close date picker on outside click
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
-        setShowDatePicker(false);
-      }
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   // Re-fetch whenever the date range changes — server-side date filter for accuracy
@@ -302,7 +303,11 @@ export default function OrdiniAdminPage() {
         });
 
         const ordini = ordiniSnap.docs
-          .map((d) => ({ docId: d.id, ordine: { ...d.data(), id: (d.data() as Record<string, unknown>).id ?? d.id } as Ordine }))
+          .map((d) => {
+            const data = d.data() as Record<string, unknown>;
+            // Numero ordine: campo schema "ID"; fallback su "id" legacy e infine sul doc id
+            return { docId: d.id, ordine: { ...data, id: data.ID ?? data.id ?? d.id } as Ordine };
+          })
           .sort((a, b) => (getTs(b.ordine)?.toMillis() ?? 0) - (getTs(a.ordine)?.toMillis() ?? 0));
 
         const clienteRefs = ordini.map(({ ordine: o }) => o.Cliente).filter(Boolean) as DocumentReference[];
@@ -316,10 +321,12 @@ export default function OrdiniAdminPage() {
           let clienteNome = "—";
           if (ordine.Cliente) {
             const c = clientiMap.get(ordine.Cliente.path);
-            if (c) clienteNome = String(c.Ragione_Sociale || c.Nome || "").trim() || String(c.Azienda || "").trim() || "—";
+            // Azienda è un booleano nello schema Clienti → non usarlo come nome
+            if (c) clienteNome = String(c.Ragione_Sociale || c.Nome || "").trim() || "—";
           } else if (ordine.Utente) {
             const u = utentiMap.get(ordine.Utente.path);
-            if (u) clienteNome = String(u.displayName || u.email || "—");
+            // Campo reale users: display_name (snake_case); displayName tenuto come fallback legacy
+            if (u) clienteNome = String(u.display_name || u.displayName || u.email || "—");
           }
           return { ordine, clienteNome, docId };
         });
@@ -502,12 +509,12 @@ export default function OrdiniAdminPage() {
   ];
 
   return (
-    <div className="px-5 py-5 space-y-6">
+    <div className="px-0 md:px-5 py-3 md:py-5 space-y-2.5 md:space-y-6">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+          <h1 className="text-xl md:text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
             Ordini
           </h1>
           <p className="text-sm mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
@@ -525,25 +532,25 @@ export default function OrdiniAdminPage() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 md:gap-4">
         {kpiCards.map(({ label, value, accent }) => (
           <div
             key={label}
-            className="rounded-2xl p-5"
+            className="rounded-xl md:rounded-2xl p-2.5 md:p-5"
             style={{ background: "#fff", border: "1px solid #e5e7eb" }}
           >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+            <div className="flex items-center justify-between mb-0.5 md:mb-2">
+              <span className="text-[9px] md:text-[10px] font-bold uppercase tracking-wider leading-tight" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
                 {label}
               </span>
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accent}22` }}>
-                <ShoppingBag size={14} style={{ color: accent }} />
+              <div className="w-5 h-5 md:w-7 md:h-7 rounded-md md:rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${accent}22` }}>
+                <ShoppingBag className="w-3 h-3 md:w-3.5 md:h-3.5" style={{ color: accent }} />
               </div>
             </div>
             {loading ? (
-              <div className="h-8 w-14 rounded animate-pulse" style={{ background: "#f3f4f6" }} />
+              <div className="h-6 md:h-8 w-12 md:w-14 rounded animate-pulse" style={{ background: "#f3f4f6" }} />
             ) : (
-              <p className="text-3xl font-black" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+              <p className="text-lg md:text-3xl font-black leading-none" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
                 {value}
               </p>
             )}
@@ -551,9 +558,11 @@ export default function OrdiniAdminPage() {
         ))}
       </div>
 
-      {/* Filter bar */}
-      <div className="flex gap-2 flex-wrap items-center">
-        <div className="relative flex-1 min-w-48">
+      {/* Filter bar — ricerca + reset.
+          Su desktop Fonte/Stato sono nell'intestazione tabella; su mobile in un pannello collassabile. */}
+      <div className="space-y-2">
+       <div className="flex gap-2 items-center flex-wrap">
+        <div className="relative flex-1 min-w-[150px]">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
           <input
             value={search}
@@ -563,6 +572,37 @@ export default function OrdiniAdminPage() {
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
           />
         </div>
+
+        {/* Desktop: reset filtri a destra */}
+        {hasExtraFilters && (
+          <button onClick={reset}
+            className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white ml-auto"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+            <RefreshCw size={13} /> Reset
+          </button>
+        )}
+
+        {/* Mobile: toggle Filtri */}
+        <button onClick={() => setShowFilters((v) => !v)}
+          className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold flex-shrink-0 transition-colors"
+          style={{ background: showFilters ? "#FFC803" : "var(--bg-primary)", border: "1px solid var(--border)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+          <SlidersHorizontal size={14} /> Filtri
+          {(() => { const n = [fonte, stato].filter(Boolean).length; return n > 0 ? (
+            <span className="w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: "#111", color: "#FFC803" }}>{n}</span>
+          ) : null; })()}
+          <ChevronDown size={14} style={{ transform: showFilters ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+        </button>
+        {hasExtraFilters && (
+          <button onClick={reset}
+            className="md:hidden flex items-center gap-1 px-3 py-2 rounded-xl text-sm flex-shrink-0"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+            <X size={13} />
+          </button>
+        )}
+       </div>
+
+       {/* Mobile: pannello filtri collassabile (Fonte · Stato) */}
+       <div className={`${showFilters ? "flex" : "hidden"} md:hidden gap-2 flex-wrap items-center`}>
         <select value={fonte} onChange={(e) => setFonte(e.target.value)}
           className="px-3 py-2 rounded-xl text-sm outline-none"
           style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
@@ -575,12 +615,7 @@ export default function OrdiniAdminPage() {
           <option value="">Tutti gli stati</option>
           {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        {hasExtraFilters && (
-          <button onClick={reset} className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
-            <X size={13} />
-          </button>
-        )}
+       </div>
       </div>
 
       {/* Stats bar — fatturato + contatore + date range picker */}
@@ -618,18 +653,19 @@ export default function OrdiniAdminPage() {
             {dateRangeLabel}
           </button>
 
-          {showDatePicker && (
-            <div
-              className="absolute top-full left-0 mt-1.5 rounded-2xl shadow-2xl z-30 overflow-hidden"
-              style={{ background: "#fff", border: "1px solid #e5e7eb" }}
-            >
-              <CalendarRangePicker
-                dataDa={dataDa}
-                dataA={dataA}
-                onChange={(da, a) => { setDataDa(da); setDataA(a); }}
-              />
-            </div>
-          )}
+          <AnchoredPopover
+            open={showDatePicker}
+            onClose={() => setShowDatePicker(false)}
+            anchorRef={datePickerRef}
+            width={320}
+            align="right"
+          >
+            <CalendarRangePicker
+              dataDa={dataDa}
+              dataA={dataA}
+              onChange={(da, a) => { setDataDa(da); setDataA(a); }}
+            />
+          </AnchoredPopover>
         </div>
 
         {/* Reset — torna ad oggi */}
@@ -703,7 +739,9 @@ export default function OrdiniAdminPage() {
             ))}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* ── Tabella — desktop ── */}
+          <div className="overflow-x-auto hidden md:block">
             <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
               <thead>
                 <tr style={{ background: "#f9fafb", borderBottom: "2px solid #e5e7eb" }}>
@@ -720,10 +758,51 @@ export default function OrdiniAdminPage() {
                       {someSelected && <div style={{ width: 8, height: 2, background: "#FFC803", borderRadius: 1 }} />}
                     </button>
                   </th>
-                  {["ID", "Cliente", "Fonte", "Data", "Stato", "Sped", "Totale"].map((h) => (
-                    <th key={h} className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
-                      style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                      {h}
+                  {/* ID, Cliente — etichette pill grigie */}
+                  {["ID", "Cliente"].map((h) => (
+                    <th key={h} className="px-3 py-3 text-left whitespace-nowrap">
+                      <span className="inline-block px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                        style={{ background: "#eceef1", color: "#4b5563", fontFamily: "var(--font-montserrat)" }}>
+                        {h}
+                      </span>
+                    </th>
+                  ))}
+
+                  {/* Fonte — filtro embeddato allineato alla colonna */}
+                  <th className="px-3 py-3">
+                    <select value={fonte} onChange={(e) => setFonte(e.target.value)} title="Filtra per fonte"
+                      className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
+                      style={{ background: fonte ? "#FFF8DC" : "#fff", border: `1px solid ${fonte ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                      <option value="">Fonte</option>
+                      {FONTI.map((f) => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </th>
+
+                  {/* Data — etichetta pill grigia */}
+                  <th className="px-3 py-3 text-left whitespace-nowrap">
+                    <span className="inline-block px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                      style={{ background: "#eceef1", color: "#4b5563", fontFamily: "var(--font-montserrat)" }}>
+                      Data
+                    </span>
+                  </th>
+
+                  {/* Stato — filtro embeddato allineato alla colonna */}
+                  <th className="px-3 py-3">
+                    <select value={stato} onChange={(e) => setStato(e.target.value as OrdineStato | "")} title="Filtra per stato"
+                      className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
+                      style={{ background: stato ? "#FFF8DC" : "#fff", border: `1px solid ${stato ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                      <option value="">Stato</option>
+                      {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </th>
+
+                  {/* Sped, Totale — etichette pill grigie */}
+                  {["Sped", "Totale"].map((h) => (
+                    <th key={h} className="px-3 py-3 text-left whitespace-nowrap">
+                      <span className="inline-block px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                        style={{ background: "#eceef1", color: "#4b5563", fontFamily: "var(--font-montserrat)" }}>
+                        {h}
+                      </span>
                     </th>
                   ))}
                   <th className="px-3 py-3 w-10" />
@@ -848,6 +927,121 @@ export default function OrdiniAdminPage() {
               </tbody>
             </table>
           </div>
+
+          {/* ── Card — mobile ── */}
+          <div className="md:hidden">
+            {/* Seleziona tutti */}
+            <div className="flex items-center gap-2.5 px-3 py-2.5" style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+              <button
+                onClick={toggleSelectAll}
+                className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                style={{
+                  background: allSelected ? "#FFC803" : someSelected ? "#FFF8DC" : "#fff",
+                  border: `1.5px solid ${(allSelected || someSelected) ? "#FFC803" : "#d1d5db"}`,
+                }}
+              >
+                {allSelected && <Check size={13} style={{ color: "#111" }} />}
+                {someSelected && <div style={{ width: 8, height: 2, background: "#FFC803", borderRadius: 1 }} />}
+              </button>
+              <span className="text-xs font-semibold" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                Seleziona tutti
+              </span>
+            </div>
+
+            {filtered.length === 0 ? (
+              <div className="py-14 text-center text-sm" style={{ color: "#9ca3af" }}>Nessun ordine trovato.</div>
+            ) : (
+              filtered.map(({ ordine, clienteNome, docId }) => {
+                const isSelected = selectedIds.has(docId);
+                const cur = ordine.Stato as OrdineStato;
+                const pill = STATO_PILL[cur] ?? { bg: "#F3F4F6", text: "#4B5563", border: "#D1D5DB" };
+                const isSaving = savingStato === docId;
+                const isReadOnly = STATI_READONLY.has(cur);
+                const isOpen = expandedOrders.has(docId);
+                return (
+                  <div key={docId} className="p-3" style={{ borderBottom: "1px solid #f3f4f6", background: isSelected ? "#FFFDF0" : undefined }}>
+                    {/* ID + Totale */}
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        onClick={() => toggleSelect(docId)}
+                        className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                        style={{ background: isSelected ? "#FFC803" : "#fff", border: `1.5px solid ${isSelected ? "#FFC803" : "#d1d5db"}` }}
+                      >
+                        {isSelected && <Check size={13} style={{ color: "#111" }} />}
+                      </button>
+                      <span className="text-sm font-bold flex-1 min-w-0 truncate" style={{ color: "#111" }}>{ordine.id}</span>
+                      <span className="text-sm font-bold flex-shrink-0" style={{ color: "#111" }}>{formatEuro(ordine.Totale)}</span>
+                    </div>
+
+                    {/* Cliente */}
+                    <p className="text-xs mt-1.5 truncate" style={{ color: "#374151" }}>{clienteNome}</p>
+
+                    {/* Stato + toggle tendina */}
+                    <div className="flex items-center gap-2 mt-2.5">
+                      <div className="relative flex-1">
+                        <select
+                          value={cur}
+                          disabled={isSaving || isReadOnly}
+                          onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine.id ?? docId)}
+                          className="appearance-none w-full pl-2.5 pr-7 py-1.5 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                          style={{ background: pill.bg, color: pill.text, border: `1px solid ${pill.border}`, fontFamily: "var(--font-montserrat)", outline: "none" }}
+                        >
+                          {isReadOnly && <option value={cur}>{cur}</option>}
+                          {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: pill.text }} />
+                      </div>
+                      <button
+                        onClick={() => toggleOrderDetails(docId)}
+                        aria-expanded={isOpen}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors hover:bg-gray-100 flex-shrink-0"
+                        style={{ border: "1px solid #e5e7eb", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+                      >
+                        {isOpen ? "Nascondi" : "Dettagli"}
+                        <ChevronDown size={12} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+                      </button>
+                    </div>
+
+                    {/* Tendina dettagli — info aggiuntive */}
+                    {isOpen && (
+                      <div className="mt-2 pt-2 flex flex-col gap-2.5" style={{ borderTop: "1px dashed #e5e7eb" }}>
+                        {/* Fonte + Data */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Fonte</span>
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] font-bold"
+                            style={{ background: FONTE_COLORS[ordine.Source]?.bg ?? "#E8E8E8", color: FONTE_COLORS[ordine.Source]?.text ?? "#374151" }}
+                          >
+                            {ordine.Source}
+                          </span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider ml-1" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Data</span>
+                          <span className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>{formatData(getTs(ordine))}</span>
+                        </div>
+                        {/* Azioni */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            onClick={() => setSpedizioneModal({ docId, orderId: ordine.id ?? docId })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors hover:bg-[#f3f4f6]"
+                            style={{ border: "1px solid #e5e7eb", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+                          >
+                            <Truck size={14} /> Spedizioni
+                          </button>
+                          <Link
+                            href={`/admin/ordini/${docId}`}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors hover:bg-[#FFF8DC]"
+                            style={{ border: "1px solid #e5e7eb", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+                          >
+                            <Eye size={14} /> Dettagli ordine
+                          </Link>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          </>
         )}
       </div>
 

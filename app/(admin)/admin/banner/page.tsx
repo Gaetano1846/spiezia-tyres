@@ -97,7 +97,7 @@ export default function BannerPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Banner</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
@@ -107,8 +107,8 @@ export default function BannerPage() {
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold disabled:opacity-60 hover:opacity-80 transition-opacity"
-          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold disabled:opacity-60 hover:opacity-80 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
         >
           {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
           {uploading ? "Caricamento…" : "Carica immagine"}

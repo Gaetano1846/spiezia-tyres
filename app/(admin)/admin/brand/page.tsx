@@ -152,7 +152,7 @@ export default function BrandPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Brand</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
@@ -161,8 +161,8 @@ export default function BrandPage() {
         </div>
         <button
           onClick={() => openModal()}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-opacity"
-          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold hover:opacity-80 transition-all hover:brightness-[1.04] active:scale-[.98]"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
         >
           <Plus size={15} /> Aggiungi brand
         </button>
@@ -232,7 +232,7 @@ export default function BrandPage() {
           style={{ background: "rgba(0,0,0,0.45)" }}
           onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
           <div className="w-full max-w-md rounded-2xl overflow-hidden"
-            style={{ background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            style={{ background: "#fff", boxShadow: "var(--shadow-xl)" }}>
 
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4"
@@ -327,8 +327,8 @@ export default function BrandPage() {
                   Annulla
                 </button>
                 <button onClick={handleSave} disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-opacity"
-                  style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold hover:opacity-80 disabled:opacity-60 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                  style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}>
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                   {saving ? "Salvataggio…" : "Salva"}
                 </button>

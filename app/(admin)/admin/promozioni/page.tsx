@@ -121,7 +121,7 @@ function SearchableMultiSelect({
       {open && (
         <div className="relative z-40">
           <div className="absolute top-1 left-0 right-0 rounded-xl overflow-hidden"
-            style={{ background: "#fff", border: "1px solid #e5e7eb", boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+            style={{ background: "#fff", border: "1px solid #e5e7eb", boxShadow: "var(--shadow-md)" }}>
             <div className="px-2 pt-2">
               <input
                 autoFocus
@@ -254,7 +254,7 @@ function ClientiDropdown({
       {open && (
         <div className="relative z-40">
           <div className="absolute top-1 left-0 right-0 rounded-xl overflow-hidden"
-            style={{ background: "#fff", border: "1px solid #e5e7eb", boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+            style={{ background: "#fff", border: "1px solid #e5e7eb", boxShadow: "var(--shadow-md)" }}>
             <div className="px-2 pt-2">
               <input
                 autoFocus
@@ -464,7 +464,7 @@ export default function PromozioniPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Promozioni</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
@@ -473,8 +473,8 @@ export default function PromozioniPage() {
         </div>
         <button
           onClick={() => openModal()}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-80"
-          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all hover:opacity-80 hover:brightness-[1.04] active:scale-[.98]"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
         >
           <Plus size={15} /> Nuova promozione
         </button>
@@ -500,7 +500,7 @@ export default function PromozioniPage() {
             ))}
           </div>
 
-          <div className="flex-1 min-w-40 relative">
+          <div className="flex-1 min-w-[150px] relative">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
             <input
               value={search}
@@ -522,88 +522,146 @@ export default function PromozioniPage() {
           )}
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
-            <thead>
-              <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                {["Brand applicati", "Tipo sconto", "Sconto", "Clienti inclusi", "Scadenza", "Stato", ""].map((h, i) => (
-                  <th key={i} className="pb-2.5 pr-4 text-left text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i}>
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <td key={j} className="py-3 pr-4">
-                        <div className="h-3.5 rounded animate-pulse" style={{ background: "var(--border)", width: "70%" }} />
-                      </td>
+        {/* Lista promozioni */}
+        {loading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-12 rounded-xl animate-pulse" style={{ background: "var(--bg-primary)" }} />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-10 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+            Nessuna promozione trovata.
+          </div>
+        ) : (
+          <>
+            {/* Mobile: lista a card (la tabella su schermo stretto tagliava le colonne) */}
+            <div className="md:hidden space-y-2.5">
+              {filtered.map((p) => {
+                const importoVal = p.Importo ?? p.Sconto ?? 0;
+                return (
+                  <div
+                    key={p.id}
+                    className="rounded-xl p-3.5"
+                    style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-baseline gap-2 min-w-0">
+                        <span className="text-base font-bold" style={{ color: "var(--text-primary)" }}>
+                          {p.Fisso ? `€ ${importoVal}` : `${importoVal}%`}
+                        </span>
+                        <span className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                          {p.Fisso ? "importo fisso" : "percentuale"}
+                        </span>
+                      </div>
+                      <Badge variant={statoVariant[p._stato] ?? "neutral"}>{p._stato}</Badge>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {(p.Brand_Nome ?? []).length > 0 ? (
+                        p.Brand_Nome.map((b) => (
+                          <span key={b} className="px-2 py-0.5 rounded-full text-xs font-medium"
+                            style={{ background: "#f3f4f6", color: "#374151" }}>{b}</span>
+                        ))
+                      ) : (
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>Tutte le marche</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      <span>{clientiLabel(p.Clienti ?? [])}</span>
+                      <span style={{ color: "var(--text-muted)" }}>·</span>
+                      <span>Scad. {formatScadenza(p.Scadenza)}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-3">
+                      <button
+                        onClick={() => openModal(p)}
+                        className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
+                        style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+                      >
+                        <Pencil size={13} /> Modifica
+                      </button>
+                      <button
+                        onClick={() => handleDelete(p.id)}
+                        className="flex items-center justify-center px-3 py-2 rounded-lg"
+                        style={{ color: "#DC2626", border: "1px solid var(--border)" }}
+                        aria-label="Elimina"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop: tabella */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
+                <thead>
+                  <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                    {["Brand applicati", "Tipo sconto", "Sconto", "Clienti inclusi", "Scadenza", "Stato", ""].map((h, i) => (
+                      <th key={i} className="pb-2.5 pr-4 text-left text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+                        {h}
+                      </th>
                     ))}
                   </tr>
-                ))
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-                    Nessuna promozione trovata.
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((p) => {
-                  const importoVal = p.Importo ?? p.Sconto ?? 0;
-                  return (
-                    <tr key={p.id} className="border-t hover:bg-[#FFFDF0] transition-colors" style={{ borderColor: "var(--border)" }}>
-                      <td className="py-3 pr-4">
-                        <div className="flex flex-wrap gap-1">
-                          {(p.Brand_Nome ?? []).length > 0 ? (
-                            p.Brand_Nome.map((b) => (
-                              <span key={b} className="px-2 py-0.5 rounded-full text-xs font-medium"
-                                style={{ background: "#f3f4f6", color: "#374151" }}>{b}</span>
-                            ))
-                          ) : (
-                            <span className="text-xs" style={{ color: "var(--text-muted)" }}>Tutte le marche</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
-                        {p.Fisso ? "€ fisso" : "% percentuale"}
-                      </td>
-                      <td className="py-3 pr-4 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                        {p.Fisso ? `€ ${importoVal}` : `${importoVal}%`}
-                      </td>
-                      <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
-                        {clientiLabel(p.Clienti ?? [])}
-                      </td>
-                      <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
-                        {formatScadenza(p.Scadenza)}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <Badge variant={statoVariant[p._stato] ?? "neutral"}>{p._stato}</Badge>
-                      </td>
-                      <td className="py-3">
-                        <div className="flex items-center gap-1.5">
-                          <button onClick={() => openModal(p)}
-                            className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
-                            style={{ border: "1px solid var(--border)" }}>
-                            <Pencil size={13} style={{ color: "var(--text-secondary)" }} />
-                          </button>
-                          <button onClick={() => handleDelete(p.id)}
-                            className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                            style={{ border: "1px solid var(--border)" }}>
-                            <Trash2 size={13} style={{ color: "#DC2626" }} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {filtered.map((p) => {
+                    const importoVal = p.Importo ?? p.Sconto ?? 0;
+                    return (
+                      <tr key={p.id} className="border-t hover:bg-[#FFFDF0] transition-colors" style={{ borderColor: "var(--border)" }}>
+                        <td className="py-3 pr-4">
+                          <div className="flex flex-wrap gap-1">
+                            {(p.Brand_Nome ?? []).length > 0 ? (
+                              p.Brand_Nome.map((b) => (
+                                <span key={b} className="px-2 py-0.5 rounded-full text-xs font-medium"
+                                  style={{ background: "#f3f4f6", color: "#374151" }}>{b}</span>
+                              ))
+                            ) : (
+                              <span className="text-xs" style={{ color: "var(--text-muted)" }}>Tutte le marche</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+                          {p.Fisso ? "€ fisso" : "% percentuale"}
+                        </td>
+                        <td className="py-3 pr-4 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                          {p.Fisso ? `€ ${importoVal}` : `${importoVal}%`}
+                        </td>
+                        <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+                          {clientiLabel(p.Clienti ?? [])}
+                        </td>
+                        <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+                          {formatScadenza(p.Scadenza)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Badge variant={statoVariant[p._stato] ?? "neutral"}>{p._stato}</Badge>
+                        </td>
+                        <td className="py-3">
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => openModal(p)}
+                              className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                              style={{ border: "1px solid var(--border)" }}>
+                              <Pencil size={13} style={{ color: "var(--text-secondary)" }} />
+                            </button>
+                            <button onClick={() => handleDelete(p.id)}
+                              className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                              style={{ border: "1px solid var(--border)" }}>
+                              <Trash2 size={13} style={{ color: "#DC2626" }} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </Card>
 
       {/* ── Modal Nuova/Modifica Promozione ── */}
@@ -612,7 +670,7 @@ export default function PromozioniPage() {
           style={{ background: "rgba(0,0,0,0.45)" }}
           onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
           <div className="w-full max-w-2xl rounded-2xl overflow-hidden flex flex-col"
-            style={{ background: "#fff", maxHeight: "90vh", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            style={{ background: "#fff", maxHeight: "90vh", boxShadow: "var(--shadow-xl)" }}>
 
             {/* Modal header */}
             <div className="flex items-center justify-between px-6 py-4"
@@ -744,8 +802,8 @@ export default function PromozioniPage() {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-60"
-                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all hover:opacity-80 disabled:opacity-60 hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+                style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                 {saving ? "Salvataggio…" : "Salva"}

@@ -147,21 +147,21 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
 
         {/* ── Barra contatti (gialla) ── */}
         <div
-          className="flex items-center justify-between px-5 py-1.5 text-xs"
+          className="flex items-center justify-between px-3 sm:px-5 py-1 sm:py-1.5 text-xs"
           style={{ background: "#FFC803", fontFamily: "var(--font-montserrat)" }}
         >
-          <div className="flex items-center gap-5" style={{ color: "#111" }}>
+          <div className="flex items-center gap-3 sm:gap-5 min-w-0" style={{ color: "#111" }}>
             <a href="tel:+390815115011" className="flex items-center gap-1.5 font-semibold hover:opacity-70 transition-opacity">
-              <Phone size={11} /> +39 081 511 5011
+              <Phone size={11} className="flex-shrink-0" /> <span className="hidden sm:inline">+39 081 511 5011</span>
             </a>
             <a href="https://wa.me/390351009337" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-semibold hover:opacity-70 transition-opacity">
-              <MessageCircle size={11} /> +39 351 009 3370
+              <MessageCircle size={11} className="flex-shrink-0" /> <span className="hidden sm:inline">+39 351 009 3370</span>
             </a>
-            <a href="mailto:b2b@spieziatyres.it" className="flex items-center gap-1.5 font-semibold hover:opacity-70 transition-opacity">
-              <Mail size={11} /> b2b@spieziatyres.it
+            <a href="mailto:b2b@spieziatyres.it" className="flex items-center gap-1.5 font-semibold hover:opacity-70 transition-opacity min-w-0">
+              <Mail size={11} className="flex-shrink-0" /> <span className="hidden sm:inline truncate">b2b@spieziatyres.it</span>
             </a>
           </div>
-          <div className="flex items-center gap-3" style={{ color: "#111" }}>
+          <div className="flex items-center gap-3 flex-shrink-0" style={{ color: "#111" }}>
             <Link href="/notifiche" className="relative p-0.5">
               <Bell size={14} />
               {notifCount > 0 && (
@@ -179,7 +179,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
 
         {/* ── Header principale — riga 1 ── */}
         <div
-          className="flex items-center gap-3 px-5 py-2.5"
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2 sm:py-2.5"
           style={{ background: "#fff", borderBottom: "none" }}
         >
           {/* Sinistra: hamburger + CRM */}
@@ -190,7 +190,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
             {hasCRM && (
               <Link
                 href="/dashboard"
-                className="text-xs font-bold px-3 py-1.5 rounded-full hover:opacity-80 transition-opacity"
+                className="text-xs font-bold px-3 py-1 sm:py-1.5 rounded-full hover:opacity-80 transition-opacity"
                 style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
               >
                 CRM
@@ -198,9 +198,11 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
             )}
           </div>
 
+          {/* Spaziatore — solo mobile (il cluster Ricerca Avanzata è nascosto) */}
+          <div className="flex-1 md:hidden" />
 
-          {/* Centro: Ricerca Avanzata — sempre visibile */}
-          <div className="flex-1 flex items-center justify-center gap-2 flex-wrap">
+          {/* Centro: Ricerca Avanzata — da tablet in su */}
+          <div className="hidden md:flex flex-1 items-center justify-center gap-2 flex-wrap">
             <span className="text-xs font-semibold hidden md:inline" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
               Ricerca Avanzata:
             </span>
@@ -271,22 +273,46 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
           </div>
         </div>
 
+        {/* ── Ricerca Avanzata — riga dedicata solo su mobile ── */}
+        <div
+          className="md:hidden flex items-center gap-1.5 px-3 pb-1.5 pt-0 overflow-x-auto no-scrollbar"
+          style={{ background: "#fff" }}
+        >
+          <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+            Ricerca:
+          </span>
+          {([
+            ["pneumatici", "Pneumatici"],
+            ["cerchi", "Cerchi"],
+            ["camere", "Camere D'Aria"],
+          ] as [ModalTipo, string][]).map(([tipo, label]) => (
+            <button
+              key={tipo}
+              onClick={() => openModal(tipo)}
+              className="text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors flex-shrink-0 active:bg-[#FFC803]"
+              style={{ border: "1.5px solid #FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         {/* ── Filtri rapidi (nascosti su homepage e prodotti) ── */}
         {showSearch && (
           <div
-            className="flex items-center gap-2 px-5 pb-3 pt-1 flex-wrap"
+            className="flex items-center gap-2 px-3 sm:px-5 pb-2 sm:pb-3 pt-0 sm:pt-1 overflow-x-auto no-scrollbar"
             style={{ background: "#fff", borderBottom: "1px solid #e5e7eb" }}
           >
             {/* Campo testo */}
-            <div className="relative flex-shrink-0">
+            <div className="relative flex-shrink-0 w-40">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "#9ca3af" }} />
               <input
                 value={cerca}
                 onChange={(e) => setCerca(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleHeaderSearch()}
                 placeholder="Cerca..."
-                className="pl-8 pr-3 py-2 text-sm outline-none rounded-xl"
-                style={{ width: 160, border: "1.5px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
+                className="w-full pl-8 pr-3 py-2 text-sm outline-none rounded-xl"
+                style={{ border: "1.5px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
               />
             </div>
 
@@ -319,7 +345,8 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
                 <button
                   key={s.key}
                   onClick={() => toggleStagione(s.key)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all flex-shrink-0"
+                  title={s.label}
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-semibold transition-all flex-shrink-0"
                   style={{
                     border: `1.5px solid ${active ? "#FFC803" : "#e5e7eb"}`,
                     background: active ? "#FFF8DC" : "#fff",
@@ -330,7 +357,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
                   {s.icon === "flame"     && <Flame     size={12} style={{ color: active ? "#EF4444" : "#9ca3af" }} />}
                   {s.icon === "4stagioni" && <Image src="/icon-4stagioni.png" width={12} height={12} alt="4 stagioni" unoptimized />}
                   {s.icon === "snowflake" && <Snowflake size={12} style={{ color: active ? "#3B82F6" : "#9ca3af" }} />}
-                  {s.label}
+                  <span className="hidden sm:inline">{s.label}</span>
                 </button>
               );
             })}

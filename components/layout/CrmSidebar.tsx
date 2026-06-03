@@ -7,7 +7,7 @@ import { useAuth } from "@/components/layout/AuthProvider";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import toast from "react-hot-toast";
-import { LayoutDashboard, Users, FileText, Wrench, LogOut, ArrowLeft, Calendar, Bell } from "lucide-react";
+import { LayoutDashboard, Users, FileText, Wrench, LogOut, ArrowLeft, Calendar, Bell, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -19,7 +19,9 @@ const NAV = [
   { href: "/notifiche",       label: "Notifiche",       icon: Bell },
 ];
 
-export default function CrmSidebar() {
+type Props = { open?: boolean; onClose?: () => void };
+
+export default function CrmSidebar({ open = false, onClose }: Props) {
   const pathname = usePathname();
   const router   = useRouter();
   const { user } = useAuth();
@@ -37,21 +39,39 @@ export default function CrmSidebar() {
   const initial = (user?.displayName || user?.email || "?")[0].toUpperCase();
 
   return (
-    <aside
-      className="fixed inset-y-0 left-0 w-[260px] flex flex-col z-30"
-      style={{ background: "#fff", borderRight: "1px solid var(--border)" }}
-    >
-      {/* Logo */}
-      <div className="flex items-center justify-center py-6 px-6" style={{ borderBottom: "1px solid var(--border)" }}>
-        <Image
-          src="/logo-spiezia.png"
-          alt="Spiezia Tyres S.R.L."
-          width={140}
-          height={44}
-          className="object-contain"
-          unoptimized
-        />
-      </div>
+    <>
+      {/* Backdrop — solo mobile, quando aperto */}
+      {open && (
+        <div className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={onClose} />
+      )}
+
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 w-[260px] flex flex-col z-50 transition-transform duration-[250ms] md:translate-x-0 md:z-30",
+          open ? "translate-x-0" : "-translate-x-full",
+        )}
+        style={{ background: "#fff", borderRight: "1px solid var(--border)" }}
+      >
+        {/* Close — solo mobile */}
+        <button
+          onClick={onClose}
+          className="md:hidden absolute top-3 right-3 p-1.5 rounded-lg hover:bg-[#F1F4F8] transition-colors z-10"
+          aria-label="Chiudi menu"
+        >
+          <X size={20} style={{ color: "#111" }} />
+        </button>
+
+        {/* Logo */}
+        <div className="flex items-center justify-center py-6 px-6" style={{ borderBottom: "1px solid var(--border)" }}>
+          <Image
+            src="/logo-spiezia.png"
+            alt="Spiezia Tyres S.R.L."
+            width={140}
+            height={44}
+            className="object-contain"
+            unoptimized
+          />
+        </div>
 
       {/* User card */}
       <div className="flex flex-col items-center pt-7 pb-6 px-6" style={{ borderBottom: "1px solid var(--border)" }}>
@@ -82,6 +102,7 @@ export default function CrmSidebar() {
             <Link
               key={href}
               href={href}
+              onClick={onClose}
               className={cn(
                 "flex items-center justify-center gap-2.5 w-full py-3 rounded-full text-sm font-semibold transition-all",
                 active
@@ -105,6 +126,7 @@ export default function CrmSidebar() {
       <div className="px-5 py-5 space-y-2" style={{ borderTop: "1px solid var(--border)" }}>
         <Link
           href="/"
+          onClick={onClose}
           className="flex items-center justify-center gap-2 w-full py-2.5 rounded-full text-sm font-medium transition-all hover:bg-[#F1F4F8]"
           style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)", border: "1.5px solid var(--border)" }}
         >
@@ -120,6 +142,7 @@ export default function CrmSidebar() {
           Esci
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

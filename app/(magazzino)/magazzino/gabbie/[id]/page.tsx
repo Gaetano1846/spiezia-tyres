@@ -268,9 +268,9 @@ export default function GabbiaPage() {
 
   if (loading) {
     return (
-      <div className="px-5 py-5 space-y-6">
+      <div className="px-4 md:px-5 py-5 space-y-6">
         <div className="h-8 w-48 rounded-xl animate-pulse" style={{ background: "#f3f4f6" }} />
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-24 rounded-2xl animate-pulse" style={{ background: "#f3f4f6" }} />
           ))}
@@ -299,7 +299,7 @@ export default function GabbiaPage() {
   const pneumaticiIN = gabbia.Pneumatici_IN ?? [];
 
   return (
-    <div className="px-5 py-5 space-y-6">
+    <div className="px-4 md:px-5 py-5 space-y-6">
 
       {/* Modal aggiunta pneumatico */}
       {showModal && (
@@ -447,7 +447,7 @@ export default function GabbiaPage() {
               {gabbia.sedeName}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={handleGeneraQR}
               disabled={generatingQR}
@@ -463,14 +463,14 @@ export default function GabbiaPage() {
               className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition-opacity hover:opacity-90"
               style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
             >
-              <Plus size={15} /> Aggiungi pneumatico
+              <Plus size={15} /> <span className="hidden xs:inline">Aggiungi </span>pneumatico
             </button>
           </div>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
           label="Pezzi stoccati"
           value={pzTotali}
@@ -551,11 +551,11 @@ export default function GabbiaPage() {
               return (
                 <div
                   key={i}
-                  className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors gap-4"
+                  className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors gap-3 flex-wrap"
                   style={{ background: i % 2 === 0 ? "#f9fafb" : "#fff" }}
                 >
                   {/* Prodotto */}
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0" style={{ minWidth: 0 }}>
                     {info ? (
                       <>
                         <p className="text-sm font-bold truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>

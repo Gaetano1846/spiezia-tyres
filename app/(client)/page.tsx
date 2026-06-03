@@ -62,9 +62,9 @@ export default function HomePage() {
   }
 
   return (
-    <div>
+    <div className="h-full flex flex-col overflow-hidden">
       {/* ── Background: widget ricerca + card promo ── */}
-      <div className="relative w-full overflow-hidden">
+      <div className="relative w-full flex-1 min-h-0 overflow-hidden">
         <Image
           src="/login-bg-b2b.jpg"
           alt="Spiezia Tyres"
@@ -75,16 +75,24 @@ export default function HomePage() {
         />
         <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.50)" }} />
 
-        <div className="relative z-10 px-5 py-8 space-y-6">
+        <div className="relative z-10 h-full min-h-0 flex flex-col justify-center px-4 sm:px-5 py-3 sm:py-5 gap-3 sm:gap-4">
 
           {/* Widget di ricerca */}
           <div
-            className="w-full mx-auto rounded-2xl p-6"
+            className="w-full mx-auto rounded-2xl p-4 sm:p-5 flex-shrink-0"
             style={{ maxWidth: 560, background: "#fff", boxShadow: "0 24px 64px rgba(0,0,0,0.35)" }}
           >
-            <h2 className="text-lg font-bold mb-4" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
-              Ricerca
-            </h2>
+            <div className="flex items-center gap-2.5 mb-3 sm:mb-4">
+              <span className="w-1 h-7 rounded-full flex-shrink-0" style={{ background: "var(--brand)" }} />
+              <div>
+                <h2 className="text-lg font-bold leading-none" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+                  Ricerca pneumatici
+                </h2>
+                <p className="text-xs mt-1 leading-none" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                  Trova la gomma giusta in pochi secondi
+                </p>
+              </div>
+            </div>
 
             {/* Cerca + Marchio */}
             <div className="flex gap-2 mb-3">
@@ -93,10 +101,10 @@ export default function HomePage() {
                 onChange={(e) => setCerca(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleCerca()}
                 placeholder="Cerca misura, modello..."
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm outline-none"
+                className="flex-1 min-w-0 px-4 py-2.5 rounded-xl text-sm outline-none"
                 style={{ border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
               />
-              <div style={{ flex: "0 0 160px" }}>
+              <div className="w-32 sm:w-40 flex-shrink-0">
                 <MultiSearchableSelect
                   values={marche}
                   onChange={setMarche}
@@ -107,20 +115,20 @@ export default function HomePage() {
             </div>
 
             {/* Indice Velocità + Indice Carico + Stagioni */}
-            <div className="flex gap-2 mb-5 items-center">
+            <div className="flex gap-2 mb-3 sm:mb-5 items-center flex-wrap">
               <SearchableSelect
                 value={indiceVelocita}
                 onChange={setIndiceVelocita}
                 options={INDICI_VELOCITA}
                 placeholder="Indice di Velocità"
-                style={{ flex: 1 }}
+                style={{ flex: 1, minWidth: 120 }}
               />
               <SearchableSelect
                 value={indiceCarico}
                 onChange={setIndiceCarico}
                 options={INDICI_CARICO}
                 placeholder="Indice di Carico"
-                style={{ flex: 1 }}
+                style={{ flex: 1, minWidth: 120 }}
               />
               <div className="flex gap-1.5 flex-shrink-0">
                 {STAGIONI.map((s) => {
@@ -130,11 +138,11 @@ export default function HomePage() {
                       key={s.key}
                       onClick={() => toggleStagione(s.key)}
                       title={s.label}
-                      className="w-10 h-10 rounded-full text-lg flex items-center justify-center transition-all"
+                      className="w-10 h-10 rounded-full text-lg flex items-center justify-center transition-all hover:brightness-95 active:scale-95"
                       style={{
                         border: `2px solid ${active ? "#FFC803" : "#e5e7eb"}`,
                         background: active ? "#FFF8DC" : "#fff",
-                        boxShadow: active ? "0 0 0 1px #FFC803" : "none",
+                        boxShadow: active ? "0 2px 8px rgba(255,200,3,.40)" : "none",
                       }}
                     >
                       {s.icon}
@@ -146,17 +154,17 @@ export default function HomePage() {
 
             <button
               onClick={handleCerca}
-              className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-bold transition-opacity hover:opacity-90"
-              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+              className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-bold transition-all hover:brightness-[1.04] active:scale-[.985]"
+              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
             >
               <Search size={16} /> Cerca
             </button>
           </div>
 
-          {/* Card promo in scroll orizzontale */}
+          {/* Card promo — scorrevoli orizzontalmente */}
           {promo.length > 0 && (
             <div
-              className="flex overflow-x-auto pb-2"
+              className="flex-1 min-h-0 max-h-[15vh] sm:max-h-none flex justify-center sm:justify-start overflow-x-auto overflow-y-hidden pb-2"
               style={{ gap: 25, scrollbarWidth: "thin", scrollbarColor: "#FFC803 rgba(255,255,255,0.2)" }}
             >
               {promo.map((p) => {
@@ -165,8 +173,8 @@ export default function HomePage() {
                 return (
                   <div
                     key={p.id}
-                    className="flex-shrink-0 overflow-hidden shadow-2xl"
-                    style={{ borderRadius: 8, height: 300 }}
+                    className="flex-shrink-0 h-full overflow-hidden shadow-2xl"
+                    style={{ borderRadius: 12 }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
@@ -183,12 +191,12 @@ export default function HomePage() {
       </div>
 
       {/* ── Striscia distributori ── */}
-      <div className="py-6 flex justify-center">
+      <div className="py-3 flex justify-center flex-shrink-0">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/distributore.png"
           alt="Spiezia Tyres — Distributore autorizzato"
-          style={{ width: "60vw", height: "15vh", objectFit: "contain" }}
+          className="w-[85vw] sm:w-[55vw] max-h-[16vh] sm:max-h-[11vh] object-contain"
         />
       </div>
     </div>

@@ -10,6 +10,7 @@ import { db } from "@/lib/firebase";
 import { ArrowLeft, Search, Plus, X } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
+import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
 import type { Cliente, Veicolo, Sede, Appuntamento } from "@/lib/types";
 
@@ -286,14 +287,12 @@ export default function ModificaAppuntamentoPage() {
             </div>
 
             {/* Data e Ora */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold mb-1.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
                   Data <span style={{ color: "#EF4444" }}>*</span>
                 </label>
-                <input type="date" value={data} onChange={(e) => setData(e.target.value)} required
-                  className="w-full px-4 py-2.5 rounded-xl text-sm"
-                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }} />
+                <DateField value={data} onChange={setData} fullWidth className="px-4 py-2.5" placeholder="Seleziona data" />
               </div>
               <div>
                 <label className="block text-sm font-semibold mb-1.5" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
@@ -387,7 +386,8 @@ export default function ModificaAppuntamentoPage() {
               ) : (
                 <div className="space-y-2">
                   {pneumatici.map((p, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                    <div key={idx} className="overflow-x-auto">
+                    <div className="grid grid-cols-12 gap-2 items-center min-w-[400px]">
                       <div className="col-span-4">
                         <input type="text" value={p.Marca} onChange={(e) => updatePneumatico(idx, "Marca", e.target.value)}
                           placeholder="Marca" className="w-full px-3 py-2 rounded-lg text-xs"
@@ -420,6 +420,7 @@ export default function ModificaAppuntamentoPage() {
                         </button>
                       </div>
                     </div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -434,7 +435,7 @@ export default function ModificaAppuntamentoPage() {
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 mt-6 pt-5" style={{ borderTop: "1px solid var(--border)" }}>
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 mt-6 pt-5" style={{ borderTop: "1px solid var(--border)" }}>
             <Link href="/appuntamenti"
               className="px-5 py-2.5 rounded-xl text-sm font-semibold"
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>

@@ -70,8 +70,8 @@ function CrudSection({
           </span>
         </div>
         <button onClick={openNew}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold hover:opacity-80 transition-opacity"
-          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold hover:opacity-80 transition-all hover:brightness-[1.04] active:scale-[.98]"
+          style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}>
           <Plus size={12} /> Aggiungi
         </button>
       </div>
@@ -86,7 +86,7 @@ function CrudSection({
               onKeyDown={(e) => e.key === "Enter" && submit()} />
           </div>
           {withAddress && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest mb-1" style={labelSty}>Indirizzo</label>
                 <input value={form.indirizzo} onChange={(e) => setForm((f) => ({ ...f, indirizzo: e.target.value }))}
@@ -105,8 +105,8 @@ function CrudSection({
               Annulla
             </button>
             <button onClick={submit} disabled={saving}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold disabled:opacity-60"
-              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold disabled:opacity-60 transition-all hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+              style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}>
               {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
               {editId ? "Salva" : "Aggiungi"}
             </button>

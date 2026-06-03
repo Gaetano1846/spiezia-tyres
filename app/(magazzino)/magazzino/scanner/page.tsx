@@ -315,7 +315,7 @@ export default function ScannerPage() {
   // -------------------------------------------------------------------------
 
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
+    <div className="space-y-6 max-w-2xl mx-auto px-4 md:px-0">
       <div>
         <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
           Scanner
@@ -367,9 +367,8 @@ export default function ScannerPage() {
               <>
                 {/* Viewfinder */}
                 <div
-                  className="relative rounded-2xl overflow-hidden"
+                  className="relative rounded-2xl overflow-hidden w-full max-w-[340px] aspect-square"
                   style={{
-                    width: "100%", maxWidth: 340, aspectRatio: "1/1",
                     background: "#111",
                     border: `3px solid ${cameraAttiva ? "var(--brand)" : "var(--border)"}`,
                   }}
@@ -443,7 +442,7 @@ export default function ScannerPage() {
 
                 <button
                   onClick={toggleCamera}
-                  className="flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold"
+                  className="flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold"
                   style={{
                     background: cameraAttiva ? "#F3F4F6" : "var(--brand)",
                     color: cameraAttiva ? "var(--text-primary)" : "#111",
@@ -473,7 +472,7 @@ export default function ScannerPage() {
               EAN / Marca / Misura
             </h2>
             <div className="flex gap-2">
-              <div className="flex-1 relative">
+              <div className="flex-1 min-w-0 relative">
                 <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
                 <input
                   value={query_ean}
@@ -493,7 +492,7 @@ export default function ScannerPage() {
               <button
                 onClick={handleEanSearch}
                 disabled={loadingEan || !query_ean.trim()}
-                className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40 flex items-center gap-2"
+                className="flex-shrink-0 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40 flex items-center gap-2"
                 style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
               >
                 {loadingEan ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
@@ -618,7 +617,7 @@ export default function ScannerPage() {
               Targa veicolo
             </h2>
             <div className="flex gap-2">
-              <div className="flex-1 relative">
+              <div className="flex-1 min-w-0 relative">
                 <Car size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
                 <input
                   value={targa}
@@ -636,7 +635,7 @@ export default function ScannerPage() {
               <button
                 onClick={handleTargaSearch}
                 disabled={loadingTarga || !targa.trim()}
-                className="px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40 flex items-center gap-2"
+                className="flex-shrink-0 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40 flex items-center gap-2"
                 style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
               >
                 {loadingTarga ? <Loader2 size={15} className="animate-spin" /> : <Car size={15} />}

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind, ZoomIn } from "lucide-react";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useCart } from "@/components/layout/CartProvider";
 import { useAuth } from "@/components/layout/AuthProvider";
@@ -113,6 +113,19 @@ export default function ProdottiPage() {
   // Modal foto prodotto
   const [fotoModal, setFotoModal] = useState<ProdottoHit | null>(null);
 
+  // Loghi marca (collezione Marca_Prodotto) — mappa nome-marca-normalizzato → URL logo
+  const [brandLogos, setBrandLogos] = useState<Record<string, string>>({});
+
+  // Dettagli prodotto espandibili (solo mobile) — set degli objectID aperti
+  const [expandedDetails, setExpandedDetails] = useState<Set<string>>(new Set());
+  function toggleDetails(id: string) {
+    setExpandedDetails((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sincronizza i filtri quando i searchParams cambiano (es. navigazione da header modal)
@@ -136,6 +149,26 @@ export default function ProdottiPage() {
       })
       .catch(console.warn);
   }, []);
+
+  // Carica i loghi dei brand dalla collezione Marca_Prodotto (Nome → Logo)
+  useEffect(() => {
+    getDocs(collection(db, "Marca_Prodotto"))
+      .then((snap) => {
+        const map: Record<string, string> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data() as { Nome?: string; Logo?: string };
+          if (data.Nome && data.Logo) map[data.Nome.trim().toLowerCase()] = data.Logo;
+        });
+        setBrandLogos(map);
+      })
+      .catch(console.warn);
+  }, []);
+
+  // Risolve l'URL del logo per una marca (case/spazio-insensitive)
+  const logoForMarca = useCallback(
+    (marca: string | undefined) => (marca ? brandLogos[marca.trim().toLowerCase()] : undefined),
+    [brandLogos]
+  );
 
   const doSearch = useCallback(async (pg: number) => {
     setLoading(true);
@@ -262,11 +295,11 @@ export default function ProdottiPage() {
   }
 
   return (
-    <div className="px-5 py-5 space-y-4">
+    <div className="px-4 md:px-5 py-5 space-y-4">
 
       {/* ── Ricerca Avanzata ── */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-bold" style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}>
+      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+        <span className="text-xs font-bold hidden sm:inline" style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}>
           Ricerca Avanzata:
         </span>
         {CATEGORIE.map((c) => {
@@ -275,13 +308,14 @@ export default function ProdottiPage() {
             <button
               key={c.label}
               onClick={() => handleSetCategoria(c.value)}
-              className="px-4 py-1.5 rounded-full text-xs font-semibold transition-colors"
+              className="px-2.5 sm:px-4 py-1.5 rounded-full text-xs font-semibold transition-all hover:bg-[#FFFBEB] active:scale-95"
               style={{
                 background: active ? "#FFFBEB" : "transparent",
                 border: `1.5px solid #FFC803`,
                 color: "#111",
                 fontWeight: active ? 700 : 600,
                 fontFamily: "var(--font-montserrat)",
+                boxShadow: active ? "0 2px 8px rgba(255,200,3,.35)" : "none",
               }}
             >
               {c.label}
@@ -292,10 +326,10 @@ export default function ProdottiPage() {
 
       {/* ── Search + Filtri ── */}
       <div className="rounded-2xl overflow-hidden"
-        style={{ background: "#fff", border: "1px solid #e5e7eb", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+        style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
 
-        <div className="flex items-center gap-3 px-4 py-3">
-          <div className="flex-1 relative">
+        <div className="flex items-center gap-3 px-4 py-3 flex-wrap">
+          <div className="flex-1 min-w-[150px] relative">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "#9ca3af" }} />
             <input value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Cerca marca, modello, misura…"
@@ -329,7 +363,7 @@ export default function ProdottiPage() {
             <option value="prezzo_desc">Prezzo ↓</option>
             <option value="misura_asc">Misura A-Z</option>
           </select>
-          <span className="text-sm flex-shrink-0" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+          <span className="text-sm flex-shrink-0 hidden sm:inline" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
             {loading ? "…" : `${nbHits.toLocaleString("it-IT")} prodotti`}
           </span>
         </div>
@@ -458,7 +492,7 @@ export default function ProdottiPage() {
 
       {/* ── Lista prodotti (stile Flutter: riga orizzontale per prodotto) ── */}
       {loading ? (
-        <div className="rounded-2xl overflow-hidden" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
+        <div className="rounded-2xl overflow-hidden" style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
           {Array.from({ length: 10 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: "#f3f4f6" }}>
               <div className="w-16 h-8 rounded-lg animate-pulse" style={{ background: "#f3f4f6" }} />
@@ -475,11 +509,11 @@ export default function ProdottiPage() {
         </div>
       ) : (
         <>
-          <div className="rounded-2xl overflow-hidden" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
+          <div className="rounded-2xl overflow-hidden" style={{ background: "#fff", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
             {/* Intestazione colonne — stile Flutter: header scuro */}
             <div className="hidden xl:grid px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider"
               style={{
-                gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
+                gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
                 background: "#111",
                 borderBottom: "1px solid #333",
                 color: "#fff",
@@ -502,7 +536,6 @@ export default function ProdottiPage() {
               <span className="text-center">48/72</span>
               <span className="text-center">Qtà</span>
               <span></span>
-              <span className="text-center">Foto</span>
             </div>
 
             {/* Righe prodotto */}
@@ -518,26 +551,31 @@ export default function ProdottiPage() {
               const qty = getQty(hit.objectID);
               const esaurito = stock === 0;
               const senzaPrezzo = prezzo === 0;
+              const detailsOpen = expandedDetails.has(hit.objectID);
 
               return (
                 <div
                   key={hit.objectID}
-                  className="flex xl:grid items-center gap-2 px-4 py-2.5 transition-colors hover:bg-[#FFFDF0]"
+                  className="flex flex-wrap xl:grid items-center gap-2 px-4 py-2.5 transition-colors hover:bg-[#FFFDF0]"
                   style={{
-                    gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px 40px",
+                    gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
                     borderBottom: idx < sortedHits.length - 1 ? "1px solid #f3f4f6" : "none",
                     opacity: esaurito ? 0.5 : 1,
                     gap: "8px",
                     background: senzaPrezzo ? "rgba(249,250,251,0.6)" : undefined,
                   }}
                 >
-                  {/* Marca */}
+                  {/* Marca — logo del brand (collezione Marca_Prodotto), fallback al nome */}
                   <div className="hidden xl:block">
-                    {hit.Immagine ? (
+                    {logoForMarca(hit.Marca) ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={hit.Immagine} alt={hit.Marca}
+                      <img src={logoForMarca(hit.Marca)} alt={hit.Marca}
                         className="h-8 max-w-[100px] object-contain"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                        onError={(e) => {
+                          const el = e.target as HTMLImageElement;
+                          el.style.display = "none";
+                          el.insertAdjacentHTML("afterend", `<span class="text-xs font-bold uppercase" style="color:#374151;font-family:var(--font-montserrat)">${hit.Marca ?? ""}</span>`);
+                        }} />
                     ) : (
                       <span className="text-xs font-bold uppercase" style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}>
                         {hit.Marca}
@@ -545,12 +583,25 @@ export default function ProdottiPage() {
                     )}
                   </div>
 
-                  {/* Prodotto */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold uppercase xl:hidden" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
-                      {hit.Marca}
-                    </p>
-                    <p className="text-sm font-semibold truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                  {/* Prodotto — su mobile occupa tutta la riga, così il nome ha spazio (niente troncamenti) */}
+                  <div className="w-full xl:flex-1 min-w-0 flex items-start gap-2.5">
+                    <div className="min-w-0 flex-1">
+                    {/* Logo marca su mobile (su xl c'è la colonna dedicata) */}
+                    {logoForMarca(hit.Marca) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={logoForMarca(hit.Marca)} alt={hit.Marca}
+                        className="xl:hidden h-5 max-w-[80px] object-contain mb-0.5"
+                        onError={(e) => {
+                          const el = e.target as HTMLImageElement;
+                          el.style.display = "none";
+                          el.insertAdjacentHTML("afterend", `<span class="xl:hidden block text-xs font-bold uppercase mb-0.5" style="color:#9ca3af;font-family:var(--font-montserrat)">${hit.Marca ?? ""}</span>`);
+                        }} />
+                    ) : (
+                      <p className="text-xs font-bold uppercase xl:hidden" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                        {hit.Marca}
+                      </p>
+                    )}
+                    <p className="text-sm font-semibold line-clamp-2 xl:block xl:truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
                       {hit.Modello}
                     </p>
                     <p className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
@@ -569,6 +620,30 @@ export default function ProdottiPage() {
                         <span className="text-[10px] font-normal ml-1" style={{ color: "#9ca3af" }}>IVA incl.</span>
                       </p>
                     )}
+                    {/* Toggle dettagli — solo mobile */}
+                    <button
+                      onClick={() => toggleDetails(hit.objectID)}
+                      aria-expanded={detailsOpen}
+                      className="xl:hidden inline-flex items-center gap-1 mt-1.5 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors hover:bg-gray-100"
+                      style={{ border: "1px solid #e5e7eb", color: "#374151", fontFamily: "var(--font-montserrat)" }}
+                    >
+                      {detailsOpen ? "Nascondi" : "Dettagli"}
+                      <ChevronDown size={12} style={{ transform: detailsOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+                    </button>
+                    </div>
+
+                    {/* Foto prodotto — subito dopo il nome */}
+                    <button
+                      onClick={() => setFotoModal(hit)}
+                      className="flex-shrink-0 w-11 h-11 rounded-lg overflow-hidden flex items-center justify-center transition-colors hover:bg-gray-50"
+                      style={{ border: "1px solid #e5e7eb", background: "#fff" }}
+                      title="Visualizza foto"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={hit.Foto || hit.Immagine || "/placeholder-tyre.jpg"} alt={hit.Modello}
+                        className="w-full h-full object-cover"
+                        onError={(e) => { const el = e.currentTarget as HTMLImageElement; if (!el.src.endsWith("/placeholder-tyre.jpg")) el.src = "/placeholder-tyre.jpg"; }} />
+                    </button>
                   </div>
 
                   {/* CAI */}
@@ -641,6 +716,8 @@ export default function ProdottiPage() {
                     <StockPill value={stockT24} color="rgba(99,179,237,0.75)" />
                   </div>
 
+                  {/* Riga azioni — su mobile va a capo a tutta larghezza; su desktop xl:contents la dissolve nella griglia */}
+                  <div className="w-full flex items-center justify-between gap-2 mt-1 xl:contents">
                   {/* Quantità — cella sempre presente per mantenere l'allineamento della griglia */}
                   <div className="flex items-center justify-center" style={{ visibility: (!esaurito && !senzaPrezzo) ? "visible" : "hidden" }}>
                     <div className="flex items-center rounded-xl overflow-hidden"
@@ -665,28 +742,70 @@ export default function ProdottiPage() {
                   <button
                     onClick={() => !esaurito && !senzaPrezzo && handleAdd(hit)}
                     disabled={esaurito || senzaPrezzo}
-                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-opacity hover:opacity-80 disabled:opacity-40 flex-shrink-0"
+                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all hover:brightness-[1.04] active:scale-95 disabled:opacity-40 disabled:active:scale-100 flex-shrink-0"
                     style={{
                       background: (esaurito || senzaPrezzo) ? "#e5e7eb" : "#FFC803",
                       color: (esaurito || senzaPrezzo) ? "#9ca3af" : "#111",
                       fontFamily: "var(--font-montserrat)",
                       minWidth: 90,
+                      boxShadow: (esaurito || senzaPrezzo) ? "none" : "0 2px 8px rgba(255,200,3,.35)",
                     }}>
                     <ShoppingCart size={12} />
                     {esaurito ? "Esaurito" : senzaPrezzo ? "Su richiesta" : "Aggiungi"}
                   </button>
-
-                  {/* Foto */}
-                  <div className="hidden xl:flex w-full items-center justify-center">
-                    <button
-                      onClick={() => setFotoModal(hit)}
-                      className="w-8 h-8 flex items-center justify-center rounded-xl transition-colors hover:bg-gray-100"
-                      style={{ border: "1px solid #e5e7eb" }}
-                      title="Visualizza foto"
-                    >
-                      <ZoomIn size={14} style={{ color: "#6b7280" }} />
-                    </button>
                   </div>
+
+                  {/* ── Dettagli prodotto — solo mobile, espandibili con tap ── */}
+                  {detailsOpen && (
+                  <div
+                    className="xl:hidden w-full mt-2 pt-2 flex flex-col gap-2"
+                    style={{ borderTop: "1px dashed #e5e7eb" }}
+                  >
+                    {/* Caratteristiche: stagione, EU label consumo/bagnato, rumorosità, CAI */}
+                    <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap text-[11px]"
+                      style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                      <span className="inline-flex items-center gap-1">
+                        <StagioneIcon stagione={hit.Stagione} />
+                        <span>{hit.Stagione}</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1">Con. <EuLabelBadge value={hit.Indice_Consumo} /></span>
+                      <span className="inline-flex items-center gap-1">Bag. <EuLabelBadge value={hit.Indice_Bagnato} /></span>
+                      <span className="inline-flex items-center gap-1">Rum. <span className="font-semibold" style={{ color: "#374151" }}>{hit.Indice_Rumorosita ?? "—"}</span></span>
+                      {hit.CAI && <span className="font-mono">CAI {hit.CAI}</span>}
+                    </div>
+
+                    {/* Disponibilità per deposito */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {[
+                        { label: "Nola",   value: stockNola,   color: "rgba(238,139,96,0.85)" },
+                        { label: "Napoli", value: stockNapoli, color: "rgba(238,139,96,0.85)" },
+                        { label: "Roma",   value: stockRoma,   color: "rgba(255,200,3,0.75)" },
+                        { label: "48/72",  value: stockT24,    color: "rgba(99,179,237,0.75)" },
+                      ].map((s) => (
+                        <div key={s.label} className="flex items-center gap-1">
+                          <span className="text-[10px] font-semibold" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>{s.label}</span>
+                          <StockPill value={s.value} color={s.color} />
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Prezzo netto + PFU + Foto */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-3 text-[11px]" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                        <span>Netto <strong style={{ color: "#374151" }}>{senzaPrezzo ? "N/D" : euro(prezzo)}</strong></span>
+                        <span>PFU <strong style={{ color: "#374151" }}>{euro(pfu)}</strong></span>
+                      </div>
+                      <button
+                        onClick={() => setFotoModal(hit)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors hover:bg-gray-100"
+                        style={{ border: "1px solid #e5e7eb", color: "#6b7280" }}
+                      >
+                        <ZoomIn size={13} /> Foto
+                      </button>
+                    </div>
+                  </div>
+                  )}
+
                 </div>
               );
             })}
@@ -732,7 +851,7 @@ export default function ProdottiPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setFotoModal(null)} />
           <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full overflow-hidden"
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-h-[90vh] overflow-y-auto"
             style={{ maxWidth: 720, fontFamily: "var(--font-montserrat)" }}
           >
             {/* Header */}
@@ -753,13 +872,14 @@ export default function ProdottiPage() {
             </div>
 
             {/* Contenuto */}
-            <div className="flex items-start justify-center gap-6 px-6 py-6">
+            <div className="flex flex-col sm:flex-row items-center sm:items-start justify-center gap-4 sm:gap-6 px-4 sm:px-6 py-6">
               {/* Foto prodotto */}
               {fotoModal.Foto ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={fotoModal.Foto}
                   alt={`${fotoModal.Marca} ${fotoModal.Modello}`}
+                  className="max-w-full h-auto"
                   style={{ maxHeight: 340, maxWidth: 320, objectFit: "contain" }}
                 />
               ) : fotoModal.Immagine ? (
@@ -767,13 +887,17 @@ export default function ProdottiPage() {
                 <img
                   src={fotoModal.Immagine}
                   alt={fotoModal.Marca}
+                  className="max-w-full h-auto"
                   style={{ maxHeight: 200, maxWidth: 200, objectFit: "contain" }}
                 />
               ) : (
-                <div className="flex flex-col items-center justify-center gap-2" style={{ width: 200, height: 200, background: "#f9fafb", borderRadius: 12 }}>
-                  <ZoomIn size={40} style={{ color: "#d1d5db" }} />
-                  <p className="text-xs" style={{ color: "#9ca3af" }}>Nessuna foto</p>
-                </div>
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src="/placeholder-tyre.jpg"
+                  alt="Nessuna foto"
+                  className="max-w-full h-auto"
+                  style={{ maxHeight: 240, maxWidth: 240, objectFit: "contain", borderRadius: 12 }}
+                />
               )}
 
               {/* Etichetta energetica */}
@@ -782,6 +906,7 @@ export default function ProdottiPage() {
                 <img
                   src={fotoModal.Label}
                   alt="Etichetta energetica"
+                  className="max-w-full h-auto"
                   style={{ maxHeight: 340, maxWidth: 220, objectFit: "contain" }}
                 />
               )}

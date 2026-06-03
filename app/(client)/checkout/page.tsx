@@ -69,7 +69,7 @@ function StepIndicator({ current }: { current: number }) {
             </div>
             {idx < steps.length - 1 && (
               <div
-                className="h-0.5 w-16 mx-2 mb-5"
+                className="h-0.5 w-8 sm:w-16 mx-1 sm:mx-2 mb-5"
                 style={{ background: idx < current ? "var(--brand)" : "var(--border)" }}
               />
             )}
@@ -948,14 +948,16 @@ export default function CheckoutPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         <div className="lg:col-span-2 space-y-4">
-          <StepContent />
+          {/* Invocate come funzioni (non come <StepContent/>) per non rimontare il sottoalbero
+              ad ogni keystroke: altrimenti gli input perdono il focus dopo un carattere. */}
+          {StepContent()}
 
           <div className="flex items-center justify-between gap-4">
             {step > 0 ? (
               <button
                 onClick={() => setStep((s) => s - 1)}
                 disabled={submitting}
-                className="px-6 py-2.5 rounded-full text-sm font-semibold transition-colors"
+                className="px-6 py-2.5 rounded-full text-sm font-semibold transition-all hover:bg-white active:scale-[.98]"
                 style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}
               >
                 Indietro
@@ -966,8 +968,8 @@ export default function CheckoutPage() {
             {step < 2 ? (
               <button
                 onClick={handleNext}
-                className="px-6 py-2.5 rounded-full text-sm font-semibold transition-opacity hover:opacity-90"
-                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                className="px-6 py-2.5 rounded-full text-sm font-semibold transition-all hover:brightness-[1.04] active:scale-[.98]"
+                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
               >
                 Avanti
               </button>
@@ -975,8 +977,8 @@ export default function CheckoutPage() {
               <button
                 onClick={handleConfirm}
                 disabled={submitting}
-                className="flex items-center gap-2 px-8 py-2.5 rounded-full text-sm font-semibold disabled:opacity-60"
-                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+                className="flex items-center gap-2 px-8 py-2.5 rounded-full text-sm font-semibold transition-all hover:brightness-[1.04] active:scale-[.98] disabled:opacity-60 disabled:active:scale-100"
+                style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
               >
                 {submitting && <Loader2 size={16} className="animate-spin" />}
                 Conferma ordine
@@ -986,7 +988,7 @@ export default function CheckoutPage() {
         </div>
 
         <div className="lg:col-span-1 sticky top-6">
-          <OrderSummary />
+          {OrderSummary()}
         </div>
       </div>
     </div>

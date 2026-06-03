@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Poppins, Montserrat } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/layout/Providers";
@@ -21,6 +21,12 @@ export const metadata: Metadata = {
   title: { default: "Spiezia Tyres — Gestionale", template: "%s | Spiezia Tyres" },
   robots: { index: false, follow: false },
   icons: { icon: "/favicon.png", apple: "/favicon.png" },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
