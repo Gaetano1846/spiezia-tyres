@@ -41,6 +41,7 @@ const MARCHE = [
 ];
 
 const INDICI_VELOCITA = ["P","Q","R","S","T","H","V","W","Y","Z"];
+const INDICI_CARICO   = Array.from({ length: 50 }, (_, i) => String(60 + i)); // 60..109
 
 const STAGIONI = [
   { key: "Estive",     icon: "flame",     label: "Estive" },
@@ -63,6 +64,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
   const [cerca,          setCerca]          = useState("");
   const [marca,          setMarca]          = useState("");
   const [indiceVelocita, setIndiceVelocita] = useState("");
+  const [indiceCarico,   setIndiceCarico]   = useState("");
   const [stagioni,       setStagioni]       = useState<string[]>([]);
 
   // Modal pneumatici / cerchi / camere
@@ -103,6 +105,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
     if (cerca.trim())       params.set("q",       cerca.trim());
     if (marca)              params.set("marca",    marca);
     if (indiceVelocita)     params.set("iv",       indiceVelocita);
+    if (indiceCarico)       params.set("ic",       indiceCarico);
     if (stagioni.length > 0) params.set("stagione", stagioni.join(","));
     router.push(`/prodotti?${params.toString()}`);
   }
@@ -338,6 +341,17 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
               />
             </div>
 
+            {/* Indice di Carico */}
+            <div className="flex-shrink-0" style={{ width: 130 }}>
+              <SearchableSelect
+                value={indiceCarico}
+                onChange={setIndiceCarico}
+                options={INDICI_CARICO}
+                placeholder="Indice car."
+                style={{ fontSize: 13 }}
+              />
+            </div>
+
             {/* Stagioni */}
             {STAGIONI.map((s) => {
               const active = stagioni.includes(s.key);
@@ -361,6 +375,21 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
                 </button>
               );
             })}
+
+            {/* Tutte — azzera il filtro stagione (replica app Flutter) */}
+            <button
+              onClick={() => setStagioni([])}
+              title="Tutte le stagioni"
+              className="px-2.5 py-2 rounded-xl text-xs font-semibold transition-colors flex-shrink-0 hover:bg-gray-100"
+              style={{
+                border: `1.5px solid ${stagioni.length === 0 ? "#FFC803" : "#e5e7eb"}`,
+                background: stagioni.length === 0 ? "#FFF8DC" : "#fff",
+                color: "#111",
+                fontFamily: "var(--font-montserrat)",
+              }}
+            >
+              Tutte
+            </button>
 
             {/* Bottone Cerca */}
             <button
