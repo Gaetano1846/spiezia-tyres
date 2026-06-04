@@ -161,10 +161,14 @@ export default function HomePage() {
             </button>
           </div>
 
-          {/* Card promo — scorrevoli orizzontalmente */}
+          {/* Card promo — scorrevoli orizzontalmente.
+              NB: `justify-start` (non `justify-center`) è obbligatorio in un container
+              overflow-x: con justify-center il primo banner viene centrato e il suo
+              bordo sinistro finisce fuori schermo, irraggiungibile dallo scroll (che va
+              solo verso destra). Con justify-start la striscia parte a filo sinistra. */}
           {promo.length > 0 && (
             <div
-              className="flex-1 min-h-0 max-h-[15vh] sm:max-h-none flex justify-center sm:justify-start overflow-x-auto overflow-y-hidden pb-2"
+              className="flex-1 min-h-0 max-h-[15vh] sm:max-h-none flex justify-start overflow-x-auto overflow-y-hidden pb-2 snap-x snap-mandatory sm:snap-none"
               style={{ gap: 25, scrollbarWidth: "thin", scrollbarColor: "#FFC803 rgba(255,255,255,0.2)" }}
             >
               {promo.map((p) => {
@@ -173,7 +177,7 @@ export default function HomePage() {
                 return (
                   <div
                     key={p.id}
-                    className="flex-shrink-0 h-full overflow-hidden shadow-2xl"
+                    className="flex-shrink-0 h-full overflow-hidden shadow-2xl snap-start"
                     style={{ borderRadius: 12 }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}

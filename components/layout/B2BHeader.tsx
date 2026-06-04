@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import {
-  Phone, MessageCircle, Mail, Bell, ShoppingCart, Menu,
+  Phone, MessageCircle, Bell, ShoppingCart, Menu,
   Search, X, Flame, Snowflake,
 } from "lucide-react";
 import SearchableSelect from "@/components/ui/SearchableSelect";
@@ -160,9 +160,6 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
             </a>
             <a href="https://wa.me/390351009337" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-semibold hover:opacity-70 transition-opacity">
               <MessageCircle size={11} className="flex-shrink-0" /> <span className="hidden sm:inline">+39 351 009 3370</span>
-            </a>
-            <a href="mailto:b2b@spieziatyres.it" className="flex items-center gap-1.5 font-semibold hover:opacity-70 transition-opacity min-w-0">
-              <Mail size={11} className="flex-shrink-0" /> <span className="hidden sm:inline truncate">b2b@spieziatyres.it</span>
             </a>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0" style={{ color: "#111" }}>
