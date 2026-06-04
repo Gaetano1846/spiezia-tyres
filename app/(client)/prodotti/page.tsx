@@ -647,14 +647,14 @@ export default function ProdottiPage() {
                     {logoForMarca(hit.Marca) ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={logoForMarca(hit.Marca)} alt={hit.Marca}
-                        className="xl:hidden h-5 max-w-[80px] object-contain mb-0.5"
+                        className="xl:hidden h-7 max-w-[120px] object-contain object-left mb-1"
                         onError={(e) => {
                           const el = e.target as HTMLImageElement;
                           el.style.display = "none";
-                          el.insertAdjacentHTML("afterend", `<span class="xl:hidden block text-xs font-bold uppercase mb-0.5" style="color:#9ca3af;font-family:var(--font-montserrat)">${hit.Marca ?? ""}</span>`);
+                          el.insertAdjacentHTML("afterend", `<span class="xl:hidden block text-sm font-bold uppercase mb-1" style="color:#374151;font-family:var(--font-montserrat)">${hit.Marca ?? ""}</span>`);
                         }} />
                     ) : (
-                      <p className="text-xs font-bold uppercase xl:hidden" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                      <p className="text-sm font-bold uppercase xl:hidden mb-0.5" style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}>
                         {hit.Marca}
                       </p>
                     )}
