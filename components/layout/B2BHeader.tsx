@@ -93,8 +93,9 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
   const isAdmin = ruolo === "admin";
   const hasCRM  = user?.CRM || isAdmin;
 
-  // Nascondi la barra di ricerca su homepage e pagina prodotti (hanno i propri filtri)
-  const showSearch = pathname !== "/" && !pathname.startsWith("/prodotti");
+  // Barra filtri pneumatici persistente su tutte le pagine (come nell'app Flutter).
+  // Unica eccezione: la homepage, che ha già l'hero di ricerca completo al centro.
+  const showSearch = pathname !== "/";
 
   function toggleStagione(s: string) {
     setStagioni((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);

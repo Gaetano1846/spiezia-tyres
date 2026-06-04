@@ -13,6 +13,9 @@ interface Props {
   width?: number;
   /** Allineamento desktop preferito rispetto all'ancora (poi viene comunque clampato ai bordi). */
   align?: "left" | "right";
+  /** Soglia (px) oltre la quale si usa il popover ancorato invece del modale centrato. Default 640 (sm).
+   *  Va allineata al breakpoint a cui il trigger passa da inline a desktop (es. 1280 = xl). */
+  desktopMinWidth?: number;
 }
 
 const GAP = 6;     // spazio tra ancora e popover
@@ -25,7 +28,7 @@ const MARGIN = 8;  // margine minimo dai bordi del viewport
  * - Mobile: modale centrato con backdrop scuro e scroll interno.
  * Si chiude su click esterno (backdrop) o tasto ESC.
  */
-export default function AnchoredPopover({ open, onClose, anchorRef, children, width = 320, align = "left" }: Props) {
+export default function AnchoredPopover({ open, onClose, anchorRef, children, width = 320, align = "left", desktopMinWidth = 640 }: Props) {
   const popRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
@@ -33,14 +36,14 @@ export default function AnchoredPopover({ open, onClose, anchorRef, children, wi
 
   useEffect(() => setMounted(true), []);
 
-  // Traccia desktop vs mobile (breakpoint sm = 640px)
+  // Traccia desktop vs mobile (soglia configurabile, default sm = 640px)
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 640px)");
+    const mq = window.matchMedia(`(min-width: ${desktopMinWidth}px)`);
     const update = () => setIsDesktop(mq.matches);
     update();
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);
-  }, []);
+  }, [desktopMinWidth]);
 
   const reposition = useCallback(() => {
     const anchor = anchorRef.current;

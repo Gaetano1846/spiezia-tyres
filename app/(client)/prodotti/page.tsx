@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind, ZoomIn } from "lucide-react";
+import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind, ZoomIn, Info } from "lucide-react";
 import { doc, getDoc, collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useCart } from "@/components/layout/CartProvider";
@@ -17,6 +17,8 @@ import {
   type ProdottoHit,
 } from "@/lib/algolia";
 import { CONTRIBUTO_LOGISTICO_UNIT } from "@/lib/cart";
+import AnchoredPopover from "@/components/ui/AnchoredPopover";
+import type { Ruolo } from "@/lib/types";
 
 type Stagione = "Estive" | "Invernali" | "4-Stagioni";
 
@@ -35,7 +37,7 @@ function StagioneIcon({ stagione }: { stagione: string }) {
 }
 
 function euro(n: number | undefined | null) {
-  return (n ?? 0).toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  return (n ?? 0).toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: true }) + " €";
 }
 
 const EU_LABEL_COLORS: Record<string, { bg: string; text: string }> = {
@@ -72,6 +74,51 @@ function StockPill({ value, color }: { value: number; color: string }) {
     >
       {label}
     </span>
+  );
+}
+
+// ── Popup dettaglio "Prezzo Finito" — replica del PrezzoFinitoWidget Flutter ──
+function BreakdownRow({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-xs" style={{ color: "#374151", fontFamily: "var(--font-montserrat)", fontWeight: bold ? 700 : 600 }}>{label}</span>
+      <span className="text-xs whitespace-nowrap" style={{ color: "#111", fontFamily: "var(--font-montserrat)", fontWeight: bold ? 700 : 600 }}>{value}</span>
+    </div>
+  );
+}
+
+function PrezzoBreakdown({ hit, ruolo }: { hit: ProdottoHit; ruolo?: Ruolo }) {
+  const prezzo = prezzoPerRuolo(hit, ruolo);
+  const pfu    = pfuEffettivo(hit);
+  const base   = prezzo + CONTRIBUTO_LOGISTICO_UNIT + pfu;        // prezzo + contributo + pfu
+  const ivaSingola    = base * 0.22;                             // getIVA(prezzo+0.95, pfu) — non arrotondata
+  const totaleSingolo = parseFloat((base * 1.22).toFixed(2));     // prezzoFinito(prezzo+0.95, pfu)
+  // formatNumber automatic del Flutter (NumberFormat.decimalPattern, locale it): separatore decimale,
+  // raggruppamento migliaia col punto (useGrouping:true — V8 di default non raggruppa 1.000–9.999),
+  // zeri finali rimossi, fino a 3 decimali.
+  const fmt = (n: number) => "€" + n.toLocaleString("it-IT", { minimumFractionDigits: 0, maximumFractionDigits: 3, useGrouping: true });
+  const contributo = `${CONTRIBUTO_LOGISTICO_UNIT.toLocaleString("it-IT")}€`; // mostrato per-unità come nell'app vecchia
+
+  return (
+    <div className="p-3 flex flex-col gap-1.5" style={{ fontFamily: "var(--font-montserrat)" }}>
+      <p className="text-sm font-bold mb-0.5" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>Prezzo Singolo</p>
+      <BreakdownRow label="Prezzo:" value={fmt(prezzo)} />
+      <BreakdownRow label="Contributo Logistico:" value={contributo} />
+      <BreakdownRow label="PFU:" value={fmt(pfu)} />
+      <BreakdownRow label="IVA:" value={fmt(ivaSingola)} />
+      <div style={{ height: 1, background: "rgba(84,84,84,0.40)", margin: "1px 0" }} />
+      <BreakdownRow label="Totale:" value={fmt(totaleSingolo)} bold />
+
+      <div style={{ height: 1, background: "#111", margin: "3px 0" }} />
+
+      <p className="text-sm font-bold mb-0.5" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>Prezzo 4 Pneumatici</p>
+      <BreakdownRow label="Prezzo:" value={fmt(prezzo * 4)} />
+      <BreakdownRow label="Contributo Logistico:" value={contributo} />
+      <BreakdownRow label="PFU:" value={fmt(pfu * 4)} />
+      <BreakdownRow label="IVA:" value={fmt(ivaSingola * 4)} />
+      <div style={{ height: 1, background: "rgba(84,84,84,0.40)", margin: "1px 0" }} />
+      <BreakdownRow label="Totale 4:" value={fmt(totaleSingolo * 4)} bold />
+    </div>
   );
 }
 
@@ -112,6 +159,14 @@ export default function ProdottiPage() {
 
   // Modal foto prodotto
   const [fotoModal, setFotoModal] = useState<ProdottoHit | null>(null);
+
+  // Popup dettaglio "Prezzo Finito" — ancorato alla ⓘ della riga cliccata
+  const [prezzoPopupId, setPrezzoPopupId] = useState<string | null>(null);
+  const prezzoAnchorRef = useRef<HTMLElement | null>(null);
+  function openPrezzoPopup(e: React.MouseEvent<HTMLElement>, id: string) {
+    prezzoAnchorRef.current = e.currentTarget;
+    setPrezzoPopupId((cur) => (cur === id ? null : id));
+  }
 
   // Loghi marca (collezione Marca_Prodotto) — mappa nome-marca-normalizzato → URL logo
   const [brandLogos, setBrandLogos] = useState<Record<string, string>>({});
@@ -264,6 +319,8 @@ export default function ProdottiPage() {
       return 0;
     });
   }, [hits, sortBy, user?.Ruolo]);
+
+  const prezzoPopupHit = prezzoPopupId ? sortedHits.find((h) => h.objectID === prezzoPopupId) ?? null : null;
 
   const CATEGORIE = [
     { label: "Pneumatici",    value: "" },
@@ -513,7 +570,7 @@ export default function ProdottiPage() {
             {/* Intestazione colonne — stile Flutter: header scuro */}
             <div className="hidden xl:grid px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider"
               style={{
-                gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
+                gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 100px 44px 50px 44px 50px 88px 100px",
                 background: "#111",
                 borderBottom: "1px solid #333",
                 color: "#fff",
@@ -558,7 +615,7 @@ export default function ProdottiPage() {
                   key={hit.objectID}
                   className="flex flex-wrap xl:grid items-center gap-2 px-4 py-2.5 transition-colors hover:bg-[#FFFDF0]"
                   style={{
-                    gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 80px 44px 50px 44px 50px 88px 100px",
+                    gridTemplateColumns: "110px 1fr 48px 28px 26px 26px 32px 68px 56px 100px 44px 50px 44px 50px 88px 100px",
                     borderBottom: idx < sortedHits.length - 1 ? "1px solid #f3f4f6" : "none",
                     opacity: esaurito ? 0.5 : 1,
                     gap: "8px",
@@ -618,6 +675,15 @@ export default function ProdottiPage() {
                       <p className="text-sm font-black xl:hidden mt-0.5" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
                         {euro(prezzoFinito)}
                         <span className="text-[10px] font-normal ml-1" style={{ color: "#9ca3af" }}>IVA incl.</span>
+                        <button
+                          type="button"
+                          onClick={(e) => openPrezzoPopup(e, hit.objectID)}
+                          className="inline-flex items-center align-middle ml-1 p-0.5 rounded-full hover:bg-gray-100 transition-colors"
+                          title="Dettaglio prezzo"
+                          aria-label="Dettaglio prezzo"
+                        >
+                          <Info size={13} style={{ color: "#9ca3af" }} />
+                        </button>
                       </p>
                     )}
                     {/* Toggle dettagli — solo mobile */}
@@ -677,23 +743,34 @@ export default function ProdottiPage() {
 
                   {/* Prezzo netto */}
                   <div className="hidden xl:block text-right">
-                    <p className="text-xs font-semibold" style={{ color: senzaPrezzo ? "#9ca3af" : "#374151", fontFamily: "var(--font-poppins)" }}>
+                    <p className="text-xs font-semibold whitespace-nowrap" style={{ color: senzaPrezzo ? "#9ca3af" : "#374151", fontFamily: "var(--font-poppins)" }}>
                       {senzaPrezzo ? "N/D" : euro(prezzo)}
                     </p>
                   </div>
 
                   {/* PFU */}
                   <div className="hidden xl:block text-right">
-                    <p className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                    <p className="text-xs whitespace-nowrap" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
                       {euro(pfu)}
                     </p>
                   </div>
 
                   {/* Prezzo Finito (contributo logistico + IVA 22% inclusi) */}
-                  <div className="hidden xl:block text-right">
-                    <p className="text-sm font-black" style={{ color: senzaPrezzo ? "#9ca3af" : "#111", fontFamily: "var(--font-poppins)" }}>
+                  <div className="hidden xl:flex items-center justify-end gap-1 whitespace-nowrap">
+                    <p className="text-sm font-black whitespace-nowrap" style={{ color: senzaPrezzo ? "#9ca3af" : "#111", fontFamily: "var(--font-poppins)" }}>
                       {senzaPrezzo ? "N/D" : euro(prezzoFinito)}
                     </p>
+                    {!senzaPrezzo && (
+                      <button
+                        type="button"
+                        onClick={(e) => openPrezzoPopup(e, hit.objectID)}
+                        className="flex-shrink-0 p-0.5 rounded-full hover:bg-gray-100 transition-colors"
+                        title="Dettaglio prezzo"
+                        aria-label="Dettaglio prezzo"
+                      >
+                        <Info size={13} style={{ color: "#9ca3af" }} />
+                      </button>
+                    )}
                   </div>
 
                   {/* Stock Nola */}
@@ -846,6 +923,21 @@ export default function ProdottiPage() {
           )}
         </>
       )}
+      {/* ── Popup dettaglio "Prezzo Finito" — ancorato alla ⓘ ── */}
+      {prezzoPopupHit && (
+        <AnchoredPopover
+          key={prezzoPopupId}
+          open
+          onClose={() => setPrezzoPopupId(null)}
+          anchorRef={prezzoAnchorRef}
+          width={250}
+          align="right"
+          desktopMinWidth={1280}
+        >
+          <PrezzoBreakdown hit={prezzoPopupHit} ruolo={user?.Ruolo} />
+        </AnchoredPopover>
+      )}
+
       {/* ── Modal foto prodotto ── */}
       {fotoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
