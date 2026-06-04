@@ -22,17 +22,29 @@ export default function LoginForm() {
     setLoading(true);
     try {
       const credential = await signInWithEmailAndPassword(auth, email, password);
-      const idToken = await credential.user.getIdToken();
 
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken }),
-      });
+      // Le credenziali sono ora già validate da Firebase. Un eventuale errore di
+      // /api/auth/login (es. 401) non è mai "password errata" ma un intoppo
+      // transitorio lato server (token/sessione): lo ritentiamo con un token
+      // rigenerato, così il login resta affidabile come nella vecchia app
+      // FlutterFlow, che non aveva questo passaggio server.
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const idToken = await credential.user.getIdToken(attempt > 0); // forza il refresh dal 2° tentativo
+        res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        });
+        if (res.ok) break;
+        // 400 (token mancante) e 403 (utente non autorizzato) sono definitivi: inutile ritentare
+        if (res.status === 400 || res.status === 403) break;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+      }
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Errore di autenticazione");
+      if (!res || !res.ok) {
+        const data = res ? await res.json().catch(() => ({})) : {};
+        throw new Error((data as { error?: string }).error ?? "Errore di autenticazione");
       }
 
       const { Ruolo, CRM } = await res.json();

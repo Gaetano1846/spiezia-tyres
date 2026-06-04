@@ -1,8 +1,14 @@
 import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
-let _db: ReturnType<typeof getFirestore> | null = null;
+// Cache a livello di processo (non di modulo). In Next dev l'HMR ri-valuta questo
+// modulo azzerando le variabili locali, ma il singleton interno di firebase-admin
+// (la Firestore legata all'App) sopravvive: con una semplice `let _db` la cache
+// tornava `null` mentre la Firestore era già inizializzata, quindi `settings()`
+// lanciava "Firestore has already been initialized" → login 401 intermittente
+// (falliva al primo tentativo, riusciva al retry). `globalThis` sopravvive all'HMR.
+const adminGlobal = globalThis as unknown as { _adminDb?: Firestore };
 
 function getAdminApp(): App {
   if (getApps().length > 0) return getApps()[0];
@@ -23,12 +29,21 @@ function getAdminApp(): App {
 
 export const adminAuth = () => getAuth(getAdminApp());
 
-export const adminDb = () => {
-  if (_db) return _db;
-  _db = getFirestore(getAdminApp());
-  // gRPC non rispetta NODE_TLS_REJECT_UNAUTHORIZED su Windows — usa REST
+export const adminDb = (): Firestore => {
+  if (adminGlobal._adminDb) return adminGlobal._adminDb;
+  const db = getFirestore(getAdminApp());
+  // gRPC non rispetta NODE_TLS_REJECT_UNAUTHORIZED su Windows — usa REST.
+  // `settings()` è chiamabile una sola volta e solo prima di qualsiasi altra
+  // operazione: lo proteggiamo perché in dev (HMR) la Firestore può risultare
+  // già inizializzata da una precedente valutazione del modulo. In quel caso
+  // riusiamo l'istanza esistente invece di far fallire l'intera richiesta.
   if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
-    _db.settings({ preferRest: true });
+    try {
+      db.settings({ preferRest: true });
+    } catch {
+      /* già inizializzata — manteniamo l'istanza esistente */
+    }
   }
-  return _db;
+  adminGlobal._adminDb = db;
+  return db;
 };
