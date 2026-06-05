@@ -707,7 +707,7 @@ export default function ProdottiPage() {
       <Card padding="sm">
         {/* Toolbar */}
         <div className="flex gap-2 mb-3 flex-wrap items-center">
-          <div className="flex-1 min-w-[150px] relative">
+          <div className="relative basis-full sm:basis-0 sm:flex-1 min-w-[150px]">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
             <input
               value={search}
@@ -717,20 +717,26 @@ export default function ProdottiPage() {
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
             />
           </div>
-          <select value={marca} onChange={(e) => setMarca(e.target.value)}
-            className="px-3 py-2 rounded-xl text-sm outline-none"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-            <option value="">Tutte le marche</option>
-            {marcheUniche.map((m) => <option key={m}>{m}</option>)}
-          </select>
-          <select value={stagione} onChange={(e) => setStagione(e.target.value)}
-            className="px-3 py-2 rounded-xl text-sm outline-none"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-            <option value="">Tutte le stagioni</option>
-            <option value="Estive">Estive</option>
-            <option value="Invernali">Invernali</option>
-            <option value="4-Stagioni">4 Stagioni</option>
-          </select>
+          <div className="relative basis-full sm:basis-auto sm:flex-none">
+            <select value={marca} onChange={(e) => setMarca(e.target.value)}
+              className="w-full appearance-none pl-3 pr-9 py-2 rounded-xl text-sm outline-none cursor-pointer truncate"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+              <option value="">Tutte le marche</option>
+              {marcheUniche.map((m) => <option key={m}>{m}</option>)}
+            </select>
+            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+          </div>
+          <div className="relative flex-1 sm:flex-none min-w-[150px]">
+            <select value={stagione} onChange={(e) => setStagione(e.target.value)}
+              className="w-full appearance-none pl-3 pr-9 py-2 rounded-xl text-sm outline-none cursor-pointer truncate"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+              <option value="">Tutte le stagioni</option>
+              <option value="Estive">Estive</option>
+              <option value="Invernali">Invernali</option>
+              <option value="4-Stagioni">4 Stagioni</option>
+            </select>
+            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+          </div>
           <label className="flex items-center gap-1.5 text-sm cursor-pointer flex-shrink-0"
             style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
             <input type="checkbox" checked={soloDisponibili}
