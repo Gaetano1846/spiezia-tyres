@@ -168,6 +168,12 @@ export async function searchProdotti(
 
   const filterParts: string[] = [];
 
+  // Vincolo di progetto: si considerano SEMPRE e SOLO i prodotti con T24=false
+  // (si esclude il catalogo dropship Tyres24/T24, ~114k articoli). Applicato qui
+  // alla sorgente così ogni consumatore (catalogo B2B, admin, magazzino,
+  // promozioni, ricerca header) lo eredita automaticamente.
+  filterParts.push("T24:false");
+
   if (soloDisponibili) {
     filterParts.push(
       "(Stock_Nola>=1 OR Stock_Nola_2>=1 OR Stock_Volla>=1 OR Stock_Roma>=1 OR Stock_Portici>=1 OR Stock_OCP>=1)"

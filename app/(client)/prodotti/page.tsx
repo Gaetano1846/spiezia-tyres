@@ -18,6 +18,7 @@ import {
 } from "@/lib/algolia";
 import { CONTRIBUTO_LOGISTICO_UNIT } from "@/lib/cart";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
+import PromoCarousel from "@/components/layout/PromoCarousel";
 import type { Ruolo } from "@/lib/types";
 
 type Stagione = "Estive" | "Invernali" | "4-Stagioni";
@@ -352,7 +353,11 @@ export default function ProdottiPage() {
   }
 
   return (
-    <div className="px-4 md:px-5 py-5 space-y-4">
+    <>
+      {/* Carosello promozionale: solo su questa pagina e dentro l'area scrollabile,
+          così scorre via con la pagina e ricompare tornando in cima (non più pinnato). */}
+      <PromoCarousel />
+      <div className="px-4 md:px-5 py-5 space-y-4">
 
       {/* ── Ricerca Avanzata ── */}
       <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
@@ -1007,5 +1012,6 @@ export default function ProdottiPage() {
         </div>
       )}
     </div>
+    </>
   );
 }

@@ -527,9 +527,10 @@ export default function ProdottiPage() {
     loadProdotti().finally(() => setLoading(false));
   }, [loadProdotti]);
 
-  // Due query Algolia leggere (hitsPerPage:0 → solo nbHits) per i conteggi catalogo:
-  // - totale = tutti i prodotti dell'indice
-  // - disponibili = con stock fisico >=1 in almeno un deposito (stesso filtro del catalogo)
+  // Due query Algolia leggere (hitsPerPage:0 → solo nbHits) per i conteggi catalogo.
+  // searchProdotti applica già il vincolo di progetto T24=false, quindi:
+  // - totale = prodotti T24=false dell'indice
+  // - disponibili = di questi, con stock fisico >=1 in almeno un deposito
   // - esauriti = complemento esatto (totale - disponibili)
   useEffect(() => {
     Promise.all([
