@@ -19,6 +19,10 @@ function formatEuro(n: number | undefined | null) {
   return (n ?? 0).toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
+function formatInt(n: number | null | undefined) {
+  return n == null ? "—" : n.toLocaleString("it-IT");
+}
+
 // Mappa la stagione (anche con etichette verbose tipo "Pneumatici 4 stagioni") a icona + colore
 const STAGIONE_ICONS = {
   estive:    { Icon: Flame,     color: "#EE8B60", label: "Estive" },
@@ -468,6 +472,11 @@ export default function ProdottiPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(0);
 
+  // Conteggi reali dell'intero catalogo (nbHits server-side da Algolia), indipendenti
+  // dalla tabella che carica solo i primi 1000 hit. null finché non arrivano → card "—".
+  const [catalogStats, setCatalogStats] =
+    useState<{ totale: number; disponibili: number; esauriti: number } | null>(null);
+
   // Panel state
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<PanelMode>("create");
@@ -518,6 +527,23 @@ export default function ProdottiPage() {
     loadProdotti().finally(() => setLoading(false));
   }, [loadProdotti]);
 
+  // Due query Algolia leggere (hitsPerPage:0 → solo nbHits) per i conteggi catalogo:
+  // - totale = tutti i prodotti dell'indice
+  // - disponibili = con stock fisico >=1 in almeno un deposito (stesso filtro del catalogo)
+  // - esauriti = complemento esatto (totale - disponibili)
+  useEffect(() => {
+    Promise.all([
+      searchProdotti({ query: "", soloDisponibili: false, hitsPerPage: 0 }),
+      searchProdotti({ query: "", soloDisponibili: true,  hitsPerPage: 0 }),
+    ])
+      .then(([all, disp]) => {
+        const totale = all.nbHits;
+        const disponibili = disp.nbHits;
+        setCatalogStats({ totale, disponibili, esauriti: Math.max(0, totale - disponibili) });
+      })
+      .catch(() => { /* lascia null → le card mostrano "—" */ });
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Filtri / paginazione
   // ---------------------------------------------------------------------------
@@ -550,17 +576,11 @@ export default function ProdottiPage() {
   );
   const nbPages = Math.ceil(filtered.length / PAGE_SIZE);
 
-  const stats = useMemo(() => {
-    const totale = tutti.length;
-    const disponibili = tutti.filter((p) => stockTotale(p) > 0).length;
-    const esauriti = tutti.filter((p) => stockTotale(p) === 0).length;
-    return [
-      { label: "Totale prodotti", value: totale,     sub: "in catalogo", icon: <Package size={20} />, accent: "#FFC803" },
-      { label: "Disponibili",     value: disponibili, sub: "a magazzino", icon: <Package size={20} />, accent: "#249689" },
-      { label: "Esauriti",        value: esauriti,    sub: "stock zero",  icon: <Package size={20} />, accent: "#FF5963" },
-      { label: "In promozione",   value: 0,           sub: "scontati",    icon: <Package size={20} />, accent: "#EE8B60" },
-    ];
-  }, [tutti]);
+  const stats = useMemo(() => [
+    { label: "Totale prodotti", value: formatInt(catalogStats?.totale),      sub: "in catalogo",        icon: <Package size={20} />, accent: "#FFC803" },
+    { label: "Disponibili",     value: formatInt(catalogStats?.disponibili), sub: "stock a magazzino",  icon: <Package size={20} />, accent: "#249689" },
+    { label: "Esauriti",        value: formatInt(catalogStats?.esauriti),    sub: "senza stock fisico", icon: <Package size={20} />, accent: "#FF5963" },
+  ], [catalogStats]);
 
   const hasFilters = !!(search || marca || stagione || soloDisponibili);
 
@@ -691,7 +711,11 @@ export default function ProdottiPage() {
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Prodotti</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-            {loading ? "Caricamento…" : `${filtered.length} prodotti`}
+            {loading
+              ? "Caricamento…"
+              : hasFilters
+                ? `${formatInt(filtered.length)} risultati (su ${formatInt(tutti.length)} caricati)`
+                : `${formatInt(tutti.length)} caricati${catalogStats && catalogStats.totale > tutti.length ? ` di ${formatInt(catalogStats.totale)} in catalogo` : ""}`}
           </p>
         </div>
         <button
@@ -704,8 +728,8 @@ export default function ProdottiPage() {
         </button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      {/* Stats — conteggi reali catalogo (Algolia nbHits) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {stats.map((s) => <StatCard key={s.label} {...s} />)}
       </div>
 
