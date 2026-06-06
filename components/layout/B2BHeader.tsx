@@ -93,9 +93,11 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
   const isAdmin = ruolo === "admin";
   const hasCRM  = user?.CRM || isAdmin;
 
-  // Barra filtri pneumatici persistente su tutte le pagine (come nell'app Flutter).
-  // Unica eccezione: la homepage, che ha già l'hero di ricerca completo al centro.
-  const showSearch = pathname !== "/";
+  // Barra filtri pneumatici persistente sulle pagine secondarie (come nell'app Flutter).
+  // Eccezioni: la homepage (ha già l'hero di ricerca completo al centro) e le pagine
+  // prodotti (lista + dettaglio), che hanno i propri criteri di filtro dedicati alla lista.
+  const isProdottiPage = pathname === "/prodotti" || pathname.startsWith("/prodotti/");
+  const showSearch = pathname !== "/" && !isProdottiPage;
 
   function toggleStagione(s: string) {
     setStagioni((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);

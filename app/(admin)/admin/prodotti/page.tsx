@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Package, Search, Eye, Pencil, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, Plus, Save, Loader2, Flame, Snowflake, CloudSun } from "lucide-react";
+import { Package, Search, Eye, Pencil, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, Plus, Save, Loader2, Flame, Snowflake, CloudSun, SlidersHorizontal } from "lucide-react";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
+import HeaderFilter from "@/components/ui/HeaderFilter";
 import toast from "react-hot-toast";
 import {
   searchProdotti, stockTotale, formatMisura, pfuDaDiametro,
@@ -464,6 +465,7 @@ export default function ProdottiPage() {
   const [marca, setMarca] = useState("");
   const [stagione, setStagione] = useState("");
   const [soloDisponibili, setSoloDisponibili] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(0);
 
   // Panel state
@@ -708,9 +710,11 @@ export default function ProdottiPage() {
       </div>
 
       <Card padding="sm">
-        {/* Toolbar */}
-        <div className="flex gap-2 mb-3 flex-wrap items-center">
-          <div className="relative basis-full sm:basis-0 sm:flex-1 min-w-[150px]">
+        {/* Toolbar — ricerca + Solo disponibili + reset. Su desktop Marca/Stagione sono
+            nell'intestazione tabella (come Ordini/Spedizioni); su mobile in un pannello collassabile. */}
+        <div className="mb-3 space-y-2">
+         <div className="flex gap-2 flex-wrap items-center">
+          <div className="relative flex-1 min-w-[150px]">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
             <input
               value={search}
@@ -720,39 +724,60 @@ export default function ProdottiPage() {
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
             />
           </div>
-          <div className="relative basis-full sm:basis-auto sm:flex-none">
-            <select value={marca} onChange={(e) => setMarca(e.target.value)}
-              className="w-full appearance-none pl-3 pr-9 py-2 rounded-xl text-sm outline-none cursor-pointer truncate"
-              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-              <option value="">Tutte le marche</option>
-              {marcheUniche.map((m) => <option key={m}>{m}</option>)}
-            </select>
-            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
-          </div>
-          <div className="relative flex-1 sm:flex-none min-w-[150px]">
-            <select value={stagione} onChange={(e) => setStagione(e.target.value)}
-              className="w-full appearance-none pl-3 pr-9 py-2 rounded-xl text-sm outline-none cursor-pointer truncate"
-              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-              <option value="">Tutte le stagioni</option>
-              <option value="Estive">Estive</option>
-              <option value="Invernali">Invernali</option>
-              <option value="4-Stagioni">4 Stagioni</option>
-            </select>
-            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
-          </div>
+
+          {/* Solo disponibili */}
           <label className="flex items-center gap-1.5 text-sm cursor-pointer flex-shrink-0"
             style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
             <input type="checkbox" checked={soloDisponibili}
               onChange={(e) => setSoloDisponibili(e.target.checked)} className="rounded" />
             Solo disponibili
           </label>
+
+          {/* Desktop: reset filtri */}
           {hasFilters && (
             <button onClick={reset}
-              className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm"
+              className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white ml-auto"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+              <X size={13} /> Reset
+            </button>
+          )}
+
+          {/* Mobile: toggle Filtri */}
+          <button onClick={() => setShowFilters((v) => !v)}
+            className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold flex-shrink-0 transition-colors"
+            style={{ background: showFilters ? "#FFC803" : "var(--bg-primary)", border: "1px solid var(--border)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
+            <SlidersHorizontal size={14} /> Filtri
+            {(() => { const n = [marca, stagione].filter(Boolean).length; return n > 0 ? (
+              <span className="w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: "#111", color: "#FFC803" }}>{n}</span>
+            ) : null; })()}
+            <ChevronDown size={14} style={{ transform: showFilters ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+          </button>
+          {hasFilters && (
+            <button onClick={reset}
+              className="md:hidden flex items-center gap-1 px-3 py-2 rounded-xl text-sm flex-shrink-0"
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
               <X size={13} />
             </button>
           )}
+         </div>
+
+         {/* Mobile: pannello filtri collassabile (Marca · Stagione) */}
+         <div className={`${showFilters ? "flex" : "hidden"} md:hidden gap-2 flex-wrap items-center`}>
+          <select value={marca} onChange={(e) => setMarca(e.target.value)}
+            className="px-3 py-2 rounded-xl text-sm outline-none"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+            <option value="">Tutte le marche</option>
+            {marcheUniche.map((m) => <option key={m}>{m}</option>)}
+          </select>
+          <select value={stagione} onChange={(e) => setStagione(e.target.value)}
+            className="px-3 py-2 rounded-xl text-sm outline-none"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
+            <option value="">Tutte le stagioni</option>
+            <option value="Estive">Estive</option>
+            <option value="Invernali">Invernali</option>
+            <option value="4-Stagioni">4 Stagioni</option>
+          </select>
+         </div>
         </div>
 
         {/* Table — solo desktop */}
@@ -760,12 +785,45 @@ export default function ProdottiPage() {
           <table className="w-full text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
             <thead>
               <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                {["", "Marca / Modello", "Foto", "Misura", "Stagione", "Stock totale", "P. Gommista", "P. Acquisto", ""].map((h, i) => (
-                  <th key={i} className="pb-2.5 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
+                {/* Logo marca (colonna senza etichetta) */}
+                <th className="pb-2.5 pr-3 w-12" />
+
+                {/* Marca / Modello — filtro nell'intestazione (come Ordini/Spedizioni) */}
+                <th className="pb-2.5 pr-3 align-bottom">
+                  <HeaderFilter value={marca} onChange={setMarca} title="Filtra per marca">
+                    <option value="">Marca / Modello</option>
+                    {marcheUniche.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </HeaderFilter>
+                </th>
+
+                {/* Foto, Misura — etichette */}
+                {["Foto", "Misura"].map((h) => (
+                  <th key={h} className="pb-2.5 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
                     style={{ color: "var(--text-muted)" }}>
                     {h}
                   </th>
                 ))}
+
+                {/* Stagione — filtro nell'intestazione */}
+                <th className="pb-2.5 pr-3 align-bottom">
+                  <HeaderFilter value={stagione} onChange={setStagione} title="Filtra per stagione">
+                    <option value="">Stagione</option>
+                    <option value="Estive">Estive</option>
+                    <option value="Invernali">Invernali</option>
+                    <option value="4-Stagioni">4 Stagioni</option>
+                  </HeaderFilter>
+                </th>
+
+                {/* Stock totale, P. Gommista, P. Acquisto — etichette */}
+                {["Stock totale", "P. Gommista", "P. Acquisto"].map((h) => (
+                  <th key={h} className="pb-2.5 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
+                    style={{ color: "var(--text-muted)" }}>
+                    {h}
+                  </th>
+                ))}
+
+                {/* Azioni (colonna senza etichetta) */}
+                <th className="pb-2.5 pr-3" />
               </tr>
             </thead>
             <tbody>
