@@ -261,6 +261,14 @@ export default function OrdineAdminDetailPage() {
 
   async function handleStatoChange(nuovoStato: OrdineStato) {
     if (!ordine || savingStato || nuovoStato === ordine.Stato) return;
+    // L'annullamento richiede SEMPRE un motivo: instradiamo verso il modale
+    // dedicato invece di scrivere lo stato direttamente dal dropdown inline,
+    // così il Motivo_Annullamento e la voce in Cronologia restano coerenti.
+    if (nuovoStato === "Annullato") {
+      setMotivoAnnulla(ordine.Motivo_Annullamento ?? "");
+      setAnnullaOpen(true);
+      return;
+    }
     setSavingStato(true);
     try {
       await updateDoc(doc(db, "Ordini", id), {

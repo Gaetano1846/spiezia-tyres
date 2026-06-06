@@ -369,6 +369,9 @@ export default function CheckoutPage() {
   const [spedizioneDiv, setSpedizioneDiv] = useState(false);
   const [spedizione, setSpedizione] = useState<AddressForm>(emptyAddress);
   const [submitting, setSubmitting] = useState(false);
+  // Guardia sincrona contro il doppio submit: setSubmitting(true) è asincrono,
+  // un secondo click prima del re-render creerebbe un ordine duplicato.
+  const submittingRef = useRef(false);
   const [fidoBlocked, setFidoBlocked] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
 
@@ -477,6 +480,8 @@ export default function CheckoutPage() {
 
   async function handleConfirm() {
     if (!user?.uid) return;
+    if (submittingRef.current) return; // doppio submit: ordine già in corso
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const addr = (data: AddressForm) => ({
@@ -572,6 +577,7 @@ export default function CheckoutPage() {
     } catch (e) {
       toast.error("Errore nella creazione dell'ordine");
       console.error(e);
+      submittingRef.current = false; // errore: consenti un nuovo tentativo
     } finally {
       setSubmitting(false);
     }

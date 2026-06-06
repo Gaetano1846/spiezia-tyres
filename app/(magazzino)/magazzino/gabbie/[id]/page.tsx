@@ -235,29 +235,40 @@ export default function GabbiaPage() {
 
   async function handleGeneraQR() {
     if (!gabbia || generatingQR) return;
+
+    // Se il QR è già stato generato, aprilo direttamente (come nel vecchio
+    // progetto FlutterFlow: launchURL del campo QR_code).
+    if (gabbia.QR_code) {
+      window.open(gabbia.QR_code, "_blank", "noopener");
+      return;
+    }
+
     setGeneratingQR(true);
     const toastId = toast.loading("Generazione QR…");
     try {
+      // Payload identico al vecchio GeneraQRCall: la Cloud Function vuole
+      // ESATTAMENTE { link, id }. Il link è la pagina della gabbia da aprire
+      // scansionando il QR; la CF genera l'immagine e scrive l'URL nel campo
+      // Magazzino/<id>.QR_code (NON restituisce un PNG nel body).
+      const link = `https://newb2b.spieziatyres.it/Gabbia?gabbiaRef=${id}`;
       const res = await fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/GenerateQR", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id:       id,
-          posizione: gabbia.ID ?? id,
-          sede:     gabbia.sedeName,
-          x: gabbia.X, y: gabbia.Y, z: gabbia.Z,
-        }),
+        body: JSON.stringify({ link, id }),
       });
       if (!res.ok) throw new Error(`CF ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `QR_Gabbia_${gabbia.ID ?? id}.png`;
-      a.click();
-      URL.revokeObjectURL(url);
+
+      // Rileggi il documento: la CF ha scritto l'URL del QR su QR_code.
+      const snap = await getDoc(doc(db, "Magazzino", id));
+      const qrUrl = (snap.data()?.QR_code as string | undefined) ?? "";
+      await reload();
       toast.dismiss(toastId);
-      toast.success("QR scaricato");
+      if (qrUrl) {
+        window.open(qrUrl, "_blank", "noopener");
+        toast.success("QR generato");
+      } else {
+        toast.success("QR generato");
+      }
     } catch {
       toast.dismiss(toastId);
       toast.error("Errore nella generazione del QR");

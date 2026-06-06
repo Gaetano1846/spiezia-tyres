@@ -3,8 +3,6 @@ import Link from "next/link";
 import { X, Trash2, Plus, Minus, ShoppingCart } from "lucide-react";
 import { useCart } from "@/components/layout/CartProvider";
 
-const CONTRIBUTO_LOGISTICO_UNIT = 0.95;
-
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -15,9 +13,11 @@ function fmt(n: number) {
 }
 
 export default function CartDrawer({ open, onClose }: Props) {
-  const { items, totals, remove, update } = useCart();
+  const { items, itemsConSconto, totalsConSconto, remove, update } = useCart();
 
-  const contributoLogistico = items.reduce((sum, i) => sum + i.quantita * CONTRIBUTO_LOGISTICO_UNIT, 0);
+  // NB: usiamo i totali scontati (coerenti con /carrello e /checkout). Il contributo
+  // logistico è già incluso in totalsConSconto.totale — NON va riaggiunto.
+  const contributoLogistico = totalsConSconto.contributoLogistico;
 
   return (
     <>
@@ -79,7 +79,7 @@ export default function CartDrawer({ open, onClose }: Props) {
               </p>
             </div>
           ) : (
-            items.map((item) => (
+            itemsConSconto.map((item) => (
               <div
                 key={item.id}
                 className="flex gap-3 p-3 rounded-xl"
@@ -101,9 +101,12 @@ export default function CartDrawer({ open, onClose }: Props) {
                       </span>
                     )}
                   </p>
-                  {/* Prezzo singolo */}
+                  {/* Prezzo singolo (scontato se c'è una promo attiva) */}
                   <p className="text-xs font-semibold mt-1" style={{ color: "#111" }}>
-                    {fmt(item.prezzo)} <span style={{ color: "#9ca3af" }}>+ PFU {fmt(item.pfu)}</span>
+                    {item.sconto && item.prezzoScontato < item.prezzo && (
+                      <span className="line-through mr-1" style={{ color: "#9ca3af" }}>{fmt(item.prezzo)}</span>
+                    )}
+                    {fmt(item.prezzoScontato)} <span style={{ color: "#9ca3af" }}>+ PFU {fmt(item.pfu)}</span>
                   </p>
                 </div>
 
@@ -142,9 +145,9 @@ export default function CartDrawer({ open, onClose }: Props) {
                     </button>
                   </div>
 
-                  {/* Totale riga */}
+                  {/* Totale riga (prezzo scontato + PFU, IVA inclusa) */}
                   <p className="text-xs font-black" style={{ color: "#111" }}>
-                    {fmt((item.prezzo + item.pfu) * item.quantita * 1.22)}
+                    {fmt((item.prezzoScontato + item.pfu) * item.quantita * 1.22)}
                   </p>
                 </div>
               </div>
@@ -160,11 +163,17 @@ export default function CartDrawer({ open, onClose }: Props) {
           >
             <div className="flex justify-between text-xs" style={{ color: "#6b7280" }}>
               <span>Subtotale</span>
-              <span>{fmt(totals.subtotale)}</span>
+              <span>{fmt(totalsConSconto.subtotale)}</span>
             </div>
+            {totalsConSconto.scontoTotale > 0 && (
+              <div className="flex justify-between text-xs" style={{ color: "#16a34a" }}>
+                <span>Sconto promo</span>
+                <span>−{fmt(totalsConSconto.scontoTotale)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-xs" style={{ color: "#6b7280" }}>
               <span>PFU</span>
-              <span>{fmt(totals.pfu)}</span>
+              <span>{fmt(totalsConSconto.pfu)}</span>
             </div>
             <div className="flex justify-between text-xs" style={{ color: "#6b7280" }}>
               <span>Contributo Logistico</span>
@@ -172,14 +181,14 @@ export default function CartDrawer({ open, onClose }: Props) {
             </div>
             <div className="flex justify-between text-xs" style={{ color: "#6b7280" }}>
               <span>IVA (22%)</span>
-              <span>{fmt(totals.iva)}</span>
+              <span>{fmt(totalsConSconto.iva)}</span>
             </div>
             <div
               className="flex justify-between text-sm font-black pt-2"
               style={{ borderTop: "1px solid #e5e7eb", color: "#111" }}
             >
               <span>Totale</span>
-              <span>{fmt(totals.totale + contributoLogistico)}</span>
+              <span>{fmt(totalsConSconto.totale)}</span>
             </div>
 
             <Link

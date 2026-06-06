@@ -42,6 +42,7 @@ const RAGGI = ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22",
 
 type FormState = {
   fisso: boolean;
+  attiva: boolean;
   brand: string[];
   stagioni: string[];
   raggi: string[];
@@ -52,6 +53,7 @@ type FormState = {
 
 const FORM_DEFAULT: FormState = {
   fisso: true,
+  attiva: true,
   brand: [],
   stagioni: [],
   raggi: [],
@@ -340,6 +342,7 @@ export default function PromozioniPage() {
       const scad = promo.Scadenza?.toDate?.();
       setForm({
         fisso: promo.Fisso ?? true,
+        attiva: promo.Attiva ?? true,
         brand: promo.Brand_Nome ?? [],
         stagioni: promo.Stagione ?? [],
         raggi: promo.Raggio ?? [],
@@ -397,6 +400,11 @@ export default function PromozioniPage() {
     if (!form.scadenza) { toast.error("Inserisci la data di scadenza"); return; }
     const importoNum = parseFloat(form.importo.replace(",", "."));
     if (isNaN(importoNum) || importoNum <= 0) { toast.error("Inserisci un importo valido"); return; }
+    // La percentuale è una frazione (0.15 = 15%): deve stare in (0, 1].
+    if (!form.fisso && importoNum > 1) {
+      toast.error("La percentuale dev'essere una frazione: es. 0.15 = 15% (max 1)");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -411,7 +419,7 @@ export default function PromozioniPage() {
         Clienti: clientiRefs,
         Importo: importoNum,
         Scadenza: scadenza,
-        Attiva: true,
+        Attiva: form.attiva,
       };
 
       if (editId) {
@@ -750,6 +758,26 @@ export default function PromozioniPage() {
                     style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
                   />
                 </div>
+
+                {/* Stato attiva/bozza — evita che modificare una promo la ripubblichi per sbaglio */}
+                <label className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl cursor-pointer"
+                  style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}>
+                  <div>
+                    <span className="block text-xs font-bold uppercase tracking-widest" style={{ color: "#374151" }}>
+                      Promozione attiva
+                    </span>
+                    <span className="block text-[11px]" style={{ color: "#9ca3af" }}>
+                      Disattiva per salvarla come bozza senza applicarla ai prezzi
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={form.attiva}
+                    onChange={(e) => setForm((f) => ({ ...f, attiva: e.target.checked }))}
+                    className="w-5 h-5 flex-shrink-0 cursor-pointer"
+                    style={{ accentColor: "#FFC803" }}
+                  />
+                </label>
 
                 {/* Brand */}
                 {brandList.length > 0 && (

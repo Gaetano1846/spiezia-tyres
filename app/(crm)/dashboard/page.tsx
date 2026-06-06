@@ -88,8 +88,10 @@ export default function DashboardPage() {
         getDocs(query(collectionGroup(db, "Preventivo"), limit(500))),
         getDocs(query(collection(db, "Foglio_di_Lavoro"), limit(1000))),
         getDocs(query(
-          collection(db, "users", uid, "Promemoria"),
-          where("Completato", "==", false),
+          // I promemoria CRM vengono creati dalla scheda cliente in questo store
+          // condiviso (campo "Completata"). La dashboard mostra quelli ancora aperti.
+          collection(db, "users", "promemoria_crm", "Promemoria"),
+          where("Completata", "==", false),
           limit(50),
         )),
       ]);
@@ -113,9 +115,15 @@ export default function DashboardPage() {
         return { app, clienteNome };
       });
 
-      const prevAperti = prevSnap.docs.filter(
-        (d) => ["Bozza", "Inviato"].includes(d.data().Stato as string)
-      ).length;
+      // "Aperti" = non ancora accettati né rifiutati. I preventivi nascono
+      // con Stato "In attesa" (e flag Accettato=false), quindi non basta
+      // contare Bozza/Inviato: includiamo tutto ciò che è ancora da lavorare.
+      const prevAperti = prevSnap.docs.filter((d) => {
+        const data = d.data();
+        if (data.Accettato === true) return false;
+        const stato = (data.Stato as string) ?? "In attesa";
+        return !["Accettato", "Rifiutato"].includes(stato);
+      }).length;
 
       const fogliAttivi = fogliSnap.docs.filter((d) => {
         const data = d.data();
@@ -126,8 +134,9 @@ export default function DashboardPage() {
       // Promemoria: raw docs, resolve cliente nomi in batch
       const promRaw: PromemoriaItem[] = promemoriaSnap.docs.map((d) => ({
         id: d.id,
-        Titolo: d.data().Titolo ?? "Promemoria",
-        Data: d.data().Data as Timestamp | undefined,
+        // La scheda cliente salva il titolo in "Nome" e la data in "Data_Scadenza".
+        Titolo: (d.data().Nome ?? d.data().Titolo ?? "Promemoria") as string,
+        Data: (d.data().Data_Scadenza ?? d.data().Data) as Timestamp | undefined,
         ClienteRef: d.data().Cliente as DocumentReference | undefined,
       }));
 
@@ -174,7 +183,7 @@ export default function DashboardPage() {
     if (!user?.uid || markingId) return;
     setMarkingId(promemoriaId);
     try {
-      await updateDoc(doc(db, "users", user.uid, "Promemoria", promemoriaId), { Completato: true });
+      await updateDoc(doc(db, "users", "promemoria_crm", "Promemoria", promemoriaId), { Completata: true });
       setPromemoria((prev) => prev.filter((p) => p.id !== promemoriaId));
       toast.success("Promemoria completato");
     } catch {

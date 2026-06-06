@@ -7,6 +7,7 @@ import {
   serverTimestamp, doc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { nextCounter } from "@/lib/counters";
 import { ArrowLeft, Search, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -124,10 +125,15 @@ export default function NuovoFoglioLavoroPage() {
         .filter((p) => p.Stato === "smontati")
         .map(toPneumatico);
 
+      // Numero progressivo per sede (atomico via transaction).
+      const numero = await nextCounter("FoglioDiLavoro", sedeId);
+
       const payload: Record<string, unknown> = {
         Cliente: doc(db, "Clienti", clienteSelezionato.id),
         Sede: doc(db, "Sede", sedeId),
         Stato: "Aperto",
+        ID: numero,
+        Numero: numero,
         Data_Creazione: serverTimestamp(),
         ...(montati.length > 0 && { Pneumatici_Montati: montati }),
         ...(smontati.length > 0 && { Pneumatici_Smontati: smontati }),

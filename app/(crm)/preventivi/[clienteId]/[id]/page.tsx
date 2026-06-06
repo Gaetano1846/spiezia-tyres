@@ -206,18 +206,28 @@ export default function PreventivoDetailPage() {
 
   async function handleConvertToOrder() {
     if (!preventivo || converting) return;
+    // Guardia anti-doppia-conversione: un preventivo già convertito non deve
+    // generare un secondo ordine (evita duplicati con numeri diversi).
+    if (preventivo.OrdineId || preventivo.Convertito) {
+      toast.error("Questo preventivo è già stato convertito in ordine");
+      return;
+    }
+    const round2 = (x: number) => Math.round(x * 100) / 100;
     setConverting(true);
     try {
       const arts = getArticoli(preventivo);
       const servs = getServizi(preventivo);
 
+      // Coerente con il totale mostrato a schermo: l'imponibile include il PFU.
       const totArticoli = arts.reduce(
-        (s, a) => s + ((a.prezzoUnitario ?? 0)) * a.quantita,
+        (s, a) => s + ((a.prezzoUnitario ?? 0) + (a.pfu ?? 0)) * a.quantita,
         0
       );
+      const totPfu = arts.reduce((s, a) => s + (a.pfu ?? 0) * a.quantita, 0);
       const totServizi = servs.reduce((s, sv) => s + sv.prezzo * sv.quantita, 0);
       const imponibile = totArticoli + totServizi;
       const iva = imponibile * 0.22;
+      const totale = imponibile + iva; // lordo, coerente col modello Ordini B2B
 
       const articoliOrdine = arts.map((a) => ({
         Prodotto: a.misura ?? "",
@@ -225,7 +235,7 @@ export default function PreventivoDetailPage() {
         Marca: a.marca ?? "",
         Quantita: a.quantita,
         PrezzoUnitario: a.prezzoUnitario ?? 0,
-        PFU: 0,
+        PFU: a.pfu ?? 0,
       }));
 
       const sedeId = (preventivo.Sede?.id ?? preventivo.Sede) ?? "main";
@@ -236,16 +246,22 @@ export default function PreventivoDetailPage() {
         Numero: `ORD-${year}-${String(n).padStart(5, "0")}`,
         Cliente: doc(db, "Clienti", clienteId),
         Source: "B2B",
-        Stato: "Confermato",
+        Stato: "In Lavorazione",
         Articoli: articoliOrdine,
-        Totale: imponibile,
-        IVA: iva,
-        PFU: 0,
+        Totale: round2(totale),
+        IVA: round2(iva),
+        PFU: round2(totPfu),
         Note: preventivo.Note ?? preventivo.note ?? null,
         DataCreazione: serverTimestamp(),
       };
 
-      await addDoc(collection(db, "Ordini"), payload);
+      const ordineRef = await addDoc(collection(db, "Ordini"), payload);
+      // Marca il preventivo come convertito per impedire una seconda conversione.
+      await updateDoc(doc(db, "Clienti", clienteId, "Preventivo", id), {
+        Convertito: true,
+        OrdineId: ordineRef.id,
+      });
+      setPreventivo({ ...preventivo, Convertito: true, OrdineId: ordineRef.id });
       toast.success("Ordine creato con successo");
       router.push("/ordini");
     } catch (e) {
@@ -381,7 +397,7 @@ export default function PreventivoDetailPage() {
             {isAccettato && (
               <button
                 onClick={handleConvertToOrder}
-                disabled={converting}
+                disabled={converting || !!(preventivo.OrdineId || preventivo.Convertito)}
                 className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl disabled:opacity-40"
                 style={{ background: "#1D4ED8", color: "#fff", fontFamily: "var(--font-montserrat)" }}
               >
@@ -389,7 +405,7 @@ export default function PreventivoDetailPage() {
                   ? <Loader2 size={13} className="animate-spin" />
                   : <ShoppingCart size={13} />
                 }
-                Converti in Ordine
+                {preventivo.OrdineId || preventivo.Convertito ? "Già convertito" : "Converti in Ordine"}
               </button>
             )}
           </div>

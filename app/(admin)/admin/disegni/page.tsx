@@ -172,13 +172,14 @@ export default function DisegniPage() {
   }
 
   const filtered = useMemo(() => {
-    setPage(0);
     return disegni.filter((d) => {
       if (search && !d.Nome.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disegni, search]);
+
+  // Reset pagina al cambio filtro, fuori dal render (anti-pattern setState in useMemo).
+  useEffect(() => { setPage(0); }, [search]);
 
   const paginated = useMemo(
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),

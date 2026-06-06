@@ -56,12 +56,18 @@ export default function LoginForm() {
         });
       } catch { /* non bloccare il login se il doc non esiste */ }
 
-      const redirect = searchParams.get("redirect");
+      // Solo redirect relativi same-origin: un valore esterno (es. ?redirect=https://evil…)
+      // verrebbe altrimenti usato per phishing dopo un login legittimo.
+      const rawRedirect = searchParams.get("redirect");
+      const safeRedirect =
+        rawRedirect && rawRedirect.startsWith("/") && !rawRedirect.startsWith("//")
+          ? rawRedirect
+          : null;
       const rolePath =
         Ruolo === "Admin" ? "/admin/ordini" :
         Ruolo === "Magazziniere" ? "/magazzino" :
         CRM ? "/dashboard" : "/";
-      router.replace(redirect ?? rolePath);
+      router.replace(safeRedirect ?? rolePath);
     } catch (err: unknown) {
       if (err instanceof FirebaseError) console.error("[auth]", err.code, err.message);
       let msg = "Email o password errati";

@@ -47,7 +47,8 @@ export type ScontoApplicato = {
 /**
  * Trova e applica la migliore promozione applicabile a un articolo del carrello.
  * Logica Flutter: Brand_Nome match (case-insensitive), opzionale Stagione / Raggio.
- * Fisso=true → sconto fisso in €; Fisso=false → moltiplicatore (es. Importo=0.9 → -10%).
+ * Fisso=true → sconto fisso in €; Fisso=false → percentuale come frazione
+ * (es. Importo=0.15 → -15%), coerente con il form admin.
  *
  * Restituisce il prezzo scontato e la promozione applicata (se trovata).
  */
@@ -95,12 +96,15 @@ export function applicaPromozione(
 
     if (promo.Fisso) {
       // Sconto fisso in €
-      importoSconto = importoRaw;
+      importoSconto = Math.max(0, importoRaw);
       prezzoScontato = Math.max(0, item.prezzo - importoSconto);
     } else {
-      // Moltiplicatore (es. 0.9 = -10%, 0.85 = -15%)
-      prezzoScontato = item.prezzo * importoRaw;
-      importoSconto = item.prezzo - prezzoScontato;
+      // Percentuale di sconto espressa come FRAZIONE (0.15 = 15%), coerente con
+      // l'etichetta del form admin ("es. 0.15 = 15%"). Clamp difensivo in [0,1]
+      // per evitare prezzi negativi o aumenti dovuti a valori fuori scala.
+      const frac = Math.min(Math.max(importoRaw, 0), 1);
+      prezzoScontato = item.prezzo * (1 - frac);
+      importoSconto = Math.max(0, item.prezzo - prezzoScontato);
     }
 
     candidati.push({

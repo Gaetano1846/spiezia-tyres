@@ -85,7 +85,10 @@ export default function ModificaAppuntamentoPage() {
       const ts = app.DataOra as Timestamp;
       if (ts?.toDate) {
         const d = ts.toDate();
-        setData(d.toISOString().slice(0, 10));
+        // Formatta da parti LOCALI: toISOString() converte in UTC e per l'Italia
+        // (UTC+1/+2) sposterebbe la data di un giorno indietro a mezzanotte.
+        const pad = (n: number) => String(n).padStart(2, "0");
+        setData(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
         setOra(d.toTimeString().slice(0, 5));
       }
 

@@ -41,7 +41,15 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isAuth();
       allow create: if isOwner(userId);
-      allow update: if isOwner(userId) || isAdmin();
+      // Il proprietario può aggiornare il proprio profilo MA NON i campi che
+      // determinano i privilegi (Ruolo / CRM): altrimenti chiunque potrebbe
+      // auto-nominarsi Admin dalla console del browser. Solo un Admin può
+      // modificare ruolo/flag CRM di un utente.
+      allow update: if isAdmin() || (
+        isOwner(userId)
+        && request.resource.data.get('Ruolo', '') == resource.data.get('Ruolo', '')
+        && request.resource.data.get('CRM', false) == resource.data.get('CRM', false)
+      );
       allow delete: if isAdmin();
 
       match /Indirizzo_Fatturazione/{docId} {
@@ -96,8 +104,13 @@ service cloud.firestore {
         isAdmin() ||
         isCRM()
       );
-      // Crea: qualsiasi utente autenticato (checkout)
-      allow create: if isAuth();
+      // Crea: utente autenticato, ma SOLO ordini intestati a sé stesso
+      // (l'admin/CRM possono creare per conto di un cliente → ramo isAdmin/isCRM).
+      // NB: la validazione del Totale resta da fare lato server (Cloud Function):
+      // le regole non possono ricalcolare il prezzo per-ruolo dai doc Prodotti.
+      allow create: if isAuth() && (
+        request.resource.data.Utente == userRef() || isAdmin() || isCRM()
+      );
       // Modifica/cancella: solo admin
       allow update, delete: if isAdmin();
 
@@ -117,7 +130,8 @@ service cloud.firestore {
 
     match /Clienti/{clienteId} {
       allow read: if isAdmin() || isCRM();
-      allow create: if isAuth();
+      // Solo staff: un cliente B2B non deve poter creare anagrafiche CRM.
+      allow create: if isAdmin() || isCRM();
       allow update, delete: if isAdmin() || isCRM();
 
       match /Preventivo/{docId} {
@@ -219,7 +233,17 @@ service cloud.firestore {
 
     match /Counters/{docId} {
       allow read: if isAuth();
-      allow write: if isAuth();
+      // Il checkout B2B (cliente) e il CRM (staff) incrementano i contatori, quindi
+      // la scrittura deve restare aperta agli autenticati — MA solo in modo monotòno:
+      // i contatori possono solo crescere. Così si impedisce il reset/abbassamento
+      // (che causerebbe numeri d'ordine/preventivo duplicati e collisioni).
+      allow create: if isAuth();
+      allow update: if isAuth()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['Ordine', 'Preventivo', 'FoglioDiLavoro'])
+        && request.resource.data.get('Ordine', 0)         >= resource.data.get('Ordine', 0)
+        && request.resource.data.get('Preventivo', 0)     >= resource.data.get('Preventivo', 0)
+        && request.resource.data.get('FoglioDiLavoro', 0) >= resource.data.get('FoglioDiLavoro', 0);
     }
 
     // ─── users_prezzo-gomme (vetrina pubblica) ────────────────────────────────

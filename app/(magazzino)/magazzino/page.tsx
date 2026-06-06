@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { collection, getDocs, getDoc, query, orderBy, addDoc } from "firebase/firestore";
+import { collection, getDocs, getDoc, query, orderBy, addDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Package, Plus, ChevronDown, ChevronUp, QrCode, X } from "lucide-react";
 import Link from "next/link";
@@ -166,6 +166,7 @@ export default function MagazzinoPage() {
   const [sedeFilter, setSedeFilter] = useState("Tutte");
   const [showModal, setShowModal] = useState(false);
   const [nuova, setNuova] = useState<NuovaGabbiaForm>({ id: "", x: "0", y: "0", z: "0", sede: "" });
+  const [sedeOptions, setSedeOptions] = useState<{ id: string; nome: string }[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -187,6 +188,14 @@ export default function MagazzinoPage() {
         setGabbie(result);
         const sediUniche = [...new Set(result.map((g) => g.sedeName).filter((s) => s !== "—"))];
         setSedi(sediUniche.sort());
+
+        // Opzioni Sede (id + nome) per il selettore della nuova gabbia
+        const sedeSnap = await getDocs(collection(db, "Sede"));
+        setSedeOptions(
+          sedeSnap.docs
+            .map((s) => ({ id: s.id, nome: (s.data().Nome as string) ?? s.id }))
+            .sort((a, b) => a.nome.localeCompare(b.nome))
+        );
       } catch (err) {
         console.error(err);
         toast.error("Errore nel caricamento del magazzino");
@@ -199,6 +208,8 @@ export default function MagazzinoPage() {
 
   async function handleCreaNuova() {
     if (!nuova.id.trim()) { toast.error("Inserisci un ID gabbia"); return; }
+    // La sede è obbligatoria: senza, lo stock verrebbe mappato per default su Nola.
+    if (!nuova.sede) { toast.error("Seleziona la sede della gabbia"); return; }
     setSaving(true);
     try {
       await addDoc(collection(db, "Magazzino"), {
@@ -206,6 +217,7 @@ export default function MagazzinoPage() {
         X: parseInt(nuova.x) || 0,
         Y: parseInt(nuova.y) || 0,
         Z: parseInt(nuova.z) || 0,
+        Sede: doc(db, "Sede", nuova.sede),
         Prodotti: [],
       });
       toast.success(`Gabbia ${nuova.id.toUpperCase()} creata`);
@@ -336,6 +348,21 @@ export default function MagazzinoPage() {
                   />
                 </div>
               ))}
+              {/* Sede (obbligatoria: determina la mappatura dello stock per deposito) */}
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>Sede *</label>
+                <select
+                  value={nuova.sede}
+                  onChange={(e) => setNuova((n) => ({ ...n, sede: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ border: "1px solid #e5e7eb", background: "#f9fafb", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <option value="">Seleziona sede…</option>
+                  {sedeOptions.map((s) => (
+                    <option key={s.id} value={s.id}>{s.nome}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button

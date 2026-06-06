@@ -95,7 +95,10 @@ export default function ModificaPreventivoPage() {
         setStato(raw.Stato ?? (raw.Accettato ? "Accettato" : "In attesa"));
         setNote(raw.Note ?? raw.note ?? "");
         if (raw.DataScadenza?.toDate) {
-          setScadenza(raw.DataScadenza.toDate().toISOString().slice(0, 10));
+          // Da parti locali: toISOString() (UTC) sfaserebbe la data di -1 giorno.
+          const d = raw.DataScadenza.toDate();
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setScadenza(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
         }
         setRighe(rawToRighe(raw));
         setServizi(rawToServizi(raw));
@@ -173,13 +176,14 @@ export default function ModificaPreventivoPage() {
         Pneumatici_Nuovi: articoliOut,   // keep both for backward compat
         Servizi:         serviziOut,
         Note:            note,
-        Totale:          totale,
-        IVA:             iva,
+        Totale:          Math.round(totale * 100) / 100,
+        IVA:             Math.round(iva * 100) / 100,
         _aggiornatoIl:   serverTimestamp(),
       };
       if (stato === "Accettato") patch.Data_Accettazione = serverTimestamp();
       if (stato !== "Accettato") patch.Data_Accettazione = null;
-      if (scadenza) patch.DataScadenza = new Date(scadenza);
+      // "T00:00:00" → mezzanotte LOCALE (senza, verrebbe interpretata come UTC).
+      if (scadenza) patch.DataScadenza = new Date(scadenza + "T00:00:00");
 
       await updateDoc(doc(db, "Clienti", clienteId, "Preventivo", id), patch);
       toast.success("Preventivo aggiornato");

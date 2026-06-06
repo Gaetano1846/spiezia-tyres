@@ -525,7 +525,6 @@ export default function ProdottiPage() {
   );
 
   const filtered = useMemo(() => {
-    setPage(0);
     return tutti.filter((p) => {
       if (search) {
         const q = search.toLowerCase();
@@ -538,6 +537,10 @@ export default function ProdottiPage() {
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tutti, search, marca, stagione, soloDisponibili]);
+
+  // Reset alla prima pagina quando cambiano i filtri (NON dentro la useMemo:
+  // chiamare un setter durante il render è un anti-pattern React).
+  useEffect(() => { setPage(0); }, [search, marca, stagione, soloDisponibili]);
 
   const paginated = useMemo(
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),

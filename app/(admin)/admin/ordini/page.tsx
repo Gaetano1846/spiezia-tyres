@@ -8,7 +8,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
-import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown, SlidersHorizontal } from "lucide-react";
+import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
@@ -249,7 +249,6 @@ export default function OrdiniAdminPage() {
 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const datePickerRef = useRef<HTMLDivElement>(null);
-  const [showFilters, setShowFilters] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [spedizioneModal, setSpedizioneModal] = useState<{ docId: string; orderId: string } | null>(null);
@@ -558,11 +557,9 @@ export default function OrdiniAdminPage() {
         ))}
       </div>
 
-      {/* Filter bar — ricerca + reset.
-          Su desktop Fonte/Stato sono nell'intestazione tabella; su mobile in un pannello collassabile. */}
-      <div className="space-y-2">
-       <div className="flex gap-2 items-center flex-wrap">
-        <div className="relative flex-1 min-w-[150px]">
+      {/* Filter bar — toolbar unica: ricerca + Fonte + Stato + reset (allineata alla pagina prodotti) */}
+      <div className="flex gap-2 items-center flex-wrap">
+        <div className="relative basis-full sm:basis-0 sm:flex-1 min-w-[180px]">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
           <input
             value={search}
@@ -573,49 +570,36 @@ export default function OrdiniAdminPage() {
           />
         </div>
 
-        {/* Desktop: reset filtri a destra */}
+        {/* Fonte */}
+        <div className="relative basis-[calc(50%-0.25rem)] sm:basis-auto sm:flex-none min-w-[150px]">
+          <select value={fonte} onChange={(e) => setFonte(e.target.value)} title="Filtra per fonte"
+            className="w-full appearance-none pl-3 pr-9 py-2 rounded-xl text-sm outline-none cursor-pointer truncate transition-colors"
+            style={{ background: fonte ? "#FFF8DC" : "var(--bg-primary)", border: `1px solid ${fonte ? "#FFC803" : "var(--border)"}`, color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+            <option value="">Tutte le fonti</option>
+            {FONTI.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+        </div>
+
+        {/* Stato */}
+        <div className="relative basis-[calc(50%-0.25rem)] sm:basis-auto sm:flex-none min-w-[150px]">
+          <select value={stato} onChange={(e) => setStato(e.target.value as OrdineStato | "")} title="Filtra per stato"
+            className="w-full appearance-none pl-3 pr-9 py-2 rounded-xl text-sm outline-none cursor-pointer truncate transition-colors"
+            style={{ background: stato ? "#FFF8DC" : "var(--bg-primary)", border: `1px solid ${stato ? "#FFC803" : "var(--border)"}`, color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+            <option value="">Tutti gli stati</option>
+            {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+        </div>
+
+        {/* Reset filtri */}
         {hasExtraFilters && (
           <button onClick={reset}
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white ml-auto"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white flex-shrink-0"
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
             <RefreshCw size={13} /> Reset
           </button>
         )}
-
-        {/* Mobile: toggle Filtri */}
-        <button onClick={() => setShowFilters((v) => !v)}
-          className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold flex-shrink-0 transition-colors"
-          style={{ background: showFilters ? "#FFC803" : "var(--bg-primary)", border: "1px solid var(--border)", color: "#111", fontFamily: "var(--font-montserrat)" }}>
-          <SlidersHorizontal size={14} /> Filtri
-          {(() => { const n = [fonte, stato].filter(Boolean).length; return n > 0 ? (
-            <span className="w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: "#111", color: "#FFC803" }}>{n}</span>
-          ) : null; })()}
-          <ChevronDown size={14} style={{ transform: showFilters ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
-        </button>
-        {hasExtraFilters && (
-          <button onClick={reset}
-            className="md:hidden flex items-center gap-1 px-3 py-2 rounded-xl text-sm flex-shrink-0"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
-            <X size={13} />
-          </button>
-        )}
-       </div>
-
-       {/* Mobile: pannello filtri collassabile (Fonte · Stato) */}
-       <div className={`${showFilters ? "flex" : "hidden"} md:hidden gap-2 flex-wrap items-center`}>
-        <select value={fonte} onChange={(e) => setFonte(e.target.value)}
-          className="px-3 py-2 rounded-xl text-sm outline-none"
-          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-          <option value="">Tutte le fonti</option>
-          {FONTI.map((f) => <option key={f} value={f}>{f}</option>)}
-        </select>
-        <select value={stato} onChange={(e) => setStato(e.target.value as OrdineStato | "")}
-          className="px-3 py-2 rounded-xl text-sm outline-none"
-          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-          <option value="">Tutti gli stati</option>
-          {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-       </div>
       </div>
 
       {/* Stats bar — fatturato + contatore + date range picker */}
@@ -768,14 +752,12 @@ export default function OrdiniAdminPage() {
                     </th>
                   ))}
 
-                  {/* Fonte — filtro embeddato allineato alla colonna */}
-                  <th className="px-3 py-3">
-                    <select value={fonte} onChange={(e) => setFonte(e.target.value)} title="Filtra per fonte"
-                      className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
-                      style={{ background: fonte ? "#FFF8DC" : "#fff", border: `1px solid ${fonte ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
-                      <option value="">Fonte</option>
-                      {FONTI.map((f) => <option key={f} value={f}>{f}</option>)}
-                    </select>
+                  {/* Fonte — etichetta pill grigia */}
+                  <th className="px-3 py-3 text-left whitespace-nowrap">
+                    <span className="inline-block px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                      style={{ background: "#eceef1", color: "#4b5563", fontFamily: "var(--font-montserrat)" }}>
+                      Fonte
+                    </span>
                   </th>
 
                   {/* Data — etichetta pill grigia */}
@@ -786,14 +768,12 @@ export default function OrdiniAdminPage() {
                     </span>
                   </th>
 
-                  {/* Stato — filtro embeddato allineato alla colonna */}
-                  <th className="px-3 py-3">
-                    <select value={stato} onChange={(e) => setStato(e.target.value as OrdineStato | "")} title="Filtra per stato"
-                      className="px-2 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer w-full"
-                      style={{ background: stato ? "#FFF8DC" : "#fff", border: `1px solid ${stato ? "#FFC803" : "var(--border)"}`, color: "#111", fontFamily: "var(--font-montserrat)" }}>
-                      <option value="">Stato</option>
-                      {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                  {/* Stato — etichetta pill grigia */}
+                  <th className="px-3 py-3 text-left whitespace-nowrap">
+                    <span className="inline-block px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                      style={{ background: "#eceef1", color: "#4b5563", fontFamily: "var(--font-montserrat)" }}>
+                      Stato
+                    </span>
                   </th>
 
                   {/* Sped, Totale — etichette pill grigie */}
