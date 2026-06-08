@@ -532,16 +532,16 @@ export default function OrdiniAdminPage() {
         </a>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 md:gap-4">
+      {/* KPI cards — nascoste su mobile (occupano troppo spazio), visibili da md in su */}
+      <div className="hidden md:grid grid-cols-2 xl:grid-cols-4 gap-2.5 md:gap-4">
         {kpiCards.map(({ label, value, accent }) => (
           <div
             key={label}
-            className="rounded-xl md:rounded-2xl p-2.5 md:p-5"
+            className="rounded-xl md:rounded-2xl p-2.5 md:p-5 overflow-hidden"
             style={{ background: "#fff", border: "1px solid #e5e7eb" }}
           >
-            <div className="flex items-center justify-between mb-0.5 md:mb-2">
-              <span className="text-[9px] md:text-[10px] font-bold uppercase tracking-wider leading-tight" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+            <div className="flex items-center justify-between gap-1.5 mb-0.5 md:mb-2">
+              <span className="min-w-0 text-[9px] md:text-[10px] font-bold uppercase tracking-wider leading-tight break-words" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
                 {label}
               </span>
               <div className="w-5 h-5 md:w-7 md:h-7 rounded-md md:rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${accent}22` }}>
@@ -551,7 +551,7 @@ export default function OrdiniAdminPage() {
             {loading ? (
               <div className="h-6 md:h-8 w-12 md:w-14 rounded animate-pulse" style={{ background: "#f3f4f6" }} />
             ) : (
-              <p className="text-lg md:text-3xl font-black leading-none" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+              <p className="text-lg md:text-3xl font-black leading-none truncate" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
                 {value}
               </p>
             )}

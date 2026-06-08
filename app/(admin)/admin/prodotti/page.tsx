@@ -729,9 +729,10 @@ export default function ProdottiPage() {
         </button>
       </div>
 
-      {/* Stats — conteggi reali catalogo (Algolia nbHits) */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {stats.map((s) => <StatCard key={s.label} {...s} />)}
+      {/* Stats — conteggi reali catalogo (Algolia nbHits).
+          Su mobile 3 card affiancate compatte (occupano meno spazio verticale), su md+ a piena dimensione. */}
+      <div className="grid grid-cols-3 gap-2 md:gap-3">
+        {stats.map((s) => <StatCard key={s.label} {...s} compact />)}
       </div>
 
       <Card padding="sm">
