@@ -5,6 +5,14 @@ const SESSION_COOKIE = "spiezia_session";
 const DEV_COOKIE = "spiezia_dev_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Firestore storico ha Ruolo con casing misto ("admin", "ADMIN", "Admin"…).
+// Normalizziamo a Prima-maiuscola così i confronti (isAdmin ecc.) sono affidabili
+// sia in dev che in prod, indipendentemente da come è scritto il valore nel DB.
+function normalizeRuolo(raw: unknown): Ruolo {
+  const s = String(raw ?? "Privato");
+  return (s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()) as Ruolo;
+}
+
 function isAdminConfigured(): boolean {
   return !!(process.env.FIREBASE_ADMIN_CLIENT_EMAIL && process.env.FIREBASE_ADMIN_PRIVATE_KEY);
 }
@@ -17,7 +25,10 @@ export async function getSession(): Promise<SessionPayload | null> {
     const raw = cookieStore.get(DEV_COOKIE)?.value;
     if (!raw) return null;
     try {
-      return JSON.parse(Buffer.from(raw, "base64url").toString("utf-8")) as SessionPayload;
+      const payload = JSON.parse(Buffer.from(raw, "base64url").toString("utf-8")) as SessionPayload;
+      // Stessa normalizzazione del ramo production: il cookie dev contiene il Ruolo
+      // grezzo da Firestore, qui lo allineiamo così "admin" === Admin ovunque.
+      return { ...payload, Ruolo: normalizeRuolo(payload.Ruolo) };
     } catch {
       return null;
     }
@@ -33,13 +44,10 @@ export async function getSession(): Promise<SessionPayload | null> {
     const userDoc = await adminDb().collection("users").doc(decoded.uid).get();
     if (!userDoc.exists) return null;
     const data = userDoc.data()!;
-    // Normalizza il Ruolo: prima lettera maiuscola (Firestore storico ha valori misti)
-    const rawRuolo = String(data.Ruolo ?? "Privato");
-    const normRuolo = (rawRuolo.charAt(0).toUpperCase() + rawRuolo.slice(1).toLowerCase()) as Ruolo;
     return {
       uid: decoded.uid,
       email: decoded.email ?? "",
-      Ruolo: normRuolo,
+      Ruolo: normalizeRuolo(data.Ruolo),
       CRM: Boolean(data.CRM),
     };
   } catch {
