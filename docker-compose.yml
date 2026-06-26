@@ -1,0 +1,72 @@
+services:
+  spiezia-b2b2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # NEXT_PUBLIC_* are baked at build time — read from .env on the VPS
+      args:
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY}
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID}
+        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID}
+        NEXT_PUBLIC_ALGOLIA_APP_ID: ${NEXT_PUBLIC_ALGOLIA_APP_ID}
+        NEXT_PUBLIC_ALGOLIA_SEARCH_KEY: ${NEXT_PUBLIC_ALGOLIA_SEARCH_KEY}
+        NEXT_PUBLIC_ALGOLIA_INDEX: ${NEXT_PUBLIC_ALGOLIA_INDEX}
+    image: spiezia-b2b2:local
+    container_name: spiezia-b2b2
+
+    # ── Security hardening (safe for stateless Next.js) ──────────────────────
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default
+    cap_drop:
+      - ALL
+    user: "1001:1001"
+
+    # ── Writable paths (tmpfs only — rootfs is read-only) ────────────────────
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+      - /app/.next/cache:noexec,nosuid,size=256m
+
+    # ── Resource limits (B2B tier) ────────────────────────────────────────────
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+          pids: 200
+
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+    # Bind only on loopback — nginx proxies externally
+    ports:
+      - "127.0.0.1:3301:3000"
+
+    # Runtime secrets (Firebase Admin private key etc.) — NOT in build args
+    env_file:
+      - .env
+
+    networks:
+      - spiezia-b2b2-net
+
+networks:
+  spiezia-b2b2-net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-spieziab2b2

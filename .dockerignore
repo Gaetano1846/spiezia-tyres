@@ -1,0 +1,9 @@
+node_modules
+.next
+.env*
+*.pem
+.git
+.gitignore
+.DS_Store
+.playwright-mcp/
+*-firebase-adminsdk-*.json
