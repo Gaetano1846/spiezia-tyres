@@ -5,6 +5,7 @@ import { Package, Search, Eye, Pencil, Trash2, X, ChevronLeft, ChevronRight, Che
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import HeaderFilter from "@/components/ui/HeaderFilter";
+import SearchableHeaderFilter from "@/components/ui/SearchableHeaderFilter";
 import toast from "react-hot-toast";
 import {
   searchProdotti, stockTotale, formatMisura, pfuDaDiametro,
@@ -816,10 +817,14 @@ export default function ProdottiPage() {
 
                 {/* Marca / Modello — filtro nell'intestazione (come Ordini/Spedizioni) */}
                 <th className="pb-2.5 pr-3 align-bottom">
-                  <HeaderFilter value={marca} onChange={setMarca} title="Filtra per marca">
-                    <option value="">Marca / Modello</option>
-                    {marcheUniche.map((m) => <option key={m} value={m}>{m}</option>)}
-                  </HeaderFilter>
+                  <SearchableHeaderFilter
+                    value={marca}
+                    onChange={setMarca}
+                    options={marcheUniche}
+                    placeholder="Marca / Modello"
+                    title="Filtra per marca"
+                    searchPlaceholder="Cerca marca…"
+                  />
                 </th>
 
                 {/* Foto, Misura — etichette */}
