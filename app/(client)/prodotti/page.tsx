@@ -21,18 +21,18 @@ import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import PromoCarousel from "@/components/layout/PromoCarousel";
 import type { Ruolo } from "@/lib/types";
 
-type Stagione = "Estive" | "Invernali" | "4-Stagioni";
+type Stagione = "Estive" | "Invernali" | "4 Stagioni";
 
 const STAGIONE_BTN: Record<Stagione, { active: string; text: string }> = {
   Estive:       { active: "#FFC803", text: "#111" },
   Invernali:    { active: "#2563EB", text: "#fff" },
-  "4-Stagioni": { active: "#16A34A", text: "#fff" },
+  "4 Stagioni": { active: "#16A34A", text: "#fff" },
 };
 
 function StagioneIcon({ stagione }: { stagione: string }) {
   if (stagione === "Invernali")
     return <Snowflake size={16} style={{ color: "#2563EB" }} />;
-  if (stagione === "4-Stagioni")
+  if (stagione === "4 Stagioni")
     return <Wind size={16} style={{ color: "#16A34A" }} />;
   return <Sun size={16} style={{ color: "#EAB308" }} />;
 }
@@ -466,7 +466,7 @@ export default function ProdottiPage() {
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Stagione</label>
                   <div className="flex flex-col gap-1">
-                    {(["Estive","Invernali","4-Stagioni"] as Stagione[]).map((s) => {
+                    {(["Estive","Invernali","4 Stagioni"] as Stagione[]).map((s) => {
                       const active = stagioni.includes(s);
                       return (
                         <button key={s} onClick={() => setStagioni((p) => p.includes(s) ? p.filter((x) => x !== s) : [...p, s])}

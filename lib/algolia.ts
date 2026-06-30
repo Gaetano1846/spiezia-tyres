@@ -31,7 +31,7 @@ export type ProdottoHit = {
   Larghezza: number;
   Altezza: number;
   Diametro: number;
-  Stagione: "Estive" | "Invernali" | "4-Stagioni";
+  Stagione: "Estive" | "Invernali" | "4 Stagioni";
   Categoria?: string;
   Immagine?: string;
   PFU: number;

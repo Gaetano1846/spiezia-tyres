@@ -19,7 +19,7 @@ const INDICI_CARICO   = Array.from({ length: 50 }, (_, i) => String(60 + i));
 
 const STAGIONI = [
   { key: "Estive",     icon: "🔥", label: "Estive" },
-  { key: "4-Stagioni", icon: "⚙️", label: "4 Stagioni" },
+  { key: "4 Stagioni", icon: "⚙️", label: "4 Stagioni" },
   { key: "Invernali",  icon: "❄️", label: "Invernali" },
 ] as const;
 

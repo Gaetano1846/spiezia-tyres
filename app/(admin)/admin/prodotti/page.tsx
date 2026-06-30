@@ -62,7 +62,7 @@ type PanelMode = "create" | "edit" | "view";
 interface FormState {
   Marca: string;
   Modello: string;
-  Stagione: "Estive" | "Invernali" | "4-Stagioni" | "";
+  Stagione: "Estive" | "Invernali" | "4 Stagioni" | "";
   Larghezza: string;
   Altezza: string;
   Diametro: string;
@@ -289,7 +289,7 @@ function SidePanel({
               <option value="">Seleziona stagione</option>
               <option value="Estive">Estive</option>
               <option value="Invernali">Invernali</option>
-              <option value="4-Stagioni">4-Stagioni</option>
+              <option value="4 Stagioni">4 Stagioni</option>
             </select>
           </div>
 
@@ -801,7 +801,7 @@ export default function ProdottiPage() {
             <option value="">Tutte le stagioni</option>
             <option value="Estive">Estive</option>
             <option value="Invernali">Invernali</option>
-            <option value="4-Stagioni">4 Stagioni</option>
+            <option value="4 Stagioni">4 Stagioni</option>
           </select>
          </div>
         </div>
@@ -836,7 +836,7 @@ export default function ProdottiPage() {
                     <option value="">Stagione</option>
                     <option value="Estive">Estive</option>
                     <option value="Invernali">Invernali</option>
-                    <option value="4-Stagioni">4 Stagioni</option>
+                    <option value="4 Stagioni">4 Stagioni</option>
                   </HeaderFilter>
                 </th>
 

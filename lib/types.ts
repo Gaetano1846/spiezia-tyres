@@ -50,7 +50,7 @@ export type Indirizzo = {
 
 // ─── Prodotto (from Algolia / Firestore Prodotti) ─────────────────────────────
 
-export type Stagione = "Estive" | "Invernali" | "4-Stagioni";
+export type Stagione = "Estive" | "Invernali" | "4 Stagioni";
 export type Categoria = "Auto" | "SUV" | "Moto" | "Furgone";
 
 export type Prodotto = {

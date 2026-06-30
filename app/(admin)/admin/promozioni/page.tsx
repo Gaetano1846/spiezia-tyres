@@ -37,7 +37,7 @@ const statoVariant: Record<string, "success" | "error" | "neutral"> = {
   "In bozza": "neutral",
 };
 
-const STAGIONI = ["Estive", "Invernali", "4-Stagioni"];
+const STAGIONI = ["Estive", "Invernali", "4 Stagioni"];
 const RAGGI = ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "22.5", "24.5"];
 
 type FormState = {

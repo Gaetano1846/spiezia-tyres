@@ -51,7 +51,7 @@ type VeicoloMatch = {
 const stagioneBadge: Record<string, "brand" | "neutral" | "success"> = {
   Estive: "brand",
   Invernali: "neutral",
-  "4-Stagioni": "success",
+  "4 Stagioni": "success",
 };
 
 /** Cerca nelle gabbie quelle che contengono il prodotto con l'ID specificato (Algolia objectID). */
