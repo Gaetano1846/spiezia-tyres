@@ -296,26 +296,33 @@ export default function SpedizioniPage() {
     const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA");
     if (glsSelected.length === 0) { toast.error("Nessuna spedizione GLS selezionata"); return; }
 
-    // Group by contractIndex (0=Nola, 1=Roma)
-    const byContract = new Map<number, typeof glsSelected>();
+    // Raggruppa per contratto (0=Nola, 1=Roma): la chiusura va fatta con le
+    // credenziali del contratto giusto. Inviamo i parcelId reali alla route
+    // interna (action closeByShipmentNumber → GLS CloseWorkDayByShipmentNumber).
+    const byContract = new Map<number, string[]>();
     for (const r of glsSelected) {
+      if (!r.parcelId) continue;
       const ci = r.contractIndex ?? 0;
       if (!byContract.has(ci)) byContract.set(ci, []);
-      byContract.get(ci)!.push(r);
+      byContract.get(ci)!.push(r.parcelId);
     }
+    if (byContract.size === 0) { toast.error("Le spedizioni selezionate non hanno un ID GLS"); return; }
 
     const toastId = toast.loading("Chiusura manifesto GLS…");
     try {
-      await Promise.all(
-        [...byContract.entries()].map(([contractIndex]) =>
-          fetch(
-            `https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy?action=close&contractIndex=${contractIndex}`,
-            { method: "POST" }
-          )
+      const results = await Promise.allSettled(
+        [...byContract.entries()].map(([contractIndex, parcelIds]) =>
+          fetch("/api/gls-italy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "closeByShipmentNumber", contractIndex, parcelIds }),
+          }).then(async (res) => { if (!res.ok) throw new Error(`CF ${res.status}`); })
         )
       );
+      const ko = results.filter((r) => r.status === "rejected").length;
       toast.dismiss(toastId);
-      toast.success(`Manifesto chiuso per ${glsSelected.length} spedizioni`);
+      if (ko === 0) toast.success(`Manifesto chiuso per ${glsSelected.length} spedizioni`);
+      else toast.error(`Chiusura manifesto: ${results.length - ko} gruppi ok, ${ko} falliti`);
       setSelected(new Set());
     } catch {
       toast.dismiss(toastId);

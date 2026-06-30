@@ -1,6 +1,7 @@
 import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
 // Cache a livello di processo (non di modulo). In Next dev l'HMR ri-valuta questo
 // modulo azzerando le variabili locali, ma il singleton interno di firebase-admin
@@ -28,6 +29,10 @@ function getAdminApp(): App {
 }
 
 export const adminAuth = () => getAuth(getAdminApp());
+
+// Storage bucket admin (per upload etichette PDF/ZPL su crm-3iuocs.appspot.com,
+// stesso bucket usato dalla vecchia Cloud Function gls-italy).
+export const adminStorage = () => getStorage(getAdminApp());
 
 export const adminDb = (): Firestore => {
   if (adminGlobal._adminDb) return adminGlobal._adminDb;

@@ -119,6 +119,8 @@ export type OrdineSource =
   | "Anonimo"
   | "AdTyres"
   | "T24"
+  | "Vetrina"
+  | "API"
   | "Prezzo-Gomme";
 // Allineato a FFAppConstants.StatoOrdine del FlutterFlow.
 // "Cancellato Tyre24" e "Cancellato Cliente" sono read-only nell'UI

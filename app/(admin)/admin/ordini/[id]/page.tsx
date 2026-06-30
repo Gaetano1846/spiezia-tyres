@@ -377,7 +377,7 @@ export default function OrdineAdminDetailPage() {
     try {
       // Payload identico al FF: ProcessMultipleOrdersGLSCall sul singolo ordine
       const res = await fetch(
-        "https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy",
+        "/api/gls-italy",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -461,7 +461,7 @@ export default function OrdineAdminDetailPage() {
     const toastId = toast.loading("Aggiornamento etichette GLS…");
     try {
       const res = await fetch(
-        "https://europe-west1-crm-3iuocs.cloudfunctions.net/gls-italy",
+        "/api/gls-italy",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
