@@ -24,6 +24,13 @@ function formatInt(n: number | null | undefined) {
   return n == null ? "—" : n.toLocaleString("it-IT");
 }
 
+// Un prodotto ha un'immagine reale solo se Foto o Immagine sono valorizzati. I
+// cerchi (e spesso camere d'aria/agro) non ne hanno: mostrerebbero solo il
+// placeholder "NO IMAGE", quindi in quel caso la colonna Foto viene nascosta.
+function hasRealImage(p: { Foto?: string; Immagine?: string }): boolean {
+  return Boolean((p.Foto && p.Foto.trim()) || (p.Immagine && p.Immagine.trim()));
+}
+
 // Mappa la stagione (anche con etichette verbose tipo "Pneumatici 4 stagioni") a icona + colore
 const STAGIONE_ICONS = {
   estive:    { Icon: Flame,     color: "#EE8B60", label: "Estive" },
@@ -580,6 +587,12 @@ export default function ProdottiPage() {
   // quindi cappiamo il numero di pagine navigabili. nbHits resta il totale reale.
   const nbPages = Math.ceil(Math.min(nbHits, 1000) / PAGE_SIZE);
 
+  // Colonna "Foto": mostrata solo se almeno un prodotto nella vista ha un'immagine
+  // reale. Cercando i cerchi (o camere d'aria/agro, che non hanno foto) la colonna
+  // sparisce invece di riempirsi di placeholder "NO IMAGE".
+  const showFoto = useMemo(() => hits.some((p) => hasRealImage(p)), [hits]);
+  const colCount = showFoto ? 9 : 8;
+
   const stats = useMemo(() => [
     { label: "Totale prodotti", value: formatInt(catalogStats?.totale),      sub: "in catalogo",        icon: <Package size={20} />, accent: "#FFC803" },
     { label: "Disponibili",     value: formatInt(catalogStats?.disponibili), sub: "stock a magazzino",  icon: <Package size={20} />, accent: "#249689" },
@@ -833,8 +846,8 @@ export default function ProdottiPage() {
                   />
                 </th>
 
-                {/* Foto, Misura — etichette */}
-                {["Foto", "Misura"].map((h) => (
+                {/* Foto (solo se ci sono immagini reali) + Misura — etichette */}
+                {(showFoto ? ["Foto", "Misura"] : ["Misura"]).map((h) => (
                   <th key={h} className="pb-2.5 pr-3 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap"
                     style={{ color: "var(--text-muted)" }}>
                     {h}
@@ -867,7 +880,7 @@ export default function ProdottiPage() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i}>
-                    {Array.from({ length: 9 }).map((_, j) => (
+                    {Array.from({ length: colCount }).map((_, j) => (
                       <td key={j} className="py-3 pr-3">
                         <div className="h-3.5 rounded animate-pulse"
                           style={{ background: "var(--border)", width: j === 0 ? "2.5rem" : "75%" }} />
@@ -877,7 +890,7 @@ export default function ProdottiPage() {
                 ))
               ) : hits.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                  <td colSpan={colCount} className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                     Nessun prodotto trovato.
                   </td>
                 </tr>
@@ -906,14 +919,16 @@ export default function ProdottiPage() {
                         <div className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{p.Marca}</div>
                         <div className="text-xs" style={{ color: "var(--text-secondary)" }}>{p.Modello}</div>
                       </td>
-                      {/* Foto prodotto — subito dopo il nome */}
-                      <td className="py-2.5 pr-3">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={p.Foto || p.Immagine || "/placeholder-tyre.jpg"} alt={p.Modello}
-                          className="w-10 h-10 object-cover rounded-lg"
-                          style={{ border: "1px solid var(--border)", background: "#fff" }}
-                          onError={(e) => { const el = e.currentTarget as HTMLImageElement; if (!el.src.endsWith("/placeholder-tyre.jpg")) el.src = "/placeholder-tyre.jpg"; }} />
-                      </td>
+                      {/* Foto prodotto — solo se la colonna è visibile */}
+                      {showFoto && (
+                        <td className="py-2.5 pr-3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={p.Foto || p.Immagine || "/placeholder-tyre.jpg"} alt={p.Modello}
+                            className="w-10 h-10 object-cover rounded-lg"
+                            style={{ border: "1px solid var(--border)", background: "#fff" }}
+                            onError={(e) => { const el = e.currentTarget as HTMLImageElement; if (!el.src.endsWith("/placeholder-tyre.jpg")) el.src = "/placeholder-tyre.jpg"; }} />
+                        </td>
+                      )}
                       {/* Misura */}
                       <td className="py-2.5 pr-3 text-sm font-medium whitespace-nowrap"
                         style={{ color: "var(--text-primary)" }}>
@@ -1016,12 +1031,14 @@ export default function ProdottiPage() {
                         <div className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{p.Modello}</div>
                         <div className="text-xs font-medium mt-0.5" style={{ color: "var(--text-primary)" }}>{formatMisura(p)}</div>
                       </div>
-                      {/* Foto prodotto — subito dopo il nome */}
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={p.Foto || p.Immagine || "/placeholder-tyre.jpg"} alt={p.Modello}
-                        className="w-11 h-11 object-cover rounded-lg flex-shrink-0"
-                        style={{ border: "1px solid var(--border)", background: "#fff" }}
-                        onError={(e) => { const el = e.currentTarget as HTMLImageElement; if (!el.src.endsWith("/placeholder-tyre.jpg")) el.src = "/placeholder-tyre.jpg"; }} />
+                      {/* Foto prodotto — solo se ci sono immagini reali (i cerchi non ne hanno) */}
+                      {showFoto && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={p.Foto || p.Immagine || "/placeholder-tyre.jpg"} alt={p.Modello}
+                          className="w-11 h-11 object-cover rounded-lg flex-shrink-0"
+                          style={{ border: "1px solid var(--border)", background: "#fff" }}
+                          onError={(e) => { const el = e.currentTarget as HTMLImageElement; if (!el.src.endsWith("/placeholder-tyre.jpg")) el.src = "/placeholder-tyre.jpg"; }} />
+                      )}
                       <StagioneIcon stagione={p.Stagione} size={32} />
                     </div>
 
