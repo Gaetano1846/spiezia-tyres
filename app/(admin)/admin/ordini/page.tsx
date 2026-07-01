@@ -280,7 +280,7 @@ export default function OrdiniAdminPage() {
   const [annullando, setAnnullando] = useState(false);
   const [spedendo, setSpedendo] = useState<"Roma" | "Nola" | "SDA" | null>(null);
   const [aggiornandoTracking, setAggiornandoTracking] = useState(false);
-  const [romaCorriereOpen, setRomaCorriereOpen] = useState(false);
+  const [nolaCorriereOpen, setNolaCorriereOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const { user } = useAuth();
 
@@ -481,28 +481,74 @@ export default function OrdiniAdminPage() {
     }
   }
 
-  function handleExportSelected() {
-    const rows = filtered.filter((e) => selectedIds.has(e.docId));
-    const header = ["ID", "Cliente", "Fonte", "Stato", "Totale", "Data"];
-    const lines = rows.map(({ ordine, clienteNome }) => [
-      ordine.id ?? "",
-      clienteNome,
-      ordine.Source ?? "",
-      ordine.Stato ?? "",
-      String(ordine.Totale ?? ""),
-      formatData(getTs(ordine)),
-    ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
-    const csv = [header.join(","), ...lines].join("\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `ordini_selezionati_${rows.length}.csv`; a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Esportati ${rows.length} ordini`);
+  // Export CSV — mirror FF (custom action exportOrders): 12 colonne, con PFU e
+  // Prezzo_Acquisto calcolati leggendo i Prodotti. Fatto server-side (/api/export-orders)
+  // perché richiede le letture dei prodotti e i campi grezzi degli articoli.
+  async function handleExportSelected() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) { toast.error("Nessun ordine selezionato"); return; }
+    const toastId = toast.loading(`Esportazione ${ids.length} ordini…`);
+    try {
+      const res = await fetch("/api/export-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ordiniIds: ids }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      }
+      const csv = await res.text();
+      // BOM per compatibilità Excel con gli accenti.
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `ordini_export_${ids.length}.csv`; a.click();
+      URL.revokeObjectURL(url);
+      toast.dismiss(toastId);
+      toast.success(`Esportati ${ids.length} ordini`);
+    } catch (e) {
+      toast.dismiss(toastId);
+      toast.error(`Errore export: ${e instanceof Error ? e.message : "sconosciuto"}`);
+    }
   }
 
-  // Spedisci Nola/Roma — crea le spedizioni GLS per gli ordini selezionati.
-  // Stessa CF del dettaglio ordine (handleCreaGLS), in versione bulk:
+  // Push del tracking ai marketplace per una lista di ordini (mirror FF: dopo
+  // "Spedisci" e su "Aggiorna Tracking"). Dispatch per Source lato server
+  // (/api/marketplace · pushTracking). `entries` = [ordineId, corriere].
+  // Le fonti senza marketplace (B2B/WooCommerce/Prezzo-Gomme) risultano "skipped".
+  async function pushMarketplaceEntries(entries: [string, string][]): Promise<{ ok: number; ko: number; skipped: number }> {
+    const results = await Promise.allSettled(
+      entries.map(([ordineId, corriere]) =>
+        fetch("/api/marketplace", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "pushTracking", ordineId, corriere }),
+        }).then(async (res) => {
+          const data = await res.json().catch(() => null) as { error?: string; data?: { ok?: boolean; skipped?: boolean } } | null;
+          if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+          return data?.data ?? { ok: false };
+        })
+      )
+    );
+    let ok = 0, ko = 0, skipped = 0;
+    for (const r of results) {
+      if (r.status === "fulfilled") { if (r.value?.skipped) skipped++; else if (r.value?.ok) ok++; else ko++; }
+      else ko++;
+    }
+    return { ok, ko, skipped };
+  }
+
+  function mkLabel({ ok, ko, skipped }: { ok: number; ko: number; skipped: number }): string {
+    const parts: string[] = [];
+    if (ok) parts.push(`${ok} ok`);
+    if (skipped) parts.push(`${skipped} n/d`);
+    if (ko) parts.push(`${ko} falliti`);
+    return parts.length ? ` · marketplace: ${parts.join(", ")}` : "";
+  }
+
+  // Spedisci Nola/Roma — crea le spedizioni GLS per gli ordini selezionati, poi
+  // (mirror FF) comunica il tracking ai marketplace di origine.
   // gls-italy · action "processMultipleOrders" accetta un array di ordiniIds.
   // contractIndex 0 = GLS Nola, 1 = GLS Roma. La CF aggiorna direttamente
   // Firestore (Stato ordine, GLS_TrackingNumber, GLS_PdfUrl, doc Spedizioni).
@@ -529,8 +575,10 @@ export default function OrdiniAdminPage() {
       );
       const data = await res.json().catch(() => null) as { error?: string } | null;
       if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
+      // Mirror FF: dopo la creazione GLS, comunica il tracking ai marketplace.
+      const mk = await pushMarketplaceEntries(ids.map((id) => [id, "GLS"] as [string, string]));
       toast.dismiss(toastId);
-      toast.success(`Spedizioni GLS ${sede} create (${ids.length} ordini)`);
+      toast.success(`Spedizioni GLS ${sede} create (${ids.length} ordini)${mkLabel(mk)}`);
       setSelectedIds(new Set());
       // La CF ha modificato gli ordini su Firestore: ricarico la lista.
       setReloadKey((k) => k + 1);
@@ -574,11 +622,16 @@ export default function OrdiniAdminPage() {
           }
         })
       );
-      const ok = results.filter((r) => r.status === "fulfilled").length;
+      const okIds = ids.filter((_, i) => results[i].status === "fulfilled");
+      const ok = okIds.length;
       const ko = results.length - ok;
+      // Mirror FF: dopo la creazione SDA, comunica il tracking ai marketplace.
+      const mk = okIds.length
+        ? await pushMarketplaceEntries(okIds.map((id) => [id, "SDA"] as [string, string]))
+        : { ok: 0, ko: 0, skipped: 0 };
       toast.dismiss(toastId);
-      if (ko === 0) toast.success(`Spedizioni SDA create (${ok} ordini)`);
-      else toast.error(`SDA: ${ok} ok, ${ko} falliti`);
+      if (ko === 0) toast.success(`Spedizioni SDA create (${ok} ordini)${mkLabel(mk)}`);
+      else toast.error(`SDA: ${ok} ok, ${ko} falliti${mkLabel(mk)}`);
       setSelectedIds(new Set());
       setReloadKey((k) => k + 1);
     } catch {
@@ -589,36 +642,33 @@ export default function OrdiniAdminPage() {
     }
   }
 
-  // Aggiorna Tracking — rigenera/aggiorna le etichette GLS (ZPL) degli ordini
-  // selezionati. Stessa CF del dettaglio ordine (handleAggiornaEtichetteGLS):
-  // gls-italy · action "getZplBySped". La CF accetta un singolo ordiniId, quindi
-  // qui iteriamo sugli ordini selezionati.
+  // Aggiorna Tracking — mirror FF (pagina ordini): comunica il tracking al
+  // marketplace di origine di ogni ordine selezionato (Tyre24/Anonimo → Alzura,
+  // eBay, Amazon, AdTyres) via /api/marketplace. NON rigenera lo ZPL (quella è
+  // un'azione del dettaglio ordine). Il corriere per ordine viene dal campo
+  // Corriere dell'ordine (default GLS). Le fonti senza marketplace sono saltate.
   async function handleAggiornaTracking() {
     if (spedendo || aggiornandoTracking) return;
-    const ids = [...selectedIds];
-    if (ids.length === 0) { toast.error("Nessun ordine selezionato"); return; }
+    const rows = filtered.filter((e) => selectedIds.has(e.docId));
+    if (rows.length === 0) { toast.error("Nessun ordine selezionato"); return; }
+    const entries: [string, string][] = rows.map((r) => [r.docId, r.ordine.Corriere ?? "GLS"]);
 
     setAggiornandoTracking(true);
-    const toastId = toast.loading(`Aggiornamento tracking — ${ids.length} ordini…`);
+    const toastId = toast.loading(`Aggiornamento tracking marketplace — ${entries.length} ordini…`);
     try {
-      const results = await Promise.allSettled(
-        ids.map((orderId) =>
-          fetch("/api/gls-italy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "getZplBySped", ordiniId: orderId }),
-          }).then((r) => { if (!r.ok) throw new Error(`CF ${r.status}`); })
-        )
-      );
-      const ok = results.filter((r) => r.status === "fulfilled").length;
-      const ko = results.length - ok;
+      const mk = await pushMarketplaceEntries(entries);
       toast.dismiss(toastId);
-      if (ko === 0) toast.success(`Tracking aggiornato (${ok} ordini)`);
-      else toast.error(`Tracking aggiornato: ${ok} ok, ${ko} falliti`);
+      const parts: string[] = [];
+      if (mk.ok) parts.push(`${mk.ok} aggiornati`);
+      if (mk.skipped) parts.push(`${mk.skipped} senza marketplace`);
+      if (mk.ko) parts.push(`${mk.ko} falliti`);
+      const summary = parts.join(", ") || "nessuna operazione";
+      if (mk.ko === 0) toast.success(`Tracking marketplace: ${summary}`);
+      else toast.error(`Tracking marketplace: ${summary}`);
       setReloadKey((k) => k + 1);
-    } catch {
+    } catch (e) {
       toast.dismiss(toastId);
-      toast.error("Errore aggiornamento tracking");
+      toast.error(`Errore aggiornamento tracking: ${e instanceof Error ? e.message : "sconosciuto"}`);
     } finally {
       setAggiornandoTracking(false);
     }
@@ -830,20 +880,20 @@ export default function OrdiniAdminPage() {
               <Download size={12} /> Export CSV
             </button>
             <button
-              onClick={() => setRomaCorriereOpen(true)}
+              onClick={() => handleSpedisci("Roma")}
               disabled={spedendo !== null || aggiornandoTracking}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors hover:bg-[#f9fafb] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontFamily: "var(--font-montserrat)" }}
             >
-              <MapPin size={12} /> {spedendo === "Roma" ? "Spedizione Roma…" : spedendo === "SDA" ? "Spedizione SDA…" : "Spedisci Roma"}
+              <MapPin size={12} /> {spedendo === "Roma" ? "Spedizione Roma…" : "Spedisci Roma"}
             </button>
             <button
-              onClick={() => handleSpedisci("Nola")}
+              onClick={() => setNolaCorriereOpen(true)}
               disabled={spedendo !== null || aggiornandoTracking}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors hover:bg-[#f9fafb] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontFamily: "var(--font-montserrat)" }}
             >
-              <MapPin size={12} /> {spedendo === "Nola" ? "Spedizione Nola…" : "Spedisci Nola"}
+              <MapPin size={12} /> {spedendo === "Nola" ? "Spedizione Nola…" : spedendo === "SDA" ? "Spedizione SDA…" : "Spedisci Nola"}
             </button>
             <button
               onClick={handleAggiornaTracking}
@@ -1181,19 +1231,19 @@ export default function OrdiniAdminPage() {
         />
       )}
 
-      {/* Scelta corriere per Spedisci Roma — mirror FF (dialog "Corriere? SDA/GLS") */}
-      {romaCorriereOpen && (
+      {/* Scelta corriere per Spedisci Nola — mirror FF (dialog "Corriere? SDA/GLS") */}
+      {nolaCorriereOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(0,0,0,0.45)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setRomaCorriereOpen(false); }}
+          onClick={(e) => { if (e.target === e.currentTarget) setNolaCorriereOpen(false); }}
         >
           <div className="w-full max-w-sm rounded-2xl p-6" style={{ background: "#fff", border: "1px solid var(--border)" }}>
             <div className="flex items-center justify-between mb-1">
               <h3 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
-                Spedisci Roma — Corriere
+                Spedisci Nola — Corriere
               </h3>
-              <button onClick={() => setRomaCorriereOpen(false)} className="p-1 rounded-lg hover:bg-[#F1F4F8]">
+              <button onClick={() => setNolaCorriereOpen(false)} className="p-1 rounded-lg hover:bg-[#F1F4F8]">
                 <X size={18} style={{ color: "#6b7280" }} />
               </button>
             </div>
@@ -1202,14 +1252,14 @@ export default function OrdiniAdminPage() {
             </p>
             <div className="flex gap-3">
               <button
-                onClick={() => { setRomaCorriereOpen(false); handleSpedisci("Roma"); }}
+                onClick={() => { setNolaCorriereOpen(false); handleSpedisci("Nola"); }}
                 className="flex-1 flex flex-col items-center gap-1 px-4 py-4 rounded-xl text-sm font-bold transition-transform hover:scale-[1.02]"
                 style={{ background: "#003DA5", color: "#fff", fontFamily: "var(--font-montserrat)" }}
               >
                 <Truck size={20} /> GLS
               </button>
               <button
-                onClick={() => { setRomaCorriereOpen(false); handleSpedisciSDA(); }}
+                onClick={() => { setNolaCorriereOpen(false); handleSpedisciSDA(); }}
                 className="flex-1 flex flex-col items-center gap-1 px-4 py-4 rounded-xl text-sm font-bold transition-transform hover:scale-[1.02]"
                 style={{ background: "#E8001C", color: "#fff", fontFamily: "var(--font-montserrat)" }}
               >
