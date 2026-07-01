@@ -77,10 +77,10 @@ export default function HomePage() {
 
         <div className="relative z-10 h-full min-h-0 flex flex-col justify-center px-4 sm:px-5 py-3 sm:py-5 gap-3 sm:gap-4">
 
-          {/* Widget di ricerca */}
+          {/* Widget di ricerca — sezione principale, messa in rilievo */}
           <div
-            className="w-full mx-auto rounded-2xl p-4 sm:p-5 flex-shrink-0"
-            style={{ maxWidth: 560, background: "#fff", boxShadow: "0 24px 64px rgba(0,0,0,0.35)" }}
+            className="w-full mx-auto rounded-2xl p-4 sm:p-6 flex-shrink-0"
+            style={{ maxWidth: 640, background: "#fff", boxShadow: "0 24px 64px rgba(0,0,0,0.35)" }}
           >
             <div className="flex items-center gap-2.5 mb-3 sm:mb-4">
               <span className="w-1 h-7 rounded-full flex-shrink-0" style={{ background: "var(--brand)" }} />
@@ -168,7 +168,7 @@ export default function HomePage() {
               solo verso destra). Con justify-start la striscia parte a filo sinistra. */}
           {promo.length > 0 && (
             <div
-              className="flex-1 min-h-0 max-h-[15vh] sm:max-h-none flex justify-start overflow-x-auto overflow-y-hidden pb-2 snap-x snap-mandatory sm:snap-none"
+              className="flex-1 min-h-0 max-h-[15vh] sm:max-h-[30vh] flex justify-start overflow-x-auto overflow-y-hidden pb-2 snap-x snap-mandatory sm:snap-none"
               style={{ gap: 25, scrollbarWidth: "thin", scrollbarColor: "#FFC803 rgba(255,255,255,0.2)" }}
             >
               {promo.map((p) => {
