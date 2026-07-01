@@ -20,11 +20,13 @@ interface Props {
   searchPlaceholder?: string;
   /** Larghezza del popover (px). Default 260. */
   width?: number;
+  /** Trigger compatto (header tabella). false = più alto, per i pannelli filtri. Default true. */
+  dense?: boolean;
 }
 
 export default function SearchableHeaderFilter({
   value, onChange, options, placeholder, title,
-  searchPlaceholder = "Cerca…", width = 260,
+  searchPlaceholder = "Cerca…", width = 260, dense = true,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -79,7 +81,7 @@ export default function SearchableHeaderFilter({
         type="button"
         title={title}
         onClick={() => setOpen((v) => !v)}
-        className="w-full truncate text-left pl-2.5 pr-7 py-1.5 rounded-lg text-[11px] font-semibold outline-none cursor-pointer transition-colors"
+        className={`w-full truncate text-left rounded-lg font-semibold outline-none cursor-pointer transition-colors ${dense ? "pl-2.5 pr-7 py-1.5 text-[11px]" : "pl-3 pr-8 py-2 text-sm"}`}
         style={{
           background: active ? "#FFF8DC" : "#fff",
           border: `1px solid ${active ? "#FFC803" : "var(--border)"}`,

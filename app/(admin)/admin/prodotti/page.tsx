@@ -464,7 +464,9 @@ function SidePanel({
 // Page
 // ---------------------------------------------------------------------------
 export default function ProdottiPage() {
-  const [tutti, setTutti] = useState<ProdottoHit[]>([]);
+  const [hits, setHits] = useState<ProdottoHit[]>([]);
+  const [nbHits, setNbHits] = useState(0);
+  const [marcheUniche, setMarcheUniche] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [marca, setMarca] = useState("");
@@ -472,6 +474,7 @@ export default function ProdottiPage() {
   const [soloDisponibili, setSoloDisponibili] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Conteggi reali dell'intero catalogo (nbHits server-side da Algolia), indipendenti
   // dalla tabella che carica solo i primi 1000 hit. null finché non arrivano → card "—".
@@ -516,17 +519,37 @@ export default function ProdottiPage() {
   );
 
   // ---------------------------------------------------------------------------
-  // Caricamento lista
-  // ---------------------------------------------------------------------------
-  const loadProdotti = useCallback(() => {
-    return searchProdotti({ query: "", soloDisponibili: false, hitsPerPage: 1000, page: 0 })
-      .then((r) => setTutti(r.hits as ProdottoHit[]))
-      .catch(() => toast.error("Errore nel caricamento prodotti"));
-  }, []);
-
+  // Caricamento lista — ricerca SERVER-SIDE su Algolia.
+  // La ricerca testuale (incluse le misure compatte tipo "2055516" = 205/55 R16,
+  // o "205 55 16") è gestita da Algolia, che indicizza già la nomenclatura. Anche
+  // i filtri Marca/Stagione/Solo-disponibili e la paginazione passano all'indice:
+  // niente più tetto ai 1000 prodotti caricati e filtrati lato client.
   useEffect(() => {
-    loadProdotti().finally(() => setLoading(false));
-  }, [loadProdotti]);
+    let cancelled = false;
+    setLoading(true);
+    const t = setTimeout(() => {
+      searchProdotti({
+        query: search,
+        marche: marca ? [marca] : [],
+        stagioni: stagione ? [stagione] : [],
+        soloDisponibili,
+        page,
+        hitsPerPage: PAGE_SIZE,
+      })
+        .then((r) => { if (!cancelled) { setHits(r.hits as ProdottoHit[]); setNbHits(r.nbHits); } })
+        .catch(() => { if (!cancelled) toast.error("Errore nel caricamento prodotti"); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, 250); // debounce digitazione
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [search, marca, stagione, soloDisponibili, page, reloadKey]);
+
+  // Elenco completo marche per il filtro (facet Algolia: tutte le 170+ marche
+  // dell'indice, non solo quelle della pagina corrente).
+  useEffect(() => {
+    searchProdotti({ withFacets: true, hitsPerPage: 0, soloDisponibili: false })
+      .then((r) => { if (r.facets?.Marca) setMarcheUniche(Object.keys(r.facets.Marca).sort((a, b) => a.localeCompare(b))); })
+      .catch(() => {});
+  }, []);
 
   // Due query Algolia leggere (hitsPerPage:0 → solo nbHits) per i conteggi catalogo.
   // searchProdotti applica già il vincolo di progetto T24=false, quindi:
@@ -547,36 +570,15 @@ export default function ProdottiPage() {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Filtri / paginazione
+  // Paginazione (server-side)
   // ---------------------------------------------------------------------------
-  const marcheUniche = useMemo(
-    () => [...new Set(tutti.map((p) => p.Marca).filter(Boolean))].sort(),
-    [tutti]
-  );
-
-  const filtered = useMemo(() => {
-    return tutti.filter((p) => {
-      if (search) {
-        const q = search.toLowerCase();
-        if (![p.Marca, p.Modello, p.EAN ?? "", p.Titolo ?? ""].join(" ").toLowerCase().includes(q)) return false;
-      }
-      if (marca && p.Marca !== marca) return false;
-      if (stagione && p.Stagione !== stagione) return false;
-      if (soloDisponibili && stockTotale(p) === 0) return false;
-      return true;
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tutti, search, marca, stagione, soloDisponibili]);
-
-  // Reset alla prima pagina quando cambiano i filtri (NON dentro la useMemo:
-  // chiamare un setter durante il render è un anti-pattern React).
+  // Reset alla prima pagina quando cambiano i filtri.
   useEffect(() => { setPage(0); }, [search, marca, stagione, soloDisponibili]);
 
-  const paginated = useMemo(
-    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [filtered, page]
-  );
-  const nbPages = Math.ceil(filtered.length / PAGE_SIZE);
+  // Algolia limita di default a 1000 risultati raggiungibili in paginazione
+  // (paginationLimitedTo): oltre quella soglia le pagine tornerebbero vuote,
+  // quindi cappiamo il numero di pagine navigabili. nbHits resta il totale reale.
+  const nbPages = Math.ceil(Math.min(nbHits, 1000) / PAGE_SIZE);
 
   const stats = useMemo(() => [
     { label: "Totale prodotti", value: formatInt(catalogStats?.totale),      sub: "in catalogo",        icon: <Package size={20} />, accent: "#FFC803" },
@@ -667,7 +669,8 @@ export default function ProdottiPage() {
     if (!confirm(`Eliminare definitivamente "${marca} ${modello}"? L'operazione non può essere annullata.`)) return;
     try {
       await deleteDoc(doc(db, "Prodotti", objectID));
-      setTutti((prev) => prev.filter((p) => p.objectID !== objectID));
+      setHits((prev) => prev.filter((p) => p.objectID !== objectID));
+      setNbHits((n) => Math.max(0, n - 1));
       closePanel();
       toast.success("Prodotto eliminato");
     } catch {
@@ -694,7 +697,7 @@ export default function ProdottiPage() {
       }
 
       closePanel();
-      await loadProdotti();
+      setReloadKey((k) => k + 1);
     } catch (err) {
       console.error(err);
       toast.error("Errore durante il salvataggio");
@@ -715,9 +718,7 @@ export default function ProdottiPage() {
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
             {loading
               ? "Caricamento…"
-              : hasFilters
-                ? `${formatInt(filtered.length)} risultati (su ${formatInt(tutti.length)} caricati)`
-                : `${formatInt(tutti.length)} caricati${catalogStats && catalogStats.totale > tutti.length ? ` di ${formatInt(catalogStats.totale)} in catalogo` : ""}`}
+              : `${formatInt(nbHits)} ${hasFilters ? "risultati" : "prodotti in catalogo"}`}
           </p>
         </div>
         <button
@@ -790,12 +791,17 @@ export default function ProdottiPage() {
 
          {/* Mobile: pannello filtri collassabile (Marca · Stagione) */}
          <div className={`${showFilters ? "flex" : "hidden"} md:hidden gap-2 flex-wrap items-center`}>
-          <select value={marca} onChange={(e) => setMarca(e.target.value)}
-            className="px-3 py-2 rounded-xl text-sm outline-none"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-            <option value="">Tutte le marche</option>
-            {marcheUniche.map((m) => <option key={m}>{m}</option>)}
-          </select>
+          <div className="flex-1 min-w-[150px]">
+            <SearchableHeaderFilter
+              value={marca}
+              onChange={setMarca}
+              options={marcheUniche}
+              placeholder="Tutte le marche"
+              title="Filtra per marca"
+              searchPlaceholder="Cerca marca…"
+              dense={false}
+            />
+          </div>
           <select value={stagione} onChange={(e) => setStagione(e.target.value)}
             className="px-3 py-2 rounded-xl text-sm outline-none"
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
@@ -869,14 +875,14 @@ export default function ProdottiPage() {
                     ))}
                   </tr>
                 ))
-              ) : paginated.length === 0 ? (
+              ) : hits.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                     Nessun prodotto trovato.
                   </td>
                 </tr>
               ) : (
-                paginated.map((p) => {
+                hits.map((p) => {
                   const ts = stockTotale(p);
                   return (
                     <tr key={p.objectID} className="border-t hover:bg-[#FFFDF0] transition-colors cursor-pointer"
@@ -977,13 +983,13 @@ export default function ProdottiPage() {
                 <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: "var(--border)" }} />
               ))}
             </div>
-          ) : paginated.length === 0 ? (
+          ) : hits.length === 0 ? (
             <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
               Nessun prodotto trovato.
             </p>
           ) : (
             <div className="space-y-2.5">
-              {paginated.map((p) => {
+              {hits.map((p) => {
                 const ts = stockTotale(p);
                 const isOpen = expandedProdotti.has(p.objectID);
                 return (
@@ -1088,7 +1094,7 @@ export default function ProdottiPage() {
           <div className="flex items-center justify-between mt-3 pt-3"
             style={{ borderTop: "1px solid var(--border)" }}>
             <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} di {filtered.length}
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, nbHits)} di {nbHits}
             </span>
             <div className="flex items-center gap-1.5">
               <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
