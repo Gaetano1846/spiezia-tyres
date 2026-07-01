@@ -113,8 +113,11 @@ export default function SearchableHeaderFilter({
                 onChange={(e) => { setQuery(e.target.value); setHighlight(e.target.value.trim() ? 1 : 0); }}
                 onKeyDown={onKeyDown}
                 placeholder={searchPlaceholder}
-                className="w-full pl-8 pr-7 py-2 rounded-xl text-sm outline-none"
-                style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}
+                /* focus-visible:shadow-none sopprime l'anello globale esterno (0 0 0 3px)
+                   che veniva ritagliato dall'overflow del popover ("scoppio"); in cambio
+                   bordo giallo su focus, contenuto nell'elemento. */
+                className="w-full pl-8 pr-7 py-2 rounded-xl text-sm outline-none border bg-gray-50 border-gray-200 transition-colors focus:border-[#FFC803] focus-visible:shadow-none"
+                style={{ fontFamily: "var(--font-montserrat)", color: "#111" }}
               />
               {query && (
                 <button
