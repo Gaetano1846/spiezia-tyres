@@ -7,12 +7,15 @@ import {
   orderBy,
   onSnapshot,
   getDoc,
+  getDocs,
+  doc,
+  updateDoc,
   type DocumentReference,
   type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
-import { Truck, Search, Printer, Eye, RefreshCw, X, ChevronDown, SlidersHorizontal, CalendarDays } from "lucide-react";
+import { Truck, Search, Printer, Eye, RefreshCw, X, ChevronDown, SlidersHorizontal, CalendarDays, Trash2, MapPin, Send, Share2 } from "lucide-react";
 import StatCard from "@/components/ui/StatCard";
 import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
@@ -201,6 +204,11 @@ export default function SpedizioniPage() {
   const [statoGLS,  setStatoGLS]  = useState("");
   const [statoMag,  setStatoMag]  = useState("");
 
+  // Azioni bulk
+  const [sediOptions, setSediOptions] = useState<{ id: string; nome: string }[]>([]);
+  const [showSedeModal, setShowSedeModal] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
   // ── Real-time listener ──────────────────────────────────────────────────
   useEffect(() => {
     const q = query(collection(db, "Spedizioni"), orderBy("createdAt", "desc"));
@@ -245,6 +253,20 @@ export default function SpedizioniPage() {
       }
     );
     return () => unsub();
+  }, []);
+
+  // Opzioni Sede magazzino (Nola, Nola 2, Volla, Roma, Portici) per il modal
+  // "Imposta Sede Magazzino". Il campo Spedizioni.Warehouse è un ref a Sede.
+  useEffect(() => {
+    getDocs(collection(db, "Sede"))
+      .then((snap) => {
+        setSediOptions(
+          snap.docs
+            .map((d) => ({ id: d.id, nome: String((d.data() as { Nome?: string }).Nome ?? d.id) }))
+            .sort((a, b) => a.nome.localeCompare(b.nome))
+        );
+      })
+      .catch(() => {});
   }, []);
 
   // ── Stats (from all docs) ───────────────────────────────────────────────
@@ -292,41 +314,219 @@ export default function SpedizioniPage() {
     setSelected(new Set());
   }
 
+  // Trasmetti Spedizioni — mirror FlutterFlow (due gambe in parallelo):
+  //  • GLS → CloseMultipleOrdersGLSCall: action "closeMultipleOrders" con gli ID
+  //    ordine delle spedizioni GLS. La CF raggruppa per contratto, chiude i colli
+  //    e porta gli ordini a "Spedito".
+  //  • SDA → CloseShippingSDACall: action "closeSda" con gli ID doc spedizione SDA
+  //    (LDV). Chiude il manifesto su reshark e marca le spedizioni "closed".
   async function handleChiudiManifesto() {
-    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA");
-    if (glsSelected.length === 0) { toast.error("Nessuna spedizione GLS selezionata"); return; }
-
-    // Raggruppa per contratto (0=Nola, 1=Roma): la chiusura va fatta con le
-    // credenziali del contratto giusto. Inviamo i parcelId reali alla route
-    // interna (action closeByShipmentNumber → GLS CloseWorkDayByShipmentNumber).
-    const byContract = new Map<number, string[]>();
-    for (const r of glsSelected) {
-      if (!r.parcelId) continue;
-      const ci = r.contractIndex ?? 0;
-      if (!byContract.has(ci)) byContract.set(ci, []);
-      byContract.get(ci)!.push(r.parcelId);
+    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.orderReference);
+    const sdaSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere === "SDA");
+    if (glsSelected.length === 0 && sdaSelected.length === 0) {
+      toast.error("Nessuna spedizione GLS o SDA selezionata");
+      return;
     }
-    if (byContract.size === 0) { toast.error("Le spedizioni selezionate non hanno un ID GLS"); return; }
+    const ordiniIds = [...new Set(glsSelected.map((r) => r.orderReference!.id))];
+    const sdaLdvs   = [...new Set(sdaSelected.map((r) => r.id))];
 
-    const toastId = toast.loading("Chiusura manifesto GLS…");
+    setBusy("trasmetti");
+    const toastId = toast.loading(
+      `Trasmissione spedizioni…${ordiniIds.length ? ` GLS: ${ordiniIds.length} ordini` : ""}${sdaLdvs.length ? ` · SDA: ${sdaLdvs.length}` : ""}`
+    );
+    try {
+      const msgs: string[] = [];
+      let hadError = false;
+
+      // ── GLS (chiusura manifesto via closeMultipleOrders) ──
+      if (ordiniIds.length > 0) {
+        const res = await fetch("/api/gls-italy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "closeMultipleOrders", ordiniIds }),
+        });
+        const data = await res.json().catch(() => null) as { error?: string; data?: { totalParcelsClosed?: number; totalParcelsFailed?: number } } | null;
+        if (!res.ok) { hadError = true; msgs.push(`GLS: errore (${data?.error || res.status})`); }
+        else {
+          const failed = data?.data?.totalParcelsFailed ?? 0;
+          const closed = data?.data?.totalParcelsClosed ?? 0;
+          if (failed > 0) hadError = true;
+          msgs.push(`GLS: ${closed} ok${failed ? `, ${failed} falliti` : ""}`);
+        }
+      }
+
+      // ── SDA (chiusura manifesto reshark) ──
+      if (sdaLdvs.length > 0) {
+        const res = await fetch("/api/marketplace", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "closeSda", ldvs: sdaLdvs }),
+        });
+        const data = await res.json().catch(() => null) as { error?: string; data?: { closed?: number } } | null;
+        if (!res.ok) { hadError = true; msgs.push(`SDA: errore (${data?.error || res.status})`); }
+        else msgs.push(`SDA: ${data?.data?.closed ?? sdaLdvs.length} chiuse`);
+      }
+
+      toast.dismiss(toastId);
+      if (hadError) toast.error(`Trasmissione con errori — ${msgs.join(" · ")}`);
+      else toast.success(`Spedizioni trasmesse — ${msgs.join(" · ")}`);
+      setSelected(new Set());
+    } catch (e) {
+      toast.dismiss(toastId);
+      toast.error(`Errore trasmissione: ${e instanceof Error ? e.message : "sconosciuto"}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Aggiorna Tracking (marketplace) — mirror FlutterFlow: per ogni ordine collegato
+  // alle spedizioni selezionate, spinge il tracking al marketplace di origine in
+  // base a Source (Tyre24/Anonimo → Alzura, eBay, Amazon, AdTyres). Le fonti senza
+  // marketplace (B2B/WooCommerce/Prezzo-Gomme) vengono saltate. Un push per ordine.
+  async function handleAggiornaTrackingMarketplace() {
+    const sel = filtered.filter((r) => selected.has(r.id) && r.orderReference);
+    if (sel.length === 0) { toast.error("Nessuna spedizione con ordine collegato"); return; }
+    // Dedup per ordine, mantenendo il corriere della prima spedizione dell'ordine.
+    const perOrder = new Map<string, string>();
+    for (const r of sel) {
+      const oid = r.orderReference!.id;
+      if (!perOrder.has(oid)) perOrder.set(oid, r.Corriere ?? "GLS");
+    }
+    const entries = [...perOrder.entries()];
+
+    setBusy("mktracking");
+    const toastId = toast.loading(`Aggiornamento tracking marketplace — ${entries.length} ordini…`);
     try {
       const results = await Promise.allSettled(
-        [...byContract.entries()].map(([contractIndex, parcelIds]) =>
+        entries.map(([ordineId, corriere]) =>
+          fetch("/api/marketplace", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "pushTracking", ordineId, corriere }),
+          }).then(async (res) => {
+            const data = await res.json().catch(() => null) as { error?: string; data?: { source?: string; ok?: boolean; skipped?: boolean } } | null;
+            if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+            return data?.data ?? { ok: false };
+          })
+        )
+      );
+
+      let ok = 0, ko = 0, skipped = 0;
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          if (r.value?.skipped) skipped++;
+          else if (r.value?.ok) ok++;
+          else ko++;
+        } else ko++;
+      }
+
+      toast.dismiss(toastId);
+      const parts: string[] = [];
+      if (ok) parts.push(`${ok} aggiornati`);
+      if (skipped) parts.push(`${skipped} senza marketplace`);
+      if (ko) parts.push(`${ko} falliti`);
+      const summary = parts.join(", ") || "nessuna operazione";
+      if (ko === 0) toast.success(`Tracking marketplace: ${summary}`);
+      else toast.error(`Tracking marketplace: ${summary}`);
+    } catch (e) {
+      toast.dismiss(toastId);
+      toast.error(`Errore aggiornamento tracking: ${e instanceof Error ? e.message : "sconosciuto"}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Elimina Spedizioni — mirror FlutterFlow (DeleteMultipleOrdersGLSCall):
+  // action "deleteMultipleOrders" con gli ID ordine. La CF annulla TUTTI i colli
+  // di quegli ordini presso GLS (DeleteSped) e marca i doc Spedizioni "deleted".
+  // Irreversibile. (Il FF non chiedeva conferma; qui la aggiungiamo per sicurezza.)
+  async function handleElimina() {
+    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.orderReference);
+    if (glsSelected.length === 0) { toast.error("Nessuna spedizione GLS selezionata"); return; }
+    const ordiniIds = [...new Set(glsSelected.map((r) => r.orderReference!.id))];
+    if (!window.confirm(`Eliminare le spedizioni GLS di ${ordiniIds.length} ordini? Annulla i colli presso GLS e non è reversibile.`)) return;
+
+    setBusy("elimina");
+    const toastId = toast.loading(`Eliminazione spedizioni GLS — ${ordiniIds.length} ordini…`);
+    try {
+      const res = await fetch("/api/gls-italy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "deleteMultipleOrders", ordiniIds }),
+      });
+      const data = await res.json().catch(() => null) as { error?: string; data?: { totalParcelsDeleted?: number; totalParcelsFailed?: number } } | null;
+      if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
+      toast.dismiss(toastId);
+      const failed = data?.data?.totalParcelsFailed ?? 0;
+      if (failed === 0) toast.success(`Spedizioni eliminate (${ordiniIds.length} ordini)`);
+      else toast.error(`Eliminate con errori: ${data?.data?.totalParcelsDeleted ?? 0} ok, ${failed} falliti`);
+      setSelected(new Set());
+    } catch (e) {
+      toast.dismiss(toastId);
+      toast.error(`Errore eliminazione: ${e instanceof Error ? e.message : "sconosciuto"}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Aggiorna Etichette GLS — rigenera le etichette/ZPL GLS degli ordini collegati
+  // alle spedizioni selezionate (action "getZplBySped", per ordiniId). Stessa CF
+  // del dettaglio ordine ("Aggiorna etichette GLS"). Un aggiornamento per ordine.
+  // NB: NON è l'"Aggiorna Tracking" del FlutterFlow (push del tracking ai
+  // marketplace), che richiede le CF marketplace non ancora portate qui.
+  async function handleAggiornaTracking() {
+    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.orderReference);
+    if (glsSelected.length === 0) { toast.error("Nessuna spedizione GLS con ordine collegato"); return; }
+    const orderIds = [...new Set(glsSelected.map((r) => r.orderReference!.id))];
+
+    setBusy("tracking");
+    const toastId = toast.loading(`Aggiornamento etichette GLS — ${orderIds.length} ordini…`);
+    try {
+      const results = await Promise.allSettled(
+        orderIds.map((ordiniId) =>
           fetch("/api/gls-italy", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "closeByShipmentNumber", contractIndex, parcelIds }),
+            body: JSON.stringify({ action: "getZplBySped", ordiniId }),
           }).then(async (res) => { if (!res.ok) throw new Error(`CF ${res.status}`); })
         )
       );
-      const ko = results.filter((r) => r.status === "rejected").length;
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      const ko = results.length - ok;
       toast.dismiss(toastId);
-      if (ko === 0) toast.success(`Manifesto chiuso per ${glsSelected.length} spedizioni`);
-      else toast.error(`Chiusura manifesto: ${results.length - ko} gruppi ok, ${ko} falliti`);
+      if (ko === 0) toast.success(`Etichette GLS aggiornate (${ok} ordini)`);
+      else toast.error(`Etichette GLS: ${ok} ok, ${ko} falliti`);
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Errore nell'aggiornamento delle etichette GLS");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Imposta Sede Magazzino — assegna il riferimento Sede (Nola, Nola 2, Volla,
+  // Roma, Portici) ai doc Spedizioni selezionati. Solo scrittura Firestore sul
+  // campo Warehouse (nessuna CF). Il listener real-time aggiorna la colonna.
+  async function handleImpostaSede(sedeId: string) {
+    const sel = filtered.filter((r) => selected.has(r.id));
+    if (sel.length === 0) { setShowSedeModal(false); return; }
+
+    setBusy("sede");
+    const sedeRef = doc(db, "Sede", sedeId);
+    const toastId = toast.loading("Impostazione sede magazzino…");
+    try {
+      // Mirror FF (SelezionaSedeSpedizioneWidget): oltre a Warehouse imposta
+      // warehouseStatus = "In Preparazione".
+      await Promise.all(sel.map((r) => updateDoc(doc(db, "Spedizioni", r.id), { Warehouse: sedeRef, warehouseStatus: "In Preparazione" })));
+      toast.dismiss(toastId);
+      toast.success(`Sede impostata per ${sel.length} spedizioni`);
+      setShowSedeModal(false);
       setSelected(new Set());
     } catch {
       toast.dismiss(toastId);
-      toast.error("Errore nella chiusura del manifesto");
+      toast.error("Errore nell'impostazione della sede");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -492,21 +692,67 @@ export default function SpedizioniPage() {
        </div>
       </div>
 
-      {/* Bulk selection bar */}
+      {/* Bulk selection bar — azioni allineate al precedente progetto FlutterFlow:
+          Trasmetti · Elimina · Aggiorna Tracking · Imposta Sede Magazzino. */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl flex-wrap"
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl flex-wrap"
           style={{ background: "#FFF8DC", border: "1px solid #FFC803", fontFamily: "var(--font-montserrat)" }}>
-          <span className="text-sm font-bold" style={{ color: "#111" }}>{selected.size} selezionati</span>
+          <span className="text-sm font-bold mr-1" style={{ color: "#111" }}>
+            {selected.size} selezionat{selected.size === 1 ? "a" : "e"}
+          </span>
+
           <button
             onClick={handleChiudiManifesto}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
-            style={{ background: "#111", color: "#FFC803" }}
-            title="Chiudi manifesto GLS per le spedizioni selezionate"
+            disabled={!!busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: "#059669", color: "#fff" }}
+            title="Trasmetti (chiudi manifesto) le spedizioni GLS selezionate"
           >
-            <Printer size={11} /> Chiudi Manifesto GLS
+            <Send size={11} /> {busy === "trasmetti" ? "Trasmissione…" : "Trasmetti Spedizioni"}
           </button>
-          <button onClick={() => setSelected(new Set())}
-            className="ml-auto flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium"
+
+          <button
+            onClick={handleElimina}
+            disabled={!!busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: "#DC2626", color: "#fff" }}
+            title="Elimina le spedizioni GLS selezionate"
+          >
+            <Trash2 size={11} /> {busy === "elimina" ? "Eliminazione…" : "Elimina Spedizioni"}
+          </button>
+
+          <button
+            onClick={handleAggiornaTracking}
+            disabled={!!busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: "#fff", color: "#374151", border: "1px solid #e5e7eb" }}
+            title="Rigenera le etichette GLS (ZPL) degli ordini collegati"
+          >
+            <RefreshCw size={11} /> {busy === "tracking" ? "Aggiornamento…" : "Aggiorna Etichette GLS"}
+          </button>
+
+          <button
+            onClick={handleAggiornaTrackingMarketplace}
+            disabled={!!busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: "#2563EB", color: "#fff" }}
+            title="Comunica il tracking ai marketplace di origine (Tyre24, eBay, Amazon, AdTyres)"
+          >
+            <Share2 size={11} /> {busy === "mktracking" ? "Invio…" : "Aggiorna Tracking"}
+          </button>
+
+          <button
+            onClick={() => setShowSedeModal(true)}
+            disabled={!!busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: "#fff", color: "#374151", border: "1px solid #e5e7eb" }}
+            title="Imposta la sede magazzino delle spedizioni selezionate"
+          >
+            <MapPin size={11} /> Imposta Sede Magazzino
+          </button>
+
+          <button onClick={() => setSelected(new Set())} disabled={!!busy}
+            className="ml-auto flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium disabled:opacity-50"
             style={{ background: "#e5e7eb", color: "#374151" }}>
             <X size={11} /> Deseleziona
           </button>
@@ -776,6 +1022,48 @@ export default function SpedizioniPage() {
           )}
         </div>
       </div>
+
+      {/* Modal "Imposta Sede Magazzino" — picker delle sedi (ref a collezione Sede) */}
+      {showSedeModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={(e) => { if (e.target === e.currentTarget && !busy) setShowSedeModal(false); }}
+        >
+          <div className="w-full max-w-sm rounded-2xl p-6" style={{ background: "#fff", border: "1px solid var(--border)" }}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+                Imposta Sede Magazzino
+              </h3>
+              <button onClick={() => { if (!busy) setShowSedeModal(false); }} className="p-1 rounded-lg hover:bg-[#F1F4F8] disabled:opacity-40" disabled={!!busy}>
+                <X size={18} style={{ color: "#6b7280" }} />
+              </button>
+            </div>
+            <p className="text-xs mb-4" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+              Assegna la sede a {selected.size} spedizion{selected.size === 1 ? "e" : "i"} selezionat{selected.size === 1 ? "a" : "e"}.
+            </p>
+            {sediOptions.length === 0 ? (
+              <p className="text-sm text-center py-4" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+                Nessuna sede disponibile.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {sediOptions.map((s) => (
+                  <button
+                    key={s.id}
+                    disabled={!!busy}
+                    onClick={() => handleImpostaSede(s.id)}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#FFF8DC] disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ border: "1px solid #FFC803", color: "#111", fontFamily: "var(--font-montserrat)", background: "#fff" }}
+                  >
+                    <MapPin size={14} style={{ color: "#FFC803" }} /> {s.nome}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
