@@ -10,8 +10,12 @@ import {
   getDocs,
   doc,
   updateDoc,
+  where,
+  limit,
+  getCountFromServer,
+  Timestamp,
   type DocumentReference,
-  type Timestamp,
+  type QueryConstraint,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
@@ -81,6 +85,10 @@ const STATO_MAG_COLORS: Record<string, { bg: string; color: string }> = {
   Annullato:         { bg: "#FEE2E2", color: "#991B1B" },
   Spedito:           { bg: "#D1FAE5", color: "#065F46" },
 };
+
+// Tetto di sicurezza per la query lista (per intervallo date). Le righe oltre
+// questo limite non vengono caricate; l'UI lo segnala.
+const LIST_LIMIT = 2000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -174,8 +182,8 @@ function DateRangeField({
 
 export default function SpedizioniPage() {
   const router = useRouter();
-  const [rawDocs, setRawDocs] = useState<SpedizioneFS[]>([]);
   const [rows, setRows]       = useState<SpedizioneRow[]>([]);
+  const [capped, setCapped]   = useState(false); // true se la query ha toccato il limite
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -209,9 +217,30 @@ export default function SpedizioniPage() {
   const [showSedeModal, setShowSedeModal] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
-  // ── Real-time listener ──────────────────────────────────────────────────
+  // KPI via count aggregate (non caricano i documenti). kpiTick forza il ricalcolo
+  // dopo le azioni bulk (Trasmetti/Elimina/Imposta Sede) che cambiano gli stati.
+  const [kpi, setKpi] = useState<{ daSpedire: number | null; inTransito: number | null; anomalie: number | null }>(
+    { daSpedire: null, inTransito: null, anomalie: null }
+  );
+  const [kpiTick, setKpiTick] = useState(0);
+
+  // ── Real-time listener (filtro data lato server, come nel FlutterFlow) ──────
+  // La query carica SOLO l'intervallo date selezionato, ordinato per createdAt
+  // desc, con un tetto di sicurezza (LIST_LIMIT). Usa solo il campo createdAt
+  // (range + orderBy) → indice a campo singolo, nessun indice composto richiesto.
+  // I filtri Fonte/Corriere/Magazzino/Stati + ricerca restano client-side su
+  // questo insieme ridotto (poche centinaia di righe): istantanei, zero indici.
   useEffect(() => {
-    const q = query(collection(db, "Spedizioni"), orderBy("createdAt", "desc"));
+    setLoading(true);
+    const startTs = Timestamp.fromDate(new Date(dataDa + "T00:00:00"));
+    const endTs   = Timestamp.fromDate(new Date(dataA + "T23:59:59.999"));
+    const q = query(
+      collection(db, "Spedizioni"),
+      where("createdAt", ">=", startTs),
+      where("createdAt", "<=", endTs),
+      orderBy("createdAt", "desc"),
+      limit(LIST_LIMIT),
+    );
     const unsub = onSnapshot(
       q,
       async (snap) => {
@@ -219,7 +248,7 @@ export default function SpedizioniPage() {
           id: d.id,
           ...(d.data() as Omit<SpedizioneFS, "id">),
         }));
-        setRawDocs(docs);
+        setCapped(snap.size >= LIST_LIMIT);
 
         // Resolve Warehouse refs in batch
         const wareRefs = [...new Map(
@@ -253,7 +282,31 @@ export default function SpedizioniPage() {
       }
     );
     return () => unsub();
-  }, []);
+  }, [dataDa, dataA]);
+
+  // ── KPI via count aggregate (server-side, niente download dei documenti) ────
+  // Da spedire / In transito / Anomalie = count a campo singolo (nessun indice
+  // composto). "Consegnate oggi" è calcolato client-side dalle righe caricate.
+  useEffect(() => {
+    const col = collection(db, "Spedizioni");
+    const safeCount = async (...cs: QueryConstraint[]): Promise<number | null> => {
+      try { const s = await getCountFromServer(query(col, ...cs)); return s.data().count; }
+      catch (e) { console.error("KPI count error:", e); return null; }
+    };
+    let cancelled = false;
+    (async () => {
+      const [daSpedire, inTransito, anomalie] = await Promise.all([
+        // "Da spedire" = created + In Preparazione (2 condizioni → indice composto).
+        // Se l'indice non esiste, safeCount ritorna null e la card mostra "—"
+        // (il console error di Firestore include il link per crearlo con 1 click).
+        safeCount(where("status", "==", "created"), where("warehouseStatus", "==", "In Preparazione")),
+        safeCount(where("status", "==", "closed")),
+        safeCount(where("warehouseStatus", "==", "Annullato")),
+      ]);
+      if (!cancelled) setKpi({ daSpedire, inTransito, anomalie });
+    })();
+    return () => { cancelled = true; };
+  }, [kpiTick]);
 
   // Opzioni Sede magazzino (Nola, Nola 2, Volla, Roma, Portici) per il modal
   // "Imposta Sede Magazzino". Il campo Spedizioni.Warehouse è un ref a Sede.
@@ -269,13 +322,17 @@ export default function SpedizioniPage() {
       .catch(() => {});
   }, []);
 
-  // ── Stats (from all docs) ───────────────────────────────────────────────
-  const stats = useMemo(() => [
-    { label: "Da spedire",      value: rawDocs.filter((d) => d.status === "created" && d.warehouseStatus === "In Preparazione").length, sub: "in attesa",     accent: "#FFC803" },
-    { label: "In transito",     value: rawDocs.filter((d) => d.status === "closed").length,                                              sub: "in viaggio",    accent: "#EE8B60" },
-    { label: "Consegnate oggi", value: rawDocs.filter((d) => d.status === "closed" && isToday(d.createdAt)).length,                      sub: "confermate",    accent: "#249689" },
-    { label: "Anomalie",        value: rawDocs.filter((d) => d.warehouseStatus === "Annullato").length,                                  sub: "da verificare", accent: "#FF5963" },
-  ], [rawDocs]);
+  // ── Stats: "In transito"/"Anomalie"/"Da spedire" da count aggregate server;
+  //    "Consegnate oggi" calcolato dalle righe caricate (chiuse in data odierna).
+  const stats = useMemo(() => {
+    const consegnateOggi = rows.filter((d) => d.status === "closed" && isToday(d.createdAt)).length;
+    return [
+      { label: "Da spedire",      value: kpi.daSpedire ?? "—",  sub: "in attesa",     accent: "#FFC803" },
+      { label: "In transito",     value: kpi.inTransito ?? "—", sub: "in viaggio",    accent: "#EE8B60" },
+      { label: "Consegnate oggi", value: consegnateOggi,        sub: "confermate",    accent: "#249689" },
+      { label: "Anomalie",        value: kpi.anomalie ?? "—",   sub: "da verificare", accent: "#FF5963" },
+    ];
+  }, [kpi, rows]);
 
   // ── Filtered rows ───────────────────────────────────────────────────────
   const filtered = useMemo(() => rows.filter((r) => {
@@ -376,6 +433,7 @@ export default function SpedizioniPage() {
       toast.error(`Errore trasmissione: ${e instanceof Error ? e.message : "sconosciuto"}`);
     } finally {
       setBusy(null);
+      setKpiTick((k) => k + 1);
     }
   }
 
@@ -466,6 +524,7 @@ export default function SpedizioniPage() {
       toast.error(`Errore eliminazione: ${e instanceof Error ? e.message : "sconosciuto"}`);
     } finally {
       setBusy(null);
+      setKpiTick((k) => k + 1);
     }
   }
 
@@ -527,6 +586,7 @@ export default function SpedizioniPage() {
       toast.error("Errore nell'impostazione della sede");
     } finally {
       setBusy(null);
+      setKpiTick((k) => k + 1);
     }
   }
 
@@ -583,7 +643,7 @@ export default function SpedizioniPage() {
       <div>
         <h1 className="text-xl md:text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Spedizioni</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-          {loading ? "Caricamento…" : `${filtered.length} spedizioni`}
+          {loading ? "Caricamento…" : `${filtered.length} spedizioni${capped ? ` · primi ${LIST_LIMIT} dell'intervallo` : ""}`}
         </p>
       </div>
 
