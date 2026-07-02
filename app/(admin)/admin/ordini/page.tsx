@@ -14,6 +14,7 @@ import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import HeaderFilter from "@/components/ui/HeaderFilter";
 import toast from "react-hot-toast";
+import { searchOrdini, type OrdiniSearchField } from "@/lib/algolia";
 import type { Ordine, OrdineStato, OrdineSource } from "@/lib/types";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -88,6 +89,55 @@ async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Reco
     if (s.exists()) map.set(s.ref.path, { id: s.id, ...s.data() } as Record<string, unknown>);
   });
   return map;
+}
+
+// Estrae il "Destinatario" da un indirizzo (mappa Firestore con chiavi underscore).
+function destinatarioFromAddr(addr: unknown): string {
+  if (addr && typeof addr === "object") {
+    const d = (addr as Record<string, unknown>).Destinatario;
+    if (typeof d === "string") return d.trim();
+  }
+  return "";
+}
+
+// Nome mostrato in lista — mirror FF (ordini_row): destinatario di FATTURAZIONE,
+// tranne per le fonti Anonimo/AdTyres (o se manca) → destinatario di SPEDIZIONE.
+function nomeDaOrdine(ordine: Ordine): string {
+  const raw = ordine as unknown as Record<string, unknown>;
+  const fatt = destinatarioFromAddr(raw.Indirizzo_Fatturazione);
+  const sped = destinatarioFromAddr(raw.Indirizzo_Spedizione);
+  const source = String(ordine.Source ?? "");
+  const useSped = source === "Anonimo" || source === "AdTyres" || !fatt;
+  return (useSped ? sped : fatt) || "";
+}
+
+// Risolve il nome cliente per una lista di ordini seguendo la logica del FF
+// (destinatario fatturazione/spedizione), con fallback sui riferimenti
+// Cliente → Ragione_Sociale/Nome / Utente → display_name/email. Usato sia dal
+// caricamento normale sia dai risultati di ricerca Algolia: le viste coincidono.
+async function resolveOrdineEntries(raw: { docId: string; ordine: Ordine }[]): Promise<OrdineEntry[]> {
+  const clienteRefs = raw.map(({ ordine }) => ordine.Cliente).filter(Boolean) as DocumentReference[];
+  const utenteRefs  = raw.map(({ ordine }) => ordine.Utente).filter(Boolean) as DocumentReference[];
+  const [clientiMap, utentiMap] = await Promise.all([
+    batchGetDocs(clienteRefs),
+    batchGetDocs(utenteRefs),
+  ]);
+  return raw.map(({ ordine, docId }) => {
+    let clienteNome = nomeDaOrdine(ordine);
+    if (!clienteNome) {
+      // Fallback sul riferimento quando gli indirizzi non hanno un destinatario
+      if (ordine.Cliente) {
+        const c = clientiMap.get(ordine.Cliente.path);
+        // Azienda è un booleano nello schema Clienti → non usarlo come nome
+        if (c) clienteNome = String(c.Ragione_Sociale || c.Nome || "").trim();
+      } else if (ordine.Utente) {
+        const u = utentiMap.get(ordine.Utente.path);
+        // Campo reale users: display_name (snake_case); displayName come fallback legacy
+        if (u) clienteNome = String(u.display_name || u.displayName || u.email || "");
+      }
+    }
+    return { ordine, clienteNome: clienteNome || "—", docId };
+  });
 }
 
 function getTs(ordine: Ordine): Timestamp | undefined {
@@ -254,6 +304,13 @@ export default function OrdiniAdminPage() {
   const [search, setSearch] = useState("");
   const [stato, setStato]   = useState<string>(""); // include stati legacy nel filtro
   const [fonte, setFonte]   = useState("");
+
+  // Ricerca Algolia su TUTTI gli ordini (mirror FF). searchField = dropdown
+  // "Numero Ordine / Nome / Dati Spedizione". searchEntries: null = non in
+  // ricerca (mostra la lista per data); array = risultati Algolia risolti.
+  const [searchField, setSearchField]     = useState<OrdiniSearchField>("Numero Ordine");
+  const [searchEntries, setSearchEntries] = useState<OrdineEntry[] | null>(null);
+  const [searching, setSearching]         = useState(false);
   const [dataDa, setDataDa] = useState(getTodayISO);
   const [dataA, setDataA]   = useState(getTodayISO);
 
@@ -324,27 +381,7 @@ export default function OrdiniAdminPage() {
           })
           .sort((a, b) => (getTs(b.ordine)?.toMillis() ?? 0) - (getTs(a.ordine)?.toMillis() ?? 0));
 
-        const clienteRefs = ordini.map(({ ordine: o }) => o.Cliente).filter(Boolean) as DocumentReference[];
-        const utenteRefs  = ordini.map(({ ordine: o }) => o.Utente).filter(Boolean) as DocumentReference[];
-        const [clientiMap, utentiMap] = await Promise.all([
-          batchGetDocs(clienteRefs),
-          batchGetDocs(utenteRefs),
-        ]);
-
-        const resolved: OrdineEntry[] = ordini.map(({ ordine, docId }) => {
-          let clienteNome = "—";
-          if (ordine.Cliente) {
-            const c = clientiMap.get(ordine.Cliente.path);
-            // Azienda è un booleano nello schema Clienti → non usarlo come nome
-            if (c) clienteNome = String(c.Ragione_Sociale || c.Nome || "").trim() || "—";
-          } else if (ordine.Utente) {
-            const u = utentiMap.get(ordine.Utente.path);
-            // Campo reale users: display_name (snake_case); displayName tenuto come fallback legacy
-            if (u) clienteNome = String(u.display_name || u.displayName || u.email || "—");
-          }
-          return { ordine, clienteNome, docId };
-        });
-
+        const resolved = await resolveOrdineEntries(ordini);
         setEntries(resolved);
       } catch (e) {
         toast.error("Errore nel caricamento ordini");
@@ -356,10 +393,16 @@ export default function OrdiniAdminPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataDa, dataA, reloadKey]);
 
-  // ── Filter (date already filtered server-side) ─────────────────────────────
+  const inSearch = searchEntries !== null;
+
+  // ── Filter ─────────────────────────────────────────────────────────────────
+  // In modalità ricerca la base è searchEntries (Algolia, tutti gli ordini) e il
+  // testo è già stato applicato da Algolia; altrimenti è la lista caricata per
+  // data e il testo filtra client-side. Fonte/Stato restano attivi in entrambi.
   const filtered = useMemo(() => {
-    return entries.filter(({ ordine, clienteNome }) => {
-      if (search) {
+    const base = searchEntries ?? entries;
+    return base.filter(({ ordine, clienteNome }) => {
+      if (!inSearch && search) {
         const hay = [ordine.id, clienteNome, String(ordine.Totale ?? "")].join(" ").toLowerCase();
         if (!hay.includes(search.toLowerCase())) return false;
       }
@@ -367,7 +410,7 @@ export default function OrdiniAdminPage() {
       if (fonte && ordine.Source !== fonte) return false;
       return true;
     });
-  }, [entries, search, stato, fonte]);
+  }, [entries, searchEntries, inSearch, search, stato, fonte]);
 
   // Fatturato del periodo (escludi tutti gli stati di cancellazione)
   const fatturato = useMemo(() => {
@@ -378,15 +421,62 @@ export default function OrdiniAdminPage() {
   }, [filtered]);
 
   const today = getTodayISO();
-  const hasExtraFilters = !!(search || stato || fonte);
+  const hasExtraFilters = !!(search || stato || fonte || inSearch);
   const isDefaultRange  = dataDa === today && dataA === today;
 
+  // Esegui la ricerca Algolia su tutti gli ordini (mirror FF: OrdiniRecord.search).
+  // Costruisce OrdineEntry dai hit (Cliente path → ref, DataOra millis → Timestamp)
+  // e risolve i nomi cliente con lo stesso pipeline della lista normale.
+  async function handleSearchOrdini() {
+    const term = search.trim();
+    if (!term) { setSearchEntries(null); setSelectedIds(new Set()); return; }
+    setSearching(true);
+    try {
+      const hits = await searchOrdini(term, searchField);
+      // Ricostruisce un DocumentReference dal path stringa dell'hit (Algolia non
+      // serializza i reference); path malformato → undefined (nome → "—").
+      const refFromPath = (path?: string): DocumentReference | undefined => {
+        if (!path) return undefined;
+        try { return doc(db, path); } catch { return undefined; }
+      };
+      const raw = hits
+        .map((h) => {
+          const docId = h.objectID || (h.path ? h.path.split("/").pop() ?? "" : "");
+          const ordine = {
+            ...(h as Record<string, unknown>),
+            id:      h.ID ?? docId,
+            DataOra: typeof h.DataOra === "number" ? Timestamp.fromMillis(h.DataOra) : undefined,
+            Cliente: refFromPath(h.Cliente),
+            Utente:  refFromPath(h.Utente),
+          } as unknown as Ordine;
+          return { docId, ordine };
+        })
+        .filter((e) => e.docId);
+      const resolved = await resolveOrdineEntries(raw);
+      setSearchEntries(resolved);
+      setSelectedIds(new Set());
+    } catch (e) {
+      console.error(e);
+      toast.error("Errore nella ricerca ordini");
+      setSearchEntries([]);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  // Esci dalla ricerca: torna alla lista filtrata per data.
+  function exitSearch() {
+    setSearch("");
+    setSearchEntries(null);
+    setSelectedIds(new Set());
+  }
+
   function reset() {
-    setSearch(""); setStato(""); setFonte("");
+    setSearch(""); setStato(""); setFonte(""); setSearchEntries(null);
   }
 
   function resetRange() {
-    setDataDa(today); setDataA(today);
+    setDataDa(today); setDataA(today); setSearchEntries(null);
   }
 
   // ── Selezione ──────────────────────────────────────────────────────────────
@@ -741,15 +831,54 @@ export default function OrdiniAdminPage() {
           (come la sezione Spedizioni); su mobile in un pannello collassabile. */}
       <div className="space-y-2">
        <div className="flex gap-2 items-center flex-wrap">
-        <div className="relative flex-1 min-w-[150px]">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cerca ID, cliente, importo…"
-            className="w-full pl-9 pr-4 py-2 rounded-xl text-sm outline-none"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
-          />
+        {/* Selettore campo di ricerca — mirror FF (Numero Ordine / Nome / Dati Spedizione) */}
+        <div className="relative flex-shrink-0">
+          <select
+            value={searchField}
+            onChange={(e) => setSearchField(e.target.value as OrdiniSearchField)}
+            title="Campo di ricerca"
+            className="appearance-none pl-3 pr-8 py-2 rounded-xl text-sm font-semibold outline-none cursor-pointer"
+            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          >
+            {(["Numero Ordine", "Nome", "Dati Spedizione"] as OrdiniSearchField[]).map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </select>
+          <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "#9ca3af" }} />
+        </div>
+
+        {/* Campo di ricerca + pulsante — ricerca Algolia su TUTTI gli ordini (mirror FF).
+            Invio o click su "Cerca" avviano la ricerca; la X esce e torna alla lista per data. */}
+        <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-[130px]">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSearchOrdini(); }}
+              placeholder="Cerca…"
+              className="w-full pl-9 pr-8 py-2 rounded-xl text-sm outline-none"
+              style={{ background: "var(--bg-primary)", border: `1px solid ${inSearch ? "#FFC803" : "var(--border)"}`, fontFamily: "var(--font-montserrat)" }}
+            />
+            {(search || inSearch) && (
+              <button
+                onClick={exitSearch}
+                title="Esci dalla ricerca"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-gray-100"
+              >
+                <X size={13} style={{ color: "#9ca3af" }} />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={handleSearchOrdini}
+            disabled={searching}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-bold flex-shrink-0 transition-all hover:brightness-95 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)" }}
+          >
+            {searching ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+            <span className="hidden sm:inline">Cerca</span>
+          </button>
         </div>
 
         {/* Desktop: reset filtri a destra */}
@@ -842,7 +971,7 @@ export default function OrdiniAdminPage() {
             <CalendarRangePicker
               dataDa={dataDa}
               dataA={dataA}
-              onChange={(da, a) => { setDataDa(da); setDataA(a); }}
+              onChange={(da, a) => { setDataDa(da); setDataA(a); setSearchEntries(null); }}
             />
           </AnchoredPopover>
         </div>

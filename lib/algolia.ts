@@ -23,6 +23,11 @@ export const algoliaClient = new Proxy({} as ReturnType<typeof algoliasearch>, {
 
 export const INDEX_NAME = process.env.NEXT_PUBLIC_ALGOLIA_INDEX ?? "Prodotti";
 
+// Indice Algolia degli ordini (stesso usato dal precedente progetto FlutterFlow
+// tramite OrdiniRecord.search). Attributi ricercabili configurati sull'indice:
+// ID · Indirizzo_Fatturazione.Destinatario · Indirizzo_Spedizione.Destinatario · GLS_TrackingNumber
+export const ORDINI_INDEX_NAME = process.env.NEXT_PUBLIC_ALGOLIA_INDEX_ORDINI ?? "Ordini";
+
 export type ProdottoHit = {
   objectID: string;
   Titolo?: string;
@@ -68,6 +73,57 @@ type AlgoliaRaw = {
   page: number;
   facets?: Record<string, Record<string, number>>;
 };
+
+// ─── Ricerca ordini (mirror FlutterFlow: dropdown "Numero Ordine / Nome / Dati
+// Spedizione" + campo testo + icona ricerca → OrdiniRecord.search sull'indice
+// Algolia "Ordini", su TUTTI gli ordini, indipendentemente dal range di date). ──
+
+export type OrdiniSearchField = "Numero Ordine" | "Nome" | "Dati Spedizione";
+
+// Il campo del dropdown restringe gli attributi ricercabili dell'indice.
+// (Nel FF il dropdown era puramente estetico — qui lo rendiamo funzionale
+// mantenendo le stesse etichette.)
+const ORDINI_SEARCH_ATTRS: Record<OrdiniSearchField, string[]> = {
+  "Numero Ordine":   ["ID"],
+  "Nome":            ["Indirizzo_Fatturazione.Destinatario", "Indirizzo_Spedizione.Destinatario"],
+  "Dati Spedizione": ["Indirizzo_Spedizione.Destinatario", "GLS_TrackingNumber"],
+};
+
+// Un hit dell'indice "Ordini". I riferimenti (Cliente/Utente) sono salvati come
+// path stringa (Algolia non serializza i DocumentReference); DataOra è in millis.
+export type OrdineHit = {
+  objectID: string;
+  path?: string;
+  ID?: string;
+  Source?: string;
+  Stato?: string;
+  Totale?: number;
+  DataOra?: number;          // epoch millis
+  Cliente?: string;          // path Firestore, es. "Clienti/xxx"
+  Utente?: string;           // path Firestore, es. "users/xxx"
+  Corriere?: string;
+  Indirizzo_Spedizione?: Record<string, unknown>;
+  Indirizzo_Fatturazione?: Record<string, unknown>;
+  [k: string]: unknown;
+};
+
+// Ritorna gli hit dell'indice "Ordini" in ordine di pertinenza Algolia.
+export async function searchOrdini(
+  term: string,
+  field?: OrdiniSearchField,
+  hitsPerPage = 50,
+): Promise<OrdineHit[]> {
+  const q = term.trim();
+  if (!q) return [];
+  const searchParams: Record<string, unknown> = { query: q, hitsPerPage };
+  const attrs = field ? ORDINI_SEARCH_ATTRS[field] : undefined;
+  if (attrs) searchParams.restrictSearchableAttributes = attrs;
+  const raw = (await algoliaClient.searchSingleIndex({
+    indexName: ORDINI_INDEX_NAME,
+    searchParams,
+  })) as unknown as AlgoliaRaw;
+  return (raw.hits ?? []) as OrdineHit[];
+}
 
 export function prezzoPerRuolo(hit: ProdottoHit, ruolo: Ruolo | undefined): number {
   // Catena fallback identica a Flutter:
