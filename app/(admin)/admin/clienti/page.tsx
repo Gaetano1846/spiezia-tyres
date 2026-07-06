@@ -23,6 +23,10 @@ import {
   X,
   Save,
   ChevronDown,
+  UserPlus,
+  Eye,
+  Mail,
+  MapPin,
 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
@@ -36,6 +40,7 @@ type UserDoc = {
   email?: string;
   Ruolo?: string;
   Rappresentante?: string;
+  Metodo_di_Pagamento?: string;
   last_active_time?: Timestamp;
   Blocco?: boolean;
   Cliente_Ref?: DocumentReference;  // riferimento al doc Clienti (dove vive il fido reale)
@@ -121,12 +126,143 @@ function SkeletonRows() {
 
 type EditState = {
   docId: string;
+  // ── Campi del documento "users" ──
   Ruolo: string;
+  Nome: string;               // users.display_name
+  Rappresentante: string;     // email del rappresentante assegnato (dropdown)
+  MetodoPagamento: string;    // users.Metodo_di_Pagamento
   Fido: string;
-  Rappresentante: string;
   Bloccato: boolean;
-  clienteRef: DocumentReference | null;  // dove scrivere il fido (Clienti se collegato)
+  clienteRef: DocumentReference | null;  // dove scrivere il fido / dati anagrafici (Clienti se collegato)
+  // ── Campi del documento "Clienti" collegato (se presente) ──
+  hasCliente: boolean;
+  clienteLoading: boolean;
+  ragioneSociale: string;     // Clienti.Ragione_Sociale
+  clienteNome: string;        // Clienti.Nome
+  telefono: string;           // Clienti.Telefono
+  partitaIva: string;         // Clienti.Partita_Iva
 };
+
+// Stato del form "Nuovo Cliente" — crea un documento anagrafica nella collezione
+// `Clienti` (schema Flutter). Nessun account di login: come il crea_cliente Flutter.
+type NewClienteState = {
+  Azienda: boolean;
+  Nome: string;
+  Ragione_Sociale: string;
+  Email: string;
+  Telefono: string;
+  Partita_Iva: string;
+  Codice_Fiscale: string;
+  PEC: string;
+  Via: string;
+  Citta: string;
+  CAP: string;
+  Paese: string;
+  Tipo: string;
+  Fido: string;
+  Metodo_di_Pagamento: string;
+};
+
+const EMPTY_NEW_CLIENTE: NewClienteState = {
+  Azienda: false,
+  Nome: "",
+  Ragione_Sociale: "",
+  Email: "",
+  Telefono: "",
+  Partita_Iva: "",
+  Codice_Fiscale: "",
+  PEC: "",
+  Via: "",
+  Citta: "",
+  CAP: "",
+  Paese: "Italia",
+  Tipo: "",
+  Fido: "",
+  Metodo_di_Pagamento: "",
+};
+
+// Valori tipici del campo Clienti.Tipo (schema Flutter)
+const TIPI_CLIENTE = ["Privato", "Gommista", "Grossista", "Officina"];
+
+// Campo di testo riutilizzabile per il form "Nuovo Cliente" (stile coerente col resto)
+function TextField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  required?: boolean;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+        {label}
+        {required && <span style={{ color: "#EF4444" }}> *</span>}
+      </label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+        style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+      />
+    </div>
+  );
+}
+
+// Dati dell'anagrafica Clienti collegata, letti per la scheda di dettaglio (sola lettura)
+type ClienteDetail = {
+  Nome?: string;
+  Ragione_Sociale?: string;
+  Email?: string;
+  Telefono?: string;
+  Via?: string;
+  Citta?: string;
+  CAP?: string;
+  Paese?: string;
+  Partita_Iva?: string;
+  Codice_Fiscale?: string;
+  PEC?: string;
+  Tipo?: string;
+  Azienda?: boolean;
+  B2B?: boolean;
+  Locale?: boolean;
+  Fido?: number;
+  Fido_Residuo?: number;
+  Metodo_di_Pagamento?: string;
+};
+
+// Riga etichetta/valore per la scheda di dettaglio (sola lettura)
+function DetailRow({ label, value }: { label: string; value: string }) {
+  const shown = value && value.trim() ? value : "—";
+  return (
+    <div
+      className="flex items-start justify-between gap-3 py-2 border-b last:border-b-0"
+      style={{ borderColor: "var(--border)" }}
+    >
+      <span
+        className="text-xs font-semibold uppercase tracking-wider flex-shrink-0 pt-0.5"
+        style={{ color: "var(--text-muted)" }}
+      >
+        {label}
+      </span>
+      <span
+        className="text-sm text-right font-medium break-words"
+        style={{ color: shown === "—" ? "var(--text-muted)" : "var(--text-primary)" }}
+      >
+        {shown}
+      </span>
+    </div>
+  );
+}
 
 export default function ClientiPage() {
   const [users, setUsers] = useState<UserDoc[]>([]);
@@ -136,6 +272,12 @@ export default function ClientiPage() {
   const [aggiornandoFido, setAggiornandoFido] = useState(false);
   const [editUser, setEditUser] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [newCliente, setNewCliente] = useState<NewClienteState | null>(null);
+  const [creating, setCreating] = useState(false);
+  // Scheda di dettaglio (sola lettura)
+  const [detailUser, setDetailUser] = useState<UserDoc | null>(null);
+  const [detailCliente, setDetailCliente] = useState<ClienteDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   // Dettagli cliente espandibili (solo mobile) — set dei docId aperti
   const [expandedClienti, setExpandedClienti] = useState<Set<string>>(new Set());
@@ -230,6 +372,18 @@ export default function ClientiPage() {
     });
   }, [users, search, filtroRuolo]);
 
+  // Elenco rappresentanti selezionabili — come nel FlutterFlow, gli utenti con
+  // ruolo "Rappresentante". Il valore salvato è l'email, l'etichetta il nome.
+  const rappresentanti = useMemo(
+    () =>
+      users
+        .filter((u) => u.Ruolo === "Rappresentante")
+        .map((u) => ({ email: (u.email ?? u.Email ?? "").trim(), nome: getNome(u) }))
+        .filter((r) => r.email)
+        .sort((a, b) => a.nome.localeCompare(b.nome)),
+    [users]
+  );
+
   async function toggleBlocco(u: UserDoc) {
     const id = u.docId ?? u.uid;
     if (!id) return;
@@ -259,14 +413,53 @@ export default function ClientiPage() {
   function openEdit(u: UserDoc) {
     const id = u.docId ?? u.uid;
     if (!id) return;
+    const ref = u.Cliente_Ref ?? null;
+    // Stato iniziale coi campi del doc "users" (già disponibili in memoria).
     setEditUser({
       docId: id,
       Ruolo: u.Ruolo ?? "",
-      Fido: String(fidoForUser(u)),
+      Nome: getNome(u) === "Non disponibile" ? "" : getNome(u),
       Rappresentante: u.Rappresentante ?? "",
+      MetodoPagamento: u.Metodo_di_Pagamento ?? "",
+      Fido: String(fidoForUser(u)),
       Bloccato: isBloccato(u),
-      clienteRef: u.Cliente_Ref ?? null,
+      clienteRef: ref,
+      hasCliente: !!ref,
+      clienteLoading: !!ref,
+      ragioneSociale: "",
+      clienteNome: "",
+      telefono: "",
+      partitaIva: "",
     });
+    // Se collegato a un Cliente, carica i dati anagrafici da modificare.
+    if (ref) {
+      getDoc(ref)
+        .then((snap) => {
+          const d = (snap.exists() ? snap.data() : {}) as {
+            Ragione_Sociale?: string; Nome?: string; Telefono?: string;
+            Partita_Iva?: string; Metodo_di_Pagamento?: string;
+          };
+          setEditUser((prev) =>
+            prev && prev.docId === id
+              ? {
+                  ...prev,
+                  clienteLoading: false,
+                  ragioneSociale: d.Ragione_Sociale ?? "",
+                  clienteNome: d.Nome ?? "",
+                  telefono: d.Telefono ?? "",
+                  partitaIva: d.Partita_Iva ?? "",
+                  // Metodo di pagamento: preferisci quello su users, altrimenti quello del Cliente
+                  MetodoPagamento: prev.MetodoPagamento || (d.Metodo_di_Pagamento ?? ""),
+                }
+              : prev
+          );
+        })
+        .catch(() => {
+          setEditUser((prev) =>
+            prev && prev.docId === id ? { ...prev, clienteLoading: false } : prev
+          );
+        });
+    }
   }
 
   async function saveEdit() {
@@ -274,21 +467,31 @@ export default function ClientiPage() {
     setSaving(true);
     const fidoVal = parseFloat(editUser.Fido) || 0;
     try {
-      // Ruolo / Rappresentante / Blocco vivono sul doc users
+      // Ruolo / Nome / Rappresentante / Metodo di pagamento / Blocco vivono sul doc users
       await updateDoc(doc(db, "users", editUser.docId), {
         Ruolo: editUser.Ruolo,
+        display_name: editUser.Nome.trim(),
         Rappresentante: editUser.Rappresentante,
+        Metodo_di_Pagamento: editUser.MetodoPagamento.trim(),
         Blocco: editUser.Bloccato,
       });
-      // Il fido vive sul doc Clienti se l'utente è collegato; altrimenti fallback su users
+      // Il fido e l'anagrafica vivono sul doc Clienti se l'utente è collegato
       if (editUser.clienteRef) {
         const ref = editUser.clienteRef;
-        await updateDoc(ref, { Fido: fidoVal });
+        await updateDoc(ref, {
+          Fido: fidoVal,
+          Ragione_Sociale: editUser.ragioneSociale.trim(),
+          Nome: editUser.clienteNome.trim(),
+          Telefono: editUser.telefono.trim(),
+          Partita_Iva: editUser.partitaIva.trim(),
+          Metodo_di_Pagamento: editUser.MetodoPagamento.trim(),
+        });
         setClientiFido((prev) => ({
           ...prev,
           [ref.path]: { fido: fidoVal, fidoResiduo: prev[ref.path]?.fidoResiduo ?? 0 },
         }));
       } else {
+        // Utente non collegato a un Cliente: fido salvato come fallback su users
         await updateDoc(doc(db, "users", editUser.docId), { Fido: fidoVal });
       }
       toast.success("Utente aggiornato");
@@ -297,6 +500,80 @@ export default function ClientiPage() {
       toast.error("Errore nel salvataggio");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Apre la scheda di dettaglio (sola lettura): mostra i dati account e, se collegata,
+  // l'anagrafica Clienti (caricata al volo via Cliente_Ref).
+  function openDetail(u: UserDoc) {
+    setDetailUser(u);
+    setDetailCliente(null);
+    const ref = u.Cliente_Ref;
+    if (ref && typeof ref === "object" && "path" in ref) {
+      setDetailLoading(true);
+      getDoc(ref)
+        .then((snap) => setDetailCliente((snap.exists() ? snap.data() : {}) as ClienteDetail))
+        .catch(() => setDetailCliente({}))
+        .finally(() => setDetailLoading(false));
+    } else {
+      setDetailLoading(false);
+    }
+  }
+
+  // Passa dalla scheda di dettaglio alla modale di modifica dello stesso utente
+  function editFromDetail(u: UserDoc) {
+    setDetailUser(null);
+    openEdit(u);
+  }
+
+  function openNew() {
+    setNewCliente({ ...EMPTY_NEW_CLIENTE });
+  }
+
+  function updateNew<K extends keyof NewClienteState>(key: K, value: NewClienteState[K]) {
+    setNewCliente((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  async function saveNewCliente() {
+    if (!newCliente) return;
+    const nc = newCliente;
+    // Obbligatori come nel crea_cliente Flutter: Nome (o Ragione Sociale se azienda), Email, Telefono, CAP.
+    const hasNome = nc.Azienda ? (nc.Ragione_Sociale.trim() || nc.Nome.trim()) : nc.Nome.trim();
+    if (!hasNome || !nc.Email.trim() || !nc.Telefono.trim() || !nc.CAP.trim()) {
+      toast.error("Compila i campi obbligatori: Nome, Email, Telefono, CAP");
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch("/api/admin/clienti", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          Azienda: nc.Azienda,
+          Nome: nc.Nome,
+          Ragione_Sociale: nc.Ragione_Sociale,
+          Email: nc.Email,
+          Telefono: nc.Telefono,
+          Partita_Iva: nc.Partita_Iva,
+          Codice_Fiscale: nc.Codice_Fiscale,
+          PEC: nc.PEC,
+          Via: nc.Via,
+          Citta: nc.Citta,
+          CAP: nc.CAP,
+          Paese: nc.Paese,
+          Tipo: nc.Tipo,
+          Fido: nc.Fido.trim() === "" ? 0 : parseFloat(nc.Fido) || 0,
+          Metodo_di_Pagamento: nc.Metodo_di_Pagamento,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Errore nella creazione del cliente");
+      toast.success("Cliente creato nell'anagrafica");
+      setNewCliente(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Errore nella creazione del cliente");
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -338,23 +615,37 @@ export default function ClientiPage() {
             {loading ? "Caricamento…" : `${filtered.length} utenti`}
           </p>
         </div>
-        <button
-          onClick={aggiornaFido}
-          disabled={aggiornandoFido}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 transition-all hover:opacity-80 hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
-          style={{
-            background: "var(--brand)",
-            color: "#111",
-            fontFamily: "var(--font-montserrat)",
-            boxShadow: "var(--shadow-brand)",
-          }}
-        >
-          <RefreshCw
-            size={16}
-            className={aggiornandoFido ? "animate-spin" : ""}
-          />
-          Aggiorna Fido
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={openNew}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:brightness-110 active:scale-[.98]"
+            style={{
+              background: "#111",
+              color: "#fff",
+              fontFamily: "var(--font-montserrat)",
+            }}
+          >
+            <UserPlus size={16} />
+            Nuovo Cliente
+          </button>
+          <button
+            onClick={aggiornaFido}
+            disabled={aggiornandoFido}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 transition-all hover:opacity-80 hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+            style={{
+              background: "var(--brand)",
+              color: "#111",
+              fontFamily: "var(--font-montserrat)",
+              boxShadow: "var(--shadow-brand)",
+            }}
+          >
+            <RefreshCw
+              size={16}
+              className={aggiornandoFido ? "animate-spin" : ""}
+            />
+            Aggiorna Fido
+          </button>
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -558,18 +849,32 @@ export default function ClientiPage() {
 
                         {/* Azioni */}
                         <td className="py-3.5">
-                          <button
-                            onClick={() => openEdit(u)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors hover:bg-[#FFC803] hover:text-[#111]"
-                            style={{
-                              border: "1px solid var(--border)",
-                              color: "var(--text-secondary)",
-                              fontFamily: "var(--font-montserrat)",
-                            }}
-                          >
-                            <Pencil size={12} />
-                            Modifica
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => openDetail(u)}
+                              title="Visualizza dettagli"
+                              aria-label="Visualizza dettagli"
+                              className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-[#FFC803] hover:text-[#111]"
+                              style={{
+                                border: "1px solid var(--border)",
+                                color: "var(--text-secondary)",
+                              }}
+                            >
+                              <Eye size={15} />
+                            </button>
+                            <button
+                              onClick={() => openEdit(u)}
+                              title="Modifica"
+                              aria-label="Modifica"
+                              className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-[#FFC803] hover:text-[#111]"
+                              style={{
+                                border: "1px solid var(--border)",
+                                color: "var(--text-secondary)",
+                              }}
+                            >
+                              <Pencil size={15} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -693,8 +998,16 @@ export default function ClientiPage() {
                           />
                         </label>
                         <button
+                          onClick={() => openDetail(u)}
+                          className="mt-1 w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all active:scale-[.98]"
+                          style={{ background: "#111", color: "#fff", fontFamily: "var(--font-montserrat)" }}
+                        >
+                          <Eye size={12} />
+                          Scheda completa
+                        </button>
+                        <button
                           onClick={() => openEdit(u)}
-                          className="mt-1 w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all hover:brightness-[1.04] active:scale-[.98]"
+                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all hover:brightness-[1.04] active:scale-[.98]"
                           style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
                         >
                           <Pencil size={12} />
@@ -718,14 +1031,17 @@ export default function ClientiPage() {
             onClick={() => setEditUser(null)}
           />
           <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5 max-h-[90vh] overflow-y-auto"
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
             style={{ fontFamily: "var(--font-montserrat)" }}
           >
             {/* Header */}
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold" style={{ color: "#111" }}>
-                Modifica utente
-              </h2>
+              <div className="flex items-center gap-2">
+                <Pencil size={18} style={{ color: "#FFC803" }} />
+                <h2 className="text-base font-bold" style={{ color: "#111" }}>
+                  Modifica utente
+                </h2>
+              </div>
               <button
                 onClick={() => setEditUser(null)}
                 className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
@@ -734,77 +1050,513 @@ export default function ClientiPage() {
               </button>
             </div>
 
-            {/* Ruolo */}
-            <div>
-              <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
-                RUOLO
+            {/* ── Sezione account (doc users) ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Ruolo */}
+              <div>
+                <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  RUOLO
+                </label>
+                <select
+                  value={editUser.Ruolo}
+                  onChange={(e) => setEditUser({ ...editUser, Ruolo: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                >
+                  {RUOLI_FILTER.filter((r) => r !== "Tutti").map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Nome (display_name) */}
+              <div>
+                <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  NOME
+                </label>
+                <input
+                  type="text"
+                  value={editUser.Nome}
+                  onChange={(e) => setEditUser({ ...editUser, Nome: e.target.value })}
+                  placeholder="Nome utente"
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                />
+              </div>
+
+              {/* Rappresentante (dropdown) */}
+              <div>
+                <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  RAPPRESENTANTE
+                </label>
+                <select
+                  value={editUser.Rappresentante}
+                  onChange={(e) => setEditUser({ ...editUser, Rappresentante: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <option value="">— Nessuno —</option>
+                  {/* Valore attuale non presente tra i rappresentanti noti: mantienilo */}
+                  {editUser.Rappresentante &&
+                    !rappresentanti.some((r) => r.email === editUser.Rappresentante) && (
+                      <option value={editUser.Rappresentante}>{editUser.Rappresentante}</option>
+                    )}
+                  {rappresentanti.map((r) => (
+                    <option key={r.email} value={r.email}>
+                      {r.nome} ({r.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Metodo di Pagamento */}
+              <div>
+                <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  METODO DI PAGAMENTO
+                </label>
+                <input
+                  type="text"
+                  value={editUser.MetodoPagamento}
+                  onChange={(e) => setEditUser({ ...editUser, MetodoPagamento: e.target.value })}
+                  placeholder="Es. Bonifico, Contanti…"
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                />
+              </div>
+
+              {/* Fido */}
+              <div>
+                <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                  FIDO (€)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={editUser.Fido}
+                  onChange={(e) => setEditUser({ ...editUser, Fido: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                />
+              </div>
+
+              {/* Bloccato */}
+              <label className="flex items-center gap-3 cursor-pointer select-none sm:self-end sm:pb-2.5">
+                <input
+                  type="checkbox"
+                  checked={editUser.Bloccato}
+                  onChange={(e) => setEditUser({ ...editUser, Bloccato: e.target.checked })}
+                  className="w-4 h-4 accent-yellow-400"
+                />
+                <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  Utente bloccato
+                </span>
               </label>
-              <select
-                value={editUser.Ruolo}
-                onChange={(e) => setEditUser({ ...editUser, Ruolo: e.target.value })}
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
-              >
-                {RUOLI_FILTER.filter((r) => r !== "Tutti").map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
             </div>
 
-            {/* Fido */}
-            <div>
-              <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
-                FIDO (€)
-              </label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                value={editUser.Fido}
-                onChange={(e) => setEditUser({ ...editUser, Fido: e.target.value })}
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
-              />
-            </div>
+            {/* ── Sezione anagrafica Cliente (doc Clienti collegato) ── */}
+            {editUser.hasCliente && (
+              <div className="pt-4 border-t" style={{ borderColor: "var(--border)" }}>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)" }}>
+                  Dati cliente
+                </p>
+                {editUser.clienteLoading ? (
+                  <div className="flex items-center gap-2 text-sm py-3" style={{ color: "var(--text-muted)" }}>
+                    <RefreshCw size={14} className="animate-spin" />
+                    Caricamento dati cliente…
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Ragione Sociale */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                        RAGIONE SOCIALE
+                      </label>
+                      <input
+                        type="text"
+                        value={editUser.ragioneSociale}
+                        onChange={(e) => setEditUser({ ...editUser, ragioneSociale: e.target.value })}
+                        className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                        style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                      />
+                    </div>
 
-            {/* Rappresentante */}
-            <div>
-              <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
-                RAPPRESENTANTE
-              </label>
-              <input
-                type="text"
-                value={editUser.Rappresentante}
-                onChange={(e) => setEditUser({ ...editUser, Rappresentante: e.target.value })}
-                placeholder="Nome rappresentante"
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
-              />
-            </div>
+                    {/* Nome cliente */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                        NOME
+                      </label>
+                      <input
+                        type="text"
+                        value={editUser.clienteNome}
+                        onChange={(e) => setEditUser({ ...editUser, clienteNome: e.target.value })}
+                        className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                        style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                      />
+                    </div>
 
-            {/* Bloccato */}
-            <label className="flex items-center gap-3 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={editUser.Bloccato}
-                onChange={(e) => setEditUser({ ...editUser, Bloccato: e.target.checked })}
-                className="w-4 h-4 accent-yellow-400"
-              />
-              <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                Utente bloccato
-              </span>
-            </label>
+                    {/* Telefono */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                        TELEFONO
+                      </label>
+                      <input
+                        type="tel"
+                        value={editUser.telefono}
+                        onChange={(e) => setEditUser({ ...editUser, telefono: e.target.value })}
+                        className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                        style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                      />
+                    </div>
+
+                    {/* Partita IVA */}
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
+                        PARTITA IVA
+                      </label>
+                      <input
+                        type="text"
+                        value={editUser.partitaIva}
+                        onChange={(e) => setEditUser({ ...editUser, partitaIva: e.target.value })}
+                        className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                        style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Salva */}
             <button
               onClick={saveEdit}
-              disabled={saving}
+              disabled={saving || editUser.clienteLoading}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition-all hover:opacity-85 disabled:opacity-50 hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
               style={{ background: "#FFC803", color: "#111", boxShadow: "var(--shadow-brand)" }}
             >
               <Save size={16} />
               {saving ? "Salvataggio…" : "Salva modifiche"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modale Nuovo Cliente (crea documento anagrafica in Clienti) ── */}
+      {newCliente && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => (creating ? null : setNewCliente(null))}
+          />
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
+            style={{ fontFamily: "var(--font-montserrat)" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <UserPlus size={18} style={{ color: "#FFC803" }} />
+                <h2 className="text-base font-bold" style={{ color: "#111" }}>
+                  Nuovo cliente
+                </h2>
+              </div>
+              <button
+                onClick={() => setNewCliente(null)}
+                disabled={creating}
+                className="p-1 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+              >
+                <X size={18} style={{ color: "#111" }} />
+              </button>
+            </div>
+
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Crea un documento anagrafica nella collezione Clienti. Non genera un account di accesso al portale.
+            </p>
+
+            {/* Tipo cliente: Azienda + Tipo */}
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={newCliente.Azienda}
+                  onChange={(e) => updateNew("Azienda", e.target.checked)}
+                  className="w-4 h-4 accent-yellow-400"
+                />
+                <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  È un&apos;azienda
+                </span>
+              </label>
+              <div className="min-w-[180px]">
+                <select
+                  value={newCliente.Tipo}
+                  onChange={(e) => updateNew("Tipo", e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ border: "1.5px solid #FFC803", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <option value="">— Tipo cliente —</option>
+                  {TIPI_CLIENTE.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Anagrafica */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)" }}>
+                Anagrafica
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <TextField
+                  label="NOME / REFERENTE"
+                  value={newCliente.Nome}
+                  onChange={(v) => updateNew("Nome", v)}
+                  placeholder="Nome e cognome"
+                  required={!newCliente.Azienda}
+                />
+                <TextField
+                  label="RAGIONE SOCIALE"
+                  value={newCliente.Ragione_Sociale}
+                  onChange={(v) => updateNew("Ragione_Sociale", v)}
+                  placeholder="Denominazione azienda"
+                  required={newCliente.Azienda}
+                />
+                <TextField
+                  label="PARTITA IVA"
+                  value={newCliente.Partita_Iva}
+                  onChange={(v) => updateNew("Partita_Iva", v)}
+                  placeholder="IT01234567890"
+                />
+                <TextField
+                  label="CODICE FISCALE"
+                  value={newCliente.Codice_Fiscale}
+                  onChange={(v) => updateNew("Codice_Fiscale", v)}
+                />
+              </div>
+            </div>
+
+            {/* Contatti */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)" }}>
+                Contatti
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <TextField
+                  label="EMAIL"
+                  type="email"
+                  value={newCliente.Email}
+                  onChange={(v) => updateNew("Email", v)}
+                  placeholder="cliente@email.it"
+                  required
+                />
+                <TextField
+                  label="TELEFONO"
+                  type="tel"
+                  value={newCliente.Telefono}
+                  onChange={(v) => updateNew("Telefono", v)}
+                  placeholder="+39 …"
+                  required
+                />
+                <TextField
+                  label="PEC"
+                  type="email"
+                  value={newCliente.PEC}
+                  onChange={(v) => updateNew("PEC", v)}
+                  placeholder="pec@pec.it"
+                />
+              </div>
+            </div>
+
+            {/* Indirizzo */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)" }}>
+                Indirizzo
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <TextField
+                  label="VIA"
+                  value={newCliente.Via}
+                  onChange={(v) => updateNew("Via", v)}
+                  placeholder="Via e numero civico"
+                />
+                <TextField
+                  label="CITTÀ"
+                  value={newCliente.Citta}
+                  onChange={(v) => updateNew("Citta", v)}
+                />
+                <TextField
+                  label="CAP"
+                  value={newCliente.CAP}
+                  onChange={(v) => updateNew("CAP", v)}
+                  required
+                />
+                <TextField
+                  label="PAESE"
+                  value={newCliente.Paese}
+                  onChange={(v) => updateNew("Paese", v)}
+                />
+              </div>
+            </div>
+
+            {/* Commerciale */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "var(--text-muted)" }}>
+                Commerciale
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <TextField
+                  label="FIDO (€)"
+                  type="number"
+                  value={newCliente.Fido}
+                  onChange={(v) => updateNew("Fido", v)}
+                  placeholder="0"
+                />
+                <TextField
+                  label="METODO DI PAGAMENTO"
+                  value={newCliente.Metodo_di_Pagamento}
+                  onChange={(v) => updateNew("Metodo_di_Pagamento", v)}
+                  placeholder="Es. Bonifico, Contanti…"
+                />
+              </div>
+            </div>
+
+            {/* Salva */}
+            <button
+              onClick={saveNewCliente}
+              disabled={creating}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition-all hover:opacity-85 disabled:opacity-50 hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+              style={{ background: "#FFC803", color: "#111", boxShadow: "var(--shadow-brand)" }}
+            >
+              <Save size={16} />
+              {creating ? "Creazione…" : "Crea cliente"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Scheda dettaglio cliente (sola lettura) ── */}
+      {detailUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setDetailUser(null)}
+          />
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+            style={{ fontFamily: "var(--font-montserrat)" }}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-lg font-bold" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                    {getNome(detailUser)}
+                  </h2>
+                  {detailUser.Ruolo && (
+                    <span
+                      className="px-2 py-0.5 rounded-full text-xs font-semibold"
+                      style={{
+                        background:
+                          detailUser.Ruolo === "Admin" ? "#FEE2E2"
+                          : detailUser.Ruolo === "Gommista" ? "#D1FAE5"
+                          : detailUser.Ruolo === "Grossista" ? "#DBEAFE"
+                          : "#F3F4F6",
+                        color:
+                          detailUser.Ruolo === "Admin" ? "#991B1B"
+                          : detailUser.Ruolo === "Gommista" ? "#065F46"
+                          : detailUser.Ruolo === "Grossista" ? "#1E40AF"
+                          : "var(--text-secondary)",
+                      }}
+                    >
+                      {detailUser.Ruolo}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
+                  {detailUser.email ?? detailUser.Email ?? "—"}
+                </p>
+              </div>
+              <button
+                onClick={() => setDetailUser(null)}
+                className="p-1 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
+              >
+                <X size={18} style={{ color: "#111" }} />
+              </button>
+            </div>
+
+            {/* Sezione Account (doc users) */}
+            <div className="rounded-xl p-4" style={{ border: "1px solid var(--border)", background: "var(--bg-primary)" }}>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-1 flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
+                <Mail size={13} /> Account
+              </p>
+              <DetailRow label="Email" value={detailUser.email ?? detailUser.Email ?? ""} />
+              <DetailRow label="Ruolo" value={detailUser.Ruolo ?? ""} />
+              <DetailRow label="Rappresentante" value={detailUser.Rappresentante ?? ""} />
+              <DetailRow label="Metodo pagamento" value={detailUser.Metodo_di_Pagamento ?? ""} />
+              <DetailRow label="Bloccato" value={isBloccato(detailUser) ? "Sì" : "No"} />
+              <DetailRow label="Ultimo accesso" value={relativeTime(detailUser.last_active_time ?? detailUser.lastLogin)} />
+              <DetailRow label="ID documento" value={detailUser.docId} />
+            </div>
+
+            {/* Sezione Anagrafica (doc Clienti collegato) */}
+            {detailUser.Cliente_Ref ? (
+              <div className="rounded-xl p-4" style={{ border: "1px solid var(--border)" }}>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-1 flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
+                  <MapPin size={13} /> Anagrafica cliente
+                </p>
+                {detailLoading ? (
+                  <div className="flex items-center gap-2 text-sm py-3" style={{ color: "var(--text-muted)" }}>
+                    <RefreshCw size={14} className="animate-spin" /> Caricamento anagrafica…
+                  </div>
+                ) : (
+                  <>
+                    <DetailRow label="Ragione sociale" value={detailCliente?.Ragione_Sociale ?? ""} />
+                    <DetailRow label="Nome" value={detailCliente?.Nome ?? ""} />
+                    <DetailRow label="Tipo" value={detailCliente?.Tipo ?? ""} />
+                    <DetailRow label="Azienda" value={detailCliente?.Azienda ? "Sì" : "No"} />
+                    <DetailRow label="Partita IVA" value={detailCliente?.Partita_Iva ?? ""} />
+                    <DetailRow label="Codice fiscale" value={detailCliente?.Codice_Fiscale ?? ""} />
+                    <DetailRow label="PEC" value={detailCliente?.PEC ?? ""} />
+                    <DetailRow label="Telefono" value={detailCliente?.Telefono ?? ""} />
+                    <DetailRow
+                      label="Indirizzo"
+                      value={[detailCliente?.Via, detailCliente?.CAP, detailCliente?.Citta, detailCliente?.Paese]
+                        .map((x) => (x ?? "").trim())
+                        .filter(Boolean)
+                        .join(", ")}
+                    />
+                    <DetailRow label="Fido" value={formatEuro(detailCliente?.Fido ?? 0)} />
+                    <DetailRow label="Fido residuo" value={formatEuro(detailCliente?.Fido_Residuo ?? 0)} />
+                    <DetailRow label="Metodo pagamento" value={detailCliente?.Metodo_di_Pagamento ?? ""} />
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)" }}>
+                <p className="text-sm mb-1" style={{ color: "var(--text-muted)" }}>
+                  Nessuna anagrafica Clienti collegata a questo account.
+                </p>
+                <DetailRow label="Fido" value={formatEuro(fidoForUser(detailUser))} />
+              </div>
+            )}
+
+            {/* Azioni */}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setDetailUser(null)}
+                className="flex-1 py-3 rounded-xl font-semibold text-sm transition-colors hover:bg-gray-50"
+                style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+              >
+                Chiudi
+              </button>
+              <button
+                onClick={() => editFromDetail(detailUser)}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition-all hover:brightness-[1.04] active:scale-[.98]"
+                style={{ background: "#FFC803", color: "#111", boxShadow: "var(--shadow-brand)" }}
+              >
+                <Pencil size={16} /> Modifica
+              </button>
+            </div>
           </div>
         </div>
       )}
