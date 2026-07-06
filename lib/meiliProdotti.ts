@@ -99,10 +99,24 @@ export async function searchProdottiMeili(
 
   // Vincolo di progetto: SEMPRE e SOLO T24=false (escluso il dropship Tyre24).
   const filters: string[] = ["t24 = false"];
-  // Esclude i servizi/accessori (olio, trasporto, valvole…): come su prezzo-gomme
-  // il catalogo mostra solo prodotti con prezzo >= 20.
-  filters.push("prezzo_effettivo >= 20");
   if (soloDisponibili) filters.push("has_stock = true");
+
+  // Tab Cerchi / Camere d'aria: stessa logica del Flutter B2B, filtro per la
+  // categoria Firestore (`Categoria_Prodotti/…` → campo `categoria_ref`).
+  // Questi prodotti (specie le camere) sono economici: niente floor prezzo.
+  const catRef = categoria?.startsWith("Categoria_Prodotti/")
+    ? categoria.slice("Categoria_Prodotti/".length)
+    : null;
+  if (catRef) {
+    filters.push(`categoria_ref = ${quote(catRef)}`);
+  } else {
+    // Tab Pneumatici: esclude servizi/accessori (olio, trasporto…) come su
+    // prezzo-gomme (prezzo >= 20) ed esclude cerchi/camere (hanno categoria_ref).
+    filters.push("prezzo_effettivo >= 20");
+    filters.push("categoria_ref NOT EXISTS");
+    if (categoria) filters.push(`categoria = ${quote(categoria)}`);
+  }
+
   if (largezza) filters.push(`larghezza = ${quote(largezza)}`);
   if (altezza) filters.push(`altezza = ${quote(altezza)}`);
   if (diametro) filters.push(`diametro = ${quote(diametro)}`);
@@ -112,7 +126,6 @@ export async function searchProdottiMeili(
   if (marche.length > 0) {
     filters.push(`(${marche.map((m) => `marca = ${quote(m)}`).join(" OR ")})`);
   }
-  if (categoria) filters.push(`categoria = ${quote(categoria)}`);
 
   const res = await getMeili().index(INDEX).search(query, {
     filter: filters.join(" AND "),
