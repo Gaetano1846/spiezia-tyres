@@ -195,6 +195,9 @@ export type SearchProdottiParams = {
   page?: number;
   hitsPerPage?: number;
   withFacets?: boolean;
+  // Ordinamento per prezzo lato server (solo backend Meili). Default = "asc":
+  // i prodotti sono ordinati per prezzo crescente su TUTTE le pagine.
+  sortPrezzo?: "asc" | "desc";
 };
 
 export type SearchProdottiResult = {

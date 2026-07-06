@@ -152,7 +152,7 @@ export default function ProdottiPage() {
   const [nbPages, setNbPages] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [sortBy, setSortBy] = useState<"default" | "prezzo_asc" | "prezzo_desc" | "misura_asc">("default");
+  const [sortBy, setSortBy] = useState<"default" | "prezzo_asc" | "prezzo_desc" | "misura_asc">("prezzo_asc");
 
   // Quantità per prodotto
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -240,6 +240,8 @@ export default function ProdottiPage() {
         soloDisponibili: true,
         page: pg,
         hitsPerPage: 50,
+        // ordinamento per prezzo lato server (default crescente su tutte le pagine)
+        sortPrezzo: sortBy === "prezzo_desc" ? "desc" : "asc",
       });
 
       setNbHits(r.nbHits);
@@ -267,14 +269,14 @@ export default function ProdottiPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, largezza, altezza, diametro, stagioni, marche, categoria]);
+  }, [search, largezza, altezza, diametro, stagioni, marche, categoria, sortBy]);
 
   useEffect(() => {
     if (debRef.current) clearTimeout(debRef.current);
     debRef.current = setTimeout(() => doSearch(0), 300);
     return () => { if (debRef.current) clearTimeout(debRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, largezza, altezza, diametro, stagioni, marche, categoria]);
+  }, [search, largezza, altezza, diametro, stagioni, marche, categoria, sortBy]);
 
   function handleMisuraRapida(v: string) {
     setMisuraRapida(v);
@@ -304,21 +306,16 @@ export default function ProdottiPage() {
     setDiametro(""); setStagioni([]); setMarche([]); setMarcaSearch(""); setCategoria("");
   }
 
+  // Ordinamento per prezzo: fatto lato server (Meili) su TUTTE le pagine, quindi
+  // i hits arrivano già ordinati. Solo "misura_asc" resta client-side.
   const sortedHits = useMemo(() => {
-    if (sortBy === "default") return hits;
+    if (sortBy !== "misura_asc") return hits;
     return [...hits].sort((a, b) => {
-      const pa = prezzoPerRuolo(a, user?.Ruolo);
-      const pb = prezzoPerRuolo(b, user?.Ruolo);
-      if (sortBy === "prezzo_asc")  return pa - pb;
-      if (sortBy === "prezzo_desc") return pb - pa;
-      if (sortBy === "misura_asc") {
-        const ma = `${a.Larghezza}/${a.Altezza}R${a.Diametro}`;
-        const mb = `${b.Larghezza}/${b.Altezza}R${b.Diametro}`;
-        return ma.localeCompare(mb);
-      }
-      return 0;
+      const ma = `${a.Larghezza}/${a.Altezza}R${a.Diametro}`;
+      const mb = `${b.Larghezza}/${b.Altezza}R${b.Diametro}`;
+      return ma.localeCompare(mb);
     });
-  }, [hits, sortBy, user?.Ruolo]);
+  }, [hits, sortBy]);
 
   const prezzoPopupHit = prezzoPopupId ? sortedHits.find((h) => h.objectID === prezzoPopupId) ?? null : null;
 

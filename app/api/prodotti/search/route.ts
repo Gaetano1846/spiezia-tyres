@@ -43,7 +43,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await searchProdottiMeili(params);
+    // Default: ordina per prezzo crescente lato server (su tutte le pagine).
+    // ord_<ruolo> = prezzo effettivo per ruolo (replica il fallback di
+    // prezzoPerRuolo) con i prodotti senza prezzo spinti in fondo.
+    const dir = params.sortPrezzo ?? "asc";
+    const field =
+      session.Ruolo === "Grossista" ? "ord_grossista" :
+      session.Ruolo === "Privato"   ? "ord_privato" :
+      session.Ruolo === "T24"       ? "ord_t24" :
+      "ord_gommista"; // Gommista + staff/admin + default
+    const sort = [`${field}:${dir}`];
+
+    const result = await searchProdottiMeili(params, sort);
     const hits = result.hits.map((h) => stripPrices(h, session.Ruolo, session.CRM));
     return NextResponse.json({ ...result, hits });
   } catch (err) {

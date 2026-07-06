@@ -80,7 +80,8 @@ function mapHit(d: MeiliDoc): ProdottoHit {
 }
 
 export async function searchProdottiMeili(
-  params: SearchProdottiParams = {}
+  params: SearchProdottiParams = {},
+  sort?: string[]
 ): Promise<SearchProdottiResult> {
   const {
     query = "",
@@ -114,6 +115,7 @@ export async function searchProdottiMeili(
     filter: filters.join(" AND "),
     page: page + 1, // Meili è 1-indexed
     hitsPerPage,
+    sort: sort && sort.length > 0 ? sort : undefined,
     facets: withFacets ? ["marca", "stagione"] : undefined,
   });
 
