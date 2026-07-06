@@ -34,7 +34,9 @@ export default function LoginForm() {
         res = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken }),
+          // email/password: servono solo allo shadow-verify della migrazione DB
+          // (il server non li logga né li persiste — vedi lib/spiezia-auth/shadow.ts)
+          body: JSON.stringify({ idToken, email, password }),
         });
         if (res.ok) break;
         // 400 (token mancante) e 403 (utente non autorizzato) sono definitivi: inutile ritentare

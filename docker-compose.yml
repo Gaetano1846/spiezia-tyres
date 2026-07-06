@@ -64,9 +64,15 @@ services:
 
     networks:
       - spiezia-b2b2-net
+      - pipeline   # rete del Postgres di gruppo (import-pipeline) — host "postgres"
 
 networks:
   spiezia-b2b2-net:
     driver: bridge
     driver_opts:
       com.docker.network.bridge.name: br-spieziab2b2
+  # Postgres condiviso del gruppo Spiezia (migrazione Firebase→PG).
+  # Rete creata dal compose di prezzo-gomme (scripts/import-pipeline).
+  pipeline:
+    external: true
+    name: import-pipeline_default

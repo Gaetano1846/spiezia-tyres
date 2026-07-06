@@ -23,7 +23,10 @@ function isAdminConfigured(): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const { idToken } = await req.json();
+  // email/password servono SOLO allo shadow-verify della migrazione Firebase→PG
+  // (vedi lib/spiezia-auth/shadow.ts): Firebase resta autoritativo, la password
+  // non viene mai loggata né persistita.
+  const { idToken, email: bodyEmail, password: bodyPassword } = await req.json();
   if (!idToken) return NextResponse.json({ error: "idToken required" }, { status: 400 });
 
   // ── Dev mode: Admin SDK assente → verifica idToken tramite Firestore REST ────
@@ -85,6 +88,20 @@ export async function POST(req: NextRequest) {
 
     const sessionCookie = await adminAuth().createSessionCookie(idToken, { expiresIn: TTL_MS });
     const sessionPayload = { uid: decoded.uid, email: decoded.email ?? "", Ruolo, CRM };
+
+    // Shadow-verify migrazione: valida il path Postgres in parallelo, mai bloccante.
+    void import("@/lib/spiezia-auth/shadow")
+      .then(({ runShadowAuthCheck }) =>
+        runShadowAuthCheck({
+          uid: decoded.uid,
+          email: decoded.email ?? bodyEmail ?? "",
+          password: typeof bodyPassword === "string" ? bodyPassword : undefined,
+          ruolo: (data.Ruolo as string) ?? "Privato",
+          crm: CRM,
+        })
+      )
+      .catch((err) => console.error("[shadow-auth] avvio fallito:", err));
+
     const res = NextResponse.json({ ok: true, Ruolo, CRM });
     res.headers.append("Set-Cookie", buildSessionCookie(sessionCookie));
     res.headers.append("Set-Cookie", buildRoleCookie(Ruolo, CRM));
