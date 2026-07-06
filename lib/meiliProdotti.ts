@@ -99,6 +99,9 @@ export async function searchProdottiMeili(
 
   // Vincolo di progetto: SEMPRE e SOLO T24=false (escluso il dropship Tyre24).
   const filters: string[] = ["t24 = false"];
+  // Esclude i servizi/accessori (olio, trasporto, valvole…): come su prezzo-gomme
+  // il catalogo mostra solo prodotti con prezzo >= 20.
+  filters.push("prezzo_effettivo >= 20");
   if (soloDisponibili) filters.push("has_stock = true");
   if (largezza) filters.push(`larghezza = ${quote(largezza)}`);
   if (altezza) filters.push(`altezza = ${quote(altezza)}`);
