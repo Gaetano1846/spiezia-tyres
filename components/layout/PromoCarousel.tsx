@@ -10,18 +10,27 @@ type PromoImg = {
   Url?: string;
   URL?: string;
   Immagine?: string;
-  Copertina?: string;
+  // Può essere un FLAG booleano (gestionale Next: "imposta come copertina") oppure,
+  // sui dati storici Flutter, una URL alternativa. Trattiamo entrambi i casi.
+  Copertina?: string | boolean;
   Ordine?: number;
   Attivo?: boolean;
 };
 
-// Immagine mostrata nella striscia (preferisce la "Copertina" banner, come nel vecchio gestionale Flutter)
+// "Copertina" come URL solo se è davvero una stringa non vuota. Nei dati storici è
+// l'URL del banner "largo"; nei nuovi upload dal pannello Banner è invece un FLAG
+// booleano → in quel caso va ignorata (altrimenti <img src={true}> è rotto) e si
+// ripiega su Url. Così la striscia funziona con entrambi i modelli di dato.
+function coverStr(p: PromoImg): string | undefined {
+  return typeof p.Copertina === "string" && p.Copertina ? p.Copertina : undefined;
+}
+// Immagine mostrata nella striscia (preferisce il banner "largo" Copertina, se URL)
 function bannerSrc(p: PromoImg): string | undefined {
-  return p.Copertina || p.Url || p.URL || p.Immagine;
+  return coverStr(p) || p.Url || p.URL || p.Immagine;
 }
 // Immagine a piena risoluzione mostrata nello zoom
 function fullSrc(p: PromoImg): string | undefined {
-  return p.Url || p.URL || p.Immagine || p.Copertina;
+  return p.Url || p.URL || p.Immagine || coverStr(p);
 }
 
 /**
