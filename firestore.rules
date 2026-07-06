@@ -191,6 +191,14 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // Job di creazione spedizioni GLS in background (progress widget admin).
+    // Scritto solo lato server via Admin SDK (bypassa le rules): qui autorizziamo
+    // solo la lettura realtime da parte del client admin.
+    match /SpedizioniJobs/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     match /Emails/{docId} {
       allow read: if isAdmin();
       allow write: if isAdmin();
