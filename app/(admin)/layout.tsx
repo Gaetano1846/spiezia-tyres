@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import B2BShell from "@/components/layout/B2BShell";
 import BackendTabs from "@/components/layout/BackendTabs";
+import SpedizioniJobsWidget from "@/components/layout/SpedizioniJobsWidget";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
@@ -13,6 +14,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <div className="px-4 md:px-6 py-4">
         {children}
       </div>
+      <SpedizioniJobsWidget />
     </B2BShell>
   );
 }

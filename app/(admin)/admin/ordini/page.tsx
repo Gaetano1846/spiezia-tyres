@@ -15,6 +15,7 @@ import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import HeaderFilter from "@/components/ui/HeaderFilter";
 import toast from "react-hot-toast";
 import { searchOrdini, type OrdiniSearchField } from "@/lib/algolia";
+import { trackGlsJob } from "@/lib/gls/jobTracking";
 import type { Ordine, OrdineStato, OrdineSource } from "@/lib/types";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -637,11 +638,13 @@ export default function OrdiniAdminPage() {
     return parts.length ? ` · marketplace: ${parts.join(", ")}` : "";
   }
 
-  // Spedisci Nola/Roma — crea le spedizioni GLS per gli ordini selezionati, poi
-  // (mirror FF) comunica il tracking ai marketplace di origine.
-  // gls-italy · action "processMultipleOrders" accetta un array di ordiniIds.
-  // contractIndex 0 = GLS Nola, 1 = GLS Roma. La CF aggiorna direttamente
-  // Firestore (Stato ordine, GLS_TrackingNumber, GLS_PdfUrl, doc Spedizioni).
+  // Spedisci Nola/Roma — avvia un job di creazione spedizioni GLS in background
+  // (route /api/gls-italy crea il job Firestore e processa gli ordini uno a uno,
+  // marketplace incluso). L'utente non aspetta il batch: riceve subito il jobId,
+  // lo traccia (SpedizioniJobsWidget nel layout admin segue il progresso live
+  // su qualunque pagina) e può continuare a lavorare. La lista ordini è già
+  // realtime (onSnapshot sopra), quindi riflette gli stati non appena il job li
+  // aggiorna, senza bisogno di un reload esplicito.
   async function handleSpedisci(sede: "Roma" | "Nola") {
     if (spedendo || aggiornandoTracking) return;
     const ids = [...selectedIds];
@@ -649,7 +652,6 @@ export default function OrdiniAdminPage() {
 
     const contractIndex = sede === "Nola" ? 0 : 1;
     setSpedendo(sede);
-    const toastId = toast.loading(`Creazione spedizioni GLS (${sede}) — ${ids.length} ordini…`);
     try {
       const res = await fetch(
         "/api/gls-italy",
@@ -663,19 +665,14 @@ export default function OrdiniAdminPage() {
           }),
         }
       );
-      const data = await res.json().catch(() => null) as { error?: string } | null;
-      if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
-      // Mirror FF: dopo la creazione GLS, comunica il tracking ai marketplace.
-      const mk = await pushMarketplaceEntries(ids.map((id) => [id, "GLS"] as [string, string]));
-      toast.dismiss(toastId);
-      toast.success(`Spedizioni GLS ${sede} create (${ids.length} ordini)${mkLabel(mk)}`);
+      const data = await res.json().catch(() => null) as { jobId?: string; error?: string } | null;
+      if (!res.ok || !data?.jobId) throw new Error(data?.error || `Errore ${res.status}`);
+      trackGlsJob(data.jobId);
+      toast.success(`Spedizione GLS ${sede} avviata (${ids.length} ordini) — segui il progresso in basso a destra`);
       setSelectedIds(new Set());
-      // La CF ha modificato gli ordini su Firestore: ricarico la lista.
-      setReloadKey((k) => k + 1);
     } catch (e) {
-      toast.dismiss(toastId);
       const msg = e instanceof Error ? e.message : "Errore sconosciuto";
-      toast.error(`Errore spedizione GLS (${sede}): ${msg}`);
+      toast.error(`Errore avvio spedizione GLS (${sede}): ${msg}`);
     } finally {
       setSpedendo(null);
     }

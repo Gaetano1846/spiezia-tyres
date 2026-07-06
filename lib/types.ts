@@ -383,6 +383,29 @@ export type Sede = {
   Telefono?: string;
 };
 
+// ─── Job spedizione bulk (creazione GLS in background) ────────────────────────
+
+export type SpedizioneJobFailure = { orderId: string; error: string };
+
+export type SpedizioneJob = {
+  id: string;
+  tipo: "GLS";
+  sede: "Roma" | "Nola";
+  contractIndex: number;
+  totalOrders: number;
+  processedOrders: number;
+  successOrders: number;
+  failedOrders: number;
+  failures: SpedizioneJobFailure[];
+  status: "running" | "done" | "error";
+  error?: string;
+  marketplace?: { ok: number; ko: number; skipped: number };
+  createdBy?: string | null;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+  finishedAt?: Timestamp;
+};
+
 // ─── Auth session (server-side cookie payload) ────────────────────────────────
 
 export type SessionPayload = {
