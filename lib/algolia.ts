@@ -208,6 +208,19 @@ export type SearchProdottiResult = {
 export async function searchProdotti(
   params: SearchProdottiParams = {}
 ): Promise<SearchProdottiResult> {
+  // Migrazione Firebase→PG (Fase 2): con il flag attivo la ricerca passa dalla
+  // route server-side che interroga MeiliSearch (indice condiviso del gruppo) e
+  // rimuove i prezzi non pertinenti al ruolo. Default = Algolia (nessun cambio).
+  if (process.env.NEXT_PUBLIC_PRODOTTI_BACKEND === "meili" && typeof window !== "undefined") {
+    const res = await fetch("/api/prodotti/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error(`ricerca prodotti (meili) fallita: ${res.status}`);
+    return (await res.json()) as SearchProdottiResult;
+  }
+
   const {
     query = "",
     largezza,
