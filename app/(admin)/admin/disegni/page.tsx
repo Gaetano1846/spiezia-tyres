@@ -56,6 +56,7 @@ export default function DisegniPage() {
   const [disegni, setDisegni] = useState<Disegno[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [soloSenzaFoto, setSoloSenzaFoto] = useState(false);
   const [page, setPage] = useState(0);
 
   // Modal
@@ -171,15 +172,20 @@ export default function DisegniPage() {
     }
   }
 
+  const senzaFotoCount = useMemo(() => disegni.filter((d) => !d.Immagine).length, [disegni]);
+
   const filtered = useMemo(() => {
-    return disegni.filter((d) => {
-      if (search && !d.Nome.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    });
-  }, [disegni, search]);
+    return disegni
+      .filter((d) => {
+        if (search && !d.Nome.toLowerCase().includes(search.toLowerCase())) return false;
+        if (soloSenzaFoto && d.Immagine) return false;
+        return true;
+      })
+      .sort((a, b) => conteggioOf(b) - conteggioOf(a));
+  }, [disegni, search, soloSenzaFoto]);
 
   // Reset pagina al cambio filtro, fuori dal render (anti-pattern setState in useMemo).
-  useEffect(() => { setPage(0); }, [search]);
+  useEffect(() => { setPage(0); }, [search, soloSenzaFoto]);
 
   const paginated = useMemo(
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
@@ -226,6 +232,22 @@ export default function DisegniPage() {
               <X size={13} style={{ color: "var(--text-secondary)" }} />
             </button>
           )}
+          <button
+            onClick={() => setSoloSenzaFoto((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all"
+            style={{
+              background: soloSenzaFoto ? "var(--brand)" : "var(--bg-primary)",
+              border: "1px solid var(--border)",
+              color: soloSenzaFoto ? "#111" : "var(--text-secondary)",
+              fontFamily: "var(--font-montserrat)",
+            }}
+          >
+            <ImageIcon size={13} />
+            Senza foto
+            {senzaFotoCount > 0 && (
+              <span className="text-[10px] font-bold opacity-70">({senzaFotoCount})</span>
+            )}
+          </button>
           <span className="text-xs ml-auto flex-shrink-0" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
             {filtered.length.toLocaleString("it-IT")} risultati
           </span>
