@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import {
   doc, getDoc, collection, getDocs, query, orderBy,
   updateDoc, addDoc, serverTimestamp, Timestamp,
+  type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
@@ -99,7 +100,24 @@ function fmtData(ts: Timestamp | null | undefined): string {
   return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+// Note ordine da marketplace: spesso in HTML (<br/>, entità). Le rendiamo testo semplice.
+function stripHtml(html: string): string {
+  return html
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/\s*(p|div|li)\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function normalizeArticolo(a: Record<string, unknown>) {
+  const ref = a.Ref;
   return {
     titolo:    String(a.Titolo ?? "Prodotto"),
     marca:     String(a.Marca  ?? ""),
@@ -108,7 +126,27 @@ function normalizeArticolo(a: Record<string, unknown>) {
     pfu:       Number(a.PFU ?? 0),
     logistica: Number(a.Contributo_Logistico ?? 0),
     sku:       String(a.SKU ?? ""),
+    immagine:  String(a.Immagine ?? ""),
+    // Ref al doc Prodotti (DocumentReference) — usato per lo stock per magazzino
+    refPath:   ref && typeof ref === "object" && "path" in (ref as object) ? (ref as DocumentReference).path : "",
   };
+}
+
+// Stock per magazzino di un prodotto (campi reali del doc Prodotti)
+type StockView = {
+  nola: number; nola2: number; roma: number; volla: number;
+  ocp: number; t24: number; isT24: boolean;
+};
+
+// Riga stock come nel FlutterFlow: Nola · Nola 2 · Roma · Volla · (48/72 | Tyre24)
+function stockLabel(sv: StockView): string {
+  return [
+    `Nola ${sv.nola}`,
+    `Nola 2 ${sv.nola2}`,
+    `Roma ${sv.roma}`,
+    `Volla ${sv.volla}`,
+    sv.isT24 ? `Tyre24 ${sv.t24}` : `48/72 ${sv.ocp}`,
+  ].join("  ·  ");
 }
 
 // ─── Indirizzi ordine ───────────────────────────────────────────────────────
@@ -211,6 +249,12 @@ export default function OrdineAdminDetailPage() {
   const [annullaOpen,    setAnnullaOpen]    = useState(false);
   const [motivoAnnulla,  setMotivoAnnulla]  = useState("");
   const [annullando,     setAnnullando]     = useState(false);
+  const [stockByRef,     setStockByRef]     = useState<Record<string, StockView>>({});
+  // Colli / Peso (come FF: default = somma quantità e quantità×5, editabili)
+  const [colli,          setColli]          = useState("");
+  const [peso,           setPeso]           = useState("");
+  const [editingColli,   setEditingColli]   = useState(false);
+  const [savingColli,    setSavingColli]    = useState(false);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -225,6 +269,46 @@ export default function OrdineAdminDetailPage() {
         setOrdine(o);
         setTracking(o.GLS_TrackingNumber ?? "");
 
+        // Colli / Peso: valori salvati sull'ordine oppure default (somma quantità · ×5)
+        const arts0 = (o.Articoli ?? []) as Record<string, unknown>[];
+        const totQty = arts0.reduce((s, a) => s + Number(a.Quantita ?? 0), 0);
+        setColli(String(o.Colli ?? totQty));
+        setPeso(String(o.Peso ?? totQty * 5));
+
+        // Stock per magazzino: risolvi i doc Prodotti referenziati dagli articoli
+        const refs = new Map<string, DocumentReference>();
+        for (const a of arts0) {
+          const r = a.Ref;
+          if (r && typeof r === "object" && "path" in (r as object)) refs.set((r as DocumentReference).path, r as DocumentReference);
+        }
+        if (refs.size > 0) {
+          Promise.all(
+            [...refs.values()].map(async (r) => {
+              try {
+                const ps = await getDoc(r);
+                if (!ps.exists()) return null;
+                const p = ps.data();
+                const sv: StockView = {
+                  nola:  Number(p.Stock_Nola ?? 0),
+                  nola2: Number(p.Stock_Nola_2 ?? 0),
+                  roma:  Number(p.Stock_Roma ?? 0),
+                  volla: Number(p.Stock_Volla ?? 0),
+                  ocp:   Number(p.Stock_OCP ?? 0),
+                  t24:   Number(p.Stock_T24 ?? 0),
+                  isT24: Boolean(p.T24 ?? false),
+                };
+                return { path: r.path, sv };
+              } catch { return null; }
+            })
+          ).then((results) => {
+            setStockByRef((prev) => {
+              const next = { ...prev };
+              for (const res of results) if (res) next[res.path] = res.sv;
+              return next;
+            });
+          });
+        }
+
         const [cronSnap, noteSnap] = await Promise.all([
           getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc"))),
           getDocs(query(collection(db, "Ordini", id, "Note_Interne"), orderBy("DataCreazione", "desc"))),
@@ -237,15 +321,19 @@ export default function OrdineAdminDetailPage() {
           const cSnap = await getDoc(ref);
           if (cSnap.exists()) {
             const d = cSnap.data();
+            // Nome cliente: Ragione Sociale (azienda) → Nome+Cognome / Nome → fallback.
+            // NB: "Azienda" sul doc Clienti è un BOOLEANO, non il nome — non usarlo come etichetta.
             const nome = o.Cliente
-              ? (String(d.Azienda || "").trim() || `${d.Nome ?? ""} ${d.Cognome ?? ""}`.trim() || "—")
+              ? (String(d.Ragione_Sociale || "").trim() ||
+                 `${d.Nome ?? ""} ${d.Cognome ?? ""}`.trim() ||
+                 String(d.Nome || "").trim() || "—")
               : (String(d.displayName || d.email || "—"));
             setClienteInfo({
               id:          cSnap.id,
               nome,
               email:      String(d.Email ?? d.email ?? ""),
               telefono:   String(d.Telefono ?? ""),
-              partitaIVA: String(d.PartitaIVA ?? ""),
+              partitaIVA: String(d.Partita_Iva ?? d.PartitaIVA ?? ""),
             });
           }
         }
@@ -259,6 +347,28 @@ export default function OrdineAdminDetailPage() {
     fetchAll();
   }, [id]);
 
+  // Notifica il marketplace di origine (Tyre24/Anonimo/eBay/Amazon/AdTyres) via
+  // /api/marketplace. Automatico al cambio stato, come nel FlutterFlow.
+  async function notifyMarketplace(body: Record<string, unknown>, label: string) {
+    const t = toast.loading(`Sincronizzazione ${label}…`);
+    try {
+      const res = await fetch("/api/marketplace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null) as { success?: boolean; error?: string; data?: { ok?: boolean; skipped?: boolean; detail?: string } } | null;
+      toast.dismiss(t);
+      const d = data?.data;
+      if (d?.skipped) return;                       // fonte senza marketplace: nessun avviso
+      if (res.ok && data?.success && d?.ok) toast.success(d?.detail || `${label}: sincronizzato`);
+      else toast.error(d?.detail || data?.error || `Errore sincronizzazione ${label}`);
+    } catch {
+      toast.dismiss(t);
+      toast.error(`Errore sincronizzazione ${label}`);
+    }
+  }
+
   async function handleStatoChange(nuovoStato: OrdineStato) {
     if (!ordine || savingStato || nuovoStato === ordine.Stato) return;
     // L'annullamento richiede SEMPRE un motivo: instradiamo verso il modale
@@ -267,6 +377,12 @@ export default function OrdineAdminDetailPage() {
     if (nuovoStato === "Annullato") {
       setMotivoAnnulla(ordine.Motivo_Annullamento ?? "");
       setAnnullaOpen(true);
+      return;
+    }
+    // Spedito richiede il codice tracking (come FF: senza tracking → errore, niente cambio stato)
+    const trackingPresente = !!(ordine.GLS_TrackingNumber || tracking).trim();
+    if (nuovoStato === "Spedito" && !trackingPresente) {
+      toast.error("Codice tracking assente: inserisci e salva il tracking prima di segnare 'Spedito'.");
       return;
     }
     setSavingStato(true);
@@ -285,6 +401,24 @@ export default function OrdineAdminDetailPage() {
       const newCron = await getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc")));
       setCronologia(newCron.docs.map((d) => ({ id: d.id, ...d.data() } as CronologiaEntry)));
       toast.success(`Stato: ${nuovoStato}`);
+
+      // ── Side-effect marketplace automatico (mirror FF stato_ordine) ──
+      const src = ordine.Source as string;
+      const isT24like    = src === "Tyre24" || src === "Anonimo";
+      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres"].includes(src);
+      if (nuovoStato === "In Preparazione" && isT24like) {
+        notifyMarketplace(
+          { action: "updateStatus", ordineId: id, statusIndex: 2, comment: "We’ve received your order and are now processing it." },
+          src,
+        );
+      } else if (nuovoStato === "Out of Stock" && isT24like) {
+        notifyMarketplace(
+          { action: "updateStatus", ordineId: id, statusIndex: 5, comment: "We are sorry, but we have run out of stock and therefore had to cancel your order." },
+          src,
+        );
+      } else if (nuovoStato === "Spedito" && isMarketplace) {
+        notifyMarketplace({ action: "pushTracking", ordineId: id, corriere: ordine.Corriere }, src);
+      }
     } catch {
       toast.error("Errore aggiornamento stato");
     } finally {
@@ -332,6 +466,27 @@ export default function OrdineAdminDetailPage() {
       toast.error("Errore aggiornamento tracking");
     } finally {
       setSavingTracking(false);
+    }
+  }
+
+  async function handleSaveColli() {
+    if (!ordine || savingColli) return;
+    setSavingColli(true);
+    const colliVal = parseInt(colli, 10);
+    const pesoVal  = parseInt(peso, 10);
+    const colliSafe = Number.isNaN(colliVal) ? 0 : colliVal;
+    const pesoSafe  = Number.isNaN(pesoVal)  ? 0 : pesoVal;
+    try {
+      await updateDoc(doc(db, "Ordini", id), { Colli: colliSafe, Peso: pesoSafe });
+      setOrdine((o) => o ? { ...o, Colli: colliSafe, Peso: pesoSafe } : o);
+      setColli(String(colliSafe));
+      setPeso(String(pesoSafe));
+      setEditingColli(false);
+      toast.success("Colli e peso aggiornati");
+    } catch {
+      toast.error("Errore aggiornamento colli/peso");
+    } finally {
+      setSavingColli(false);
     }
   }
 
@@ -655,9 +810,50 @@ export default function OrdineAdminDetailPage() {
 
           {/* Articoli */}
           <Card padding="md">
-            <h2 className="text-base font-bold mb-4" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
-              Articoli ({normalized.length})
-            </h2>
+            <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+              <h2 className="text-base font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+                Articoli ({normalized.length})
+              </h2>
+              {/* Colli / Peso — editabile (come FlutterFlow) */}
+              <div className="flex items-end gap-2" style={{ fontFamily: "var(--font-montserrat)" }}>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--text-muted)" }}>Colli</label>
+                  <input
+                    type="number" min={0} value={colli} disabled={!editingColli}
+                    onChange={(e) => setColli(e.target.value)}
+                    className="w-16 px-2 py-1 rounded-lg text-sm outline-none disabled:opacity-70"
+                    style={{ background: editingColli ? "#fff" : "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "var(--text-muted)" }}>Peso (kg)</label>
+                  <input
+                    type="number" min={0} value={peso} disabled={!editingColli}
+                    onChange={(e) => setPeso(e.target.value)}
+                    className="w-16 px-2 py-1 rounded-lg text-sm outline-none disabled:opacity-70"
+                    style={{ background: editingColli ? "#fff" : "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+                  />
+                </div>
+                {editingColli ? (
+                  <button
+                    onClick={handleSaveColli}
+                    disabled={savingColli}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-40 transition-all hover:brightness-[1.04] active:scale-[.98]"
+                    style={{ background: "var(--brand)", color: "#111", boxShadow: "var(--shadow-brand)" }}
+                  >
+                    {savingColli ? "…" : "Salva"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setEditingColli(true)}
+                    className="p-1.5 rounded-lg hover:bg-[#F1F4F8] transition-colors"
+                    title="Modifica colli e peso"
+                  >
+                    <Pencil size={14} style={{ color: "var(--text-muted)" }} />
+                  </button>
+                )}
+              </div>
+            </div>
             {normalized.length === 0 ? (
               <p className="py-8 text-center text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                 Nessun articolo
@@ -669,9 +865,18 @@ export default function OrdineAdminDetailPage() {
                   {normalized.map((a, i) => (
                     <div key={i} className="rounded-xl p-3.5" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{a.marca && `${a.marca} `}{a.titolo}</p>
-                          {a.sku && <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{a.sku}</p>}
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          {a.immagine && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={a.immagine} alt="" className="w-10 h-10 rounded-lg object-contain flex-shrink-0" style={{ border: "1px solid var(--border)", background: "#fff" }} />
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{a.marca && `${a.marca} `}{a.titolo}</p>
+                            {a.sku && <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{a.sku}</p>}
+                            {a.refPath && stockByRef[a.refPath] && (
+                              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{stockLabel(stockByRef[a.refPath])}</p>
+                            )}
+                          </div>
                         </div>
                         <span className="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "#FFF8DC", color: "#111" }}>
                           ×{a.qty}
@@ -713,8 +918,19 @@ export default function OrdineAdminDetailPage() {
                       {normalized.map((a, i) => (
                         <tr key={i} className="hover:bg-[#F9FAFB] transition-colors" style={{ borderBottom: "1px solid var(--border)" }}>
                           <td className="py-3.5 pr-3">
-                            <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{a.marca && `${a.marca} `}{a.titolo}</p>
-                            {a.sku && <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{a.sku}</p>}
+                            <div className="flex items-start gap-3">
+                              {a.immagine && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={a.immagine} alt="" className="w-11 h-11 rounded-lg object-contain flex-shrink-0" style={{ border: "1px solid var(--border)", background: "#fff" }} />
+                              )}
+                              <div className="min-w-0">
+                                <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{a.marca && `${a.marca} `}{a.titolo}</p>
+                                {a.sku && <p className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{a.sku}</p>}
+                                {a.refPath && stockByRef[a.refPath] && (
+                                  <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{stockLabel(stockByRef[a.refPath])}</p>
+                                )}
+                              </div>
+                            </div>
                           </td>
                           <td className="py-3.5 pr-3" style={{ color: "var(--text-secondary)" }}>{a.qty}</td>
                           <td className="py-3.5 pr-3" style={{ color: "var(--text-primary)" }}>{euro(a.prezzo)}</td>
@@ -744,6 +960,12 @@ export default function OrdineAdminDetailPage() {
                     <span className="w-24 text-right" style={{ color: "var(--text-primary)" }}>{euro(val)}</span>
                   </div>
                 ))}
+                {(ordine.SpeseExtra ?? []).map((se, i) => (
+                  <div key={`se-${i}`} className="flex justify-end gap-8 sm:gap-16">
+                    <span style={{ color: "var(--text-secondary)" }}>{se.Descrizione || "Spesa extra"}</span>
+                    <span className="w-24 text-right" style={{ color: "var(--text-primary)" }}>{euro(Number(se.Importo ?? 0))}</span>
+                  </div>
+                ))}
                 <div className="flex justify-end gap-8 sm:gap-16 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
                   <span className="font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>Totale</span>
                   <span className="w-24 text-right text-lg font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
@@ -753,6 +975,21 @@ export default function OrdineAdminDetailPage() {
               </div>
             )}
           </Card>
+
+          {/* Note ordine (nota cliente/marketplace — separata dalle note interne) */}
+          {ordine.Note && stripHtml(ordine.Note) && (
+            <Card padding="md">
+              <h2 className="text-base font-bold mb-3" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
+                Note ordine
+              </h2>
+              <div
+                className="rounded-xl p-3.5 text-sm whitespace-pre-line"
+                style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)", borderLeft: "4px solid #FFC803" }}
+              >
+                {stripHtml(ordine.Note)}
+              </div>
+            </Card>
+          )}
 
           {/* Cronologia */}
           <Card padding="md">
@@ -874,32 +1111,59 @@ export default function OrdineAdminDetailPage() {
           <AddressCard title="Indirizzo fatturazione" view={inFatView} onEdit={() => openEditAddr("fatturazione")} />
           <AddressCard title="Indirizzo spedizione"  view={inSpeView} onEdit={() => openEditAddr("spedizione")} />
 
-          {/* Pagamento */}
-          {ordine.Pagamento && (
-            <Card padding="sm">
-              <h2 className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                Pagamento
-              </h2>
-              <div className="space-y-2 text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
-                <div className="flex justify-between">
-                  <span style={{ color: "var(--text-muted)" }}>Metodo</span>
-                  <span style={{ color: "var(--text-primary)" }}>{ordine.Pagamento.Metodo || "—"}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span style={{ color: "var(--text-muted)" }}>Stato</span>
-                  <Badge variant={ordine.Pagamento.Stato === "Pagato" ? "success" : "neutral"}>
-                    {ordine.Pagamento.Stato || "—"}
-                  </Badge>
-                </div>
-                {ordine.Pagamento.Riferimento && (
-                  <div className="flex justify-between">
-                    <span style={{ color: "var(--text-muted)" }}>Riferimento</span>
-                    <span className="text-xs font-mono" style={{ color: "var(--text-secondary)" }}>{ordine.Pagamento.Riferimento}</span>
+          {/* Pagamento — campi reali dello struct FF: Nome, Descrizione, Costo, Costo_Extra, ID, Stato */}
+          {ordine.Pagamento && (() => {
+            const p = ordine.Pagamento!;
+            const metodo = p.Nome || p.Metodo || "";
+            const idTransazione = p.ID || p.Riferimento || "";
+            const hasCosto = typeof p.Costo === "number";
+            const hasCostoExtra = typeof p.Costo_Extra === "number" && (p.Costo_Extra as number) > 0;
+            const hasAny = metodo || p.Descrizione || hasCosto || hasCostoExtra || idTransazione || p.Stato;
+            return (
+              <Card padding="sm">
+                <h2 className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                  Pagamento
+                </h2>
+                <div className="space-y-2 text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
+                  <div className="flex justify-between gap-3">
+                    <span style={{ color: "var(--text-muted)" }}>Metodo</span>
+                    <span className="text-right" style={{ color: "var(--text-primary)" }}>{metodo || "—"}</span>
                   </div>
-                )}
-              </div>
-            </Card>
-          )}
+                  {p.Descrizione && (
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: "var(--text-muted)" }}>Descrizione</span>
+                      <span className="text-right" style={{ color: "var(--text-secondary)" }}>{p.Descrizione}</span>
+                    </div>
+                  )}
+                  {hasCosto && (
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: "var(--text-muted)" }}>Costo</span>
+                      <span style={{ color: "var(--text-primary)" }}>{euro(p.Costo)}</span>
+                    </div>
+                  )}
+                  {hasCostoExtra && (
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: "var(--text-muted)" }}>Costo extra</span>
+                      <span style={{ color: "var(--text-primary)" }}>{euro(p.Costo_Extra)}</span>
+                    </div>
+                  )}
+                  {idTransazione && (
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: "var(--text-muted)" }}>ID Transazione</span>
+                      <span className="text-xs font-mono text-right" style={{ color: "var(--text-secondary)" }}>{idTransazione}</span>
+                    </div>
+                  )}
+                  {p.Stato && (
+                    <div className="flex justify-between items-center gap-3">
+                      <span style={{ color: "var(--text-muted)" }}>Stato</span>
+                      <Badge variant={p.Stato === "Pagato" ? "success" : "neutral"}>{p.Stato}</Badge>
+                    </div>
+                  )}
+                  {!hasAny && <p style={{ color: "var(--text-muted)" }}>—</p>}
+                </div>
+              </Card>
+            );
+          })()}
 
           {/* Tracking */}
           <Card padding="sm">

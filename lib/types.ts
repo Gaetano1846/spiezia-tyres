@@ -148,8 +148,15 @@ export type ArticoloOrdine = {
 };
 
 export type Pagamento = {
-  Metodo: string;
-  Stato: string;
+  // Campi reali dello struct FlutterFlow (Pagamento) su Firestore
+  Nome?: string;         // metodo di pagamento (es. "Addebito diretto")
+  Descrizione?: string;
+  Costo?: number;
+  Costo_Extra?: number;
+  ID?: string;           // ID transazione
+  Stato?: string;
+  // Alias legacy (ordini nuovi / checkout B2B)
+  Metodo?: string;
   Riferimento?: string;
   Data?: Timestamp;
 };
@@ -175,7 +182,11 @@ export type Ordine = {
   IndirizzoFatturazione?: Indirizzo;
   IndirizzoSpedizione?: Indirizzo;
   Note?: string;
+  Colli?: number;
+  Peso?: number;
+  PDF?: string;                 // link documento ordine (se già generato)
   DataCreazione: Timestamp;
+  DataOra?: Timestamp;          // timestamp usato dagli ordini marketplace/Flutter
   DataAggiornamento?: Timestamp;
   eBay_OrderID?: string;
   Amazon_MarketplaceID?: string;
