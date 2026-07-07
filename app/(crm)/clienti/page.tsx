@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, limit } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Search, Plus, Eye, X, Check, Phone, Mail } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -42,9 +40,10 @@ export default function ClientiPage() {
     const fetchClienti = async () => {
       setLoading(true);
       try {
-        const q = query(collection(db, "Clienti"), orderBy("Nome"), limit(200));
-        const snap = await getDocs(q);
-        setClienti(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente)));
+        const res = await fetch("/api/clienti?limit=200");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { clienti } = (await res.json()) as { clienti: Cliente[] };
+        setClienti(clienti);
       } catch (e) {
         toast.error("Errore nel caricamento clienti");
         console.error(e);
@@ -70,48 +69,27 @@ export default function ClientiPage() {
       toast.error("Inserisci il nome o la ragione sociale");
       return;
     }
+    if (!form.Email || !form.Telefono || !form.CAP) {
+      toast.error("Compila i campi obbligatori: Email, Telefono, CAP");
+      return;
+    }
     setSaving(true);
     try {
-      const payload: Record<string, unknown> = {
-        Nome: form.Nome,
-        Email: form.Email,
-        Telefono: form.Telefono,
-        Via: form.Via,
-        Citta: form.Citta,
-        CAP: form.CAP,
-        Codice_Fiscale: form.Codice_Fiscale,
-        Partita_Iva: form.Partita_Iva,
-        PEC: form.PEC,
-        Azienda: form.Azienda,
-        Ragione_Sociale: form.Ragione_Sociale,
-        Locale: true,
-        B2B: false,
-        DataCreazione: serverTimestamp(),
-      };
-      const ref = await addDoc(collection(db, "Clienti"), payload);
-      const newC: Cliente = {
-        id: ref.id,
-        Nome: form.Nome,
-        Email: form.Email,
-        Telefono: form.Telefono,
-        Via: form.Via,
-        Citta: form.Citta,
-        CAP: form.CAP,
-        Codice_Fiscale: form.Codice_Fiscale,
-        Partita_Iva: form.Partita_Iva,
-        PEC: form.PEC,
-        Azienda: form.Azienda,
-        Ragione_Sociale: form.Ragione_Sociale,
-        Locale: true,
-        B2B: false,
-      };
+      const res = await fetch("/api/admin/clienti", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const data = (await res.json()) as { id?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Errore nella creazione del cliente");
+
+      const newC: Cliente = { id: data.id!, ...form, Locale: true, B2B: false };
       setClienti((prev) => [...prev, newC]);
       toast.success("Cliente creato");
       setShowModal(false);
       setForm(emptyForm());
     } catch (e) {
-      console.error(e);
-      toast.error("Errore nella creazione del cliente");
+      toast.error(e instanceof Error ? e.message : "Errore nella creazione del cliente");
     } finally {
       setSaving(false);
     }

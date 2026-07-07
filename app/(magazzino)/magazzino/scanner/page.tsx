@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  collection, collectionGroup, getDocs, getDoc, query, where,
+  collection, getDocs, getDoc,
   type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -270,38 +270,23 @@ export default function ScannerPage() {
     setVeicoliMatch([]);
     setTargaNotFound(false);
     try {
-      const snap = await getDocs(
-        query(collectionGroup(db, "Veicolo"), where("Targa", "==", t)),
-      );
-      if (snap.empty) {
+      const res = await fetch(`/api/veicoli/search?targa=${encodeURIComponent(t)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { veicoli } = (await res.json()) as {
+        veicoli: Array<{ ClienteId: string; ClienteNome: string; Targa: string; Marca?: string; Modello?: string; Anno?: number }>;
+      };
+      if (veicoli.length === 0) {
         setTargaNotFound(true);
         return;
       }
-      const results: VeicoloMatch[] = await Promise.all(
-        snap.docs.map(async (d) => {
-          const vData = d.data();
-          const clienteDoc = d.ref.parent.parent;
-          let clienteNome = "—";
-          if (clienteDoc) {
-            const cSnap = await getDoc(clienteDoc);
-            if (cSnap.exists()) {
-              const cd = cSnap.data();
-              clienteNome =
-                String(cd.Azienda || "").trim() ||
-                `${cd.Nome ?? ""} ${cd.Cognome ?? ""}`.trim() ||
-                "—";
-            }
-          }
-          return {
-            clienteId:   clienteDoc?.id ?? "",
-            clienteNome,
-            targa:   String(vData.Targa ?? t),
-            marca:   String(vData.Marca ?? ""),
-            modello: String(vData.Modello ?? ""),
-            anno:    Number(vData.Anno) || undefined,
-          };
-        }),
-      );
+      const results: VeicoloMatch[] = veicoli.map((v) => ({
+        clienteId: v.ClienteId,
+        clienteNome: v.ClienteNome,
+        targa: v.Targa || t,
+        marca: v.Marca ?? "",
+        modello: v.Modello ?? "",
+        anno: v.Anno,
+      }));
       setVeicoliMatch(results);
     } catch {
       setTargaNotFound(true);

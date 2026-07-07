@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
-  doc, getDoc, getDocs, collection, collectionGroup, query, orderBy, limit,
+  doc, getDocs, collection, collectionGroup, query, orderBy, limit,
   where, updateDoc, addDoc, deleteDoc, serverTimestamp, Timestamp,
   type DocumentReference,
 } from "firebase/firestore";
@@ -135,19 +135,22 @@ export default function ClienteDetailPage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const cSnap = await getDoc(doc(db, "Clienti", id));
-        if (!cSnap.exists()) {
+        // Cliente: ora su Postgres (Fase 3 migrazione) — il resto (Appuntamenti,
+        // Ordini, FogliDiLavoro, Promemoria) legge ancora Firestore direttamente,
+        // corretto perché il bridge mantiene i Cliente ref sincronizzati.
+        const clienteRes = await fetch(`/api/clienti/${id}`);
+        if (!clienteRes.ok) {
           toast.error("Cliente non trovato");
           return;
         }
-        const c = { id: cSnap.id, ...cSnap.data() } as Cliente;
+        const { cliente: c } = (await clienteRes.json()) as { cliente: Cliente };
         setCliente(c);
         setNota(c.Note ?? "");
 
         const clienteRef = doc(db, "Clienti", id) as DocumentReference;
 
-        const [veicoliSnap, preventiviSnap, appSnap, ordiniSnap, fogliSnap, proSnap] = await Promise.all([
-          getDocs(collection(db, "Clienti", id, "Veicolo")),
+        const [veicoliRes, preventiviSnap, appSnap, ordiniSnap, fogliSnap, proSnap] = await Promise.all([
+          fetch(`/api/clienti/${id}/veicoli`),
           getDocs(query(collection(db, "Clienti", id, "Preventivo"), orderBy("DataCreazione", "desc"), limit(50))),
           getDocs(query(
             collection(db, "Appuntamenti"),
@@ -184,7 +187,8 @@ export default function ClienteDetailPage() {
           }))
           .sort((a, b) => (a.Data_Scadenza?.seconds ?? Infinity) - (b.Data_Scadenza?.seconds ?? Infinity)));
 
-        setVeicoli(veicoliSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
+        const { veicoli: veicoliList } = (await veicoliRes.json()) as { veicoli: Veicolo[] };
+        setVeicoli(veicoliList);
         setPreventivi(preventiviSnap.docs.map((d) => ({
           id: d.id,
           _clienteId: id,
@@ -263,9 +267,13 @@ export default function ClienteDetailPage() {
         PEC: editForm.PEC,
         Azienda: editForm.Azienda,
         Ragione_Sociale: editForm.Ragione_Sociale,
-        DataAggiornamento: serverTimestamp(),
       };
-      await updateDoc(doc(db, "Clienti", id), updates);
+      const res = await fetch(`/api/clienti/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error("save failed");
       setCliente((prev) => prev ? {
         ...prev,
         Nome: editForm.Nome,
@@ -293,7 +301,12 @@ export default function ClienteDetailPage() {
     if (savingNota) return;
     setSavingNota(true);
     try {
-      await updateDoc(doc(db, "Clienti", id), { Note: nota, DataAggiornamento: serverTimestamp() });
+      const res = await fetch(`/api/clienti/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ Note: nota }),
+      });
+      if (!res.ok) throw new Error("save failed");
       toast.success("Nota salvata");
     } catch {
       toast.error("Errore salvataggio nota");
@@ -331,14 +344,18 @@ export default function ClienteDetailPage() {
         Marca: veicoloForm.Marca,
         Modello: veicoloForm.Modello,
         Targa: veicoloForm.Targa,
-        identificativo: `${veicoloForm.Marca} ${veicoloForm.Modello}${veicoloForm.Targa ? ` (${veicoloForm.Targa})` : ""}`,
       };
       if (veicoloForm.Anno) payload.Anno = Number(veicoloForm.Anno);
       if (veicoloForm.Km) payload.Km = Number(veicoloForm.Km);
       if (veicoloForm.Note) payload.Note = veicoloForm.Note;
 
       if (editVeicoloId) {
-        await updateDoc(doc(db, "Clienti", id, "Veicolo", editVeicoloId), payload);
+        const res = await fetch(`/api/veicoli/${editVeicoloId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("update failed");
         setVeicoli((prev) => prev.map((v) => v.id === editVeicoloId ? {
           ...v,
           Marca: veicoloForm.Marca,
@@ -350,18 +367,14 @@ export default function ClienteDetailPage() {
         } : v));
         toast.success("Veicolo aggiornato");
       } else {
-        payload.DataCreazione = serverTimestamp();
-        const ref = await addDoc(collection(db, "Clienti", id, "Veicolo"), payload);
-        const newV: Veicolo = {
-          id: ref.id,
-          Targa: veicoloForm.Targa,
-          Marca: veicoloForm.Marca,
-          Modello: veicoloForm.Modello,
-          Anno: veicoloForm.Anno ? Number(veicoloForm.Anno) : undefined,
-          Km: veicoloForm.Km ? Number(veicoloForm.Km) : undefined,
-          Note: veicoloForm.Note || undefined,
-        };
-        setVeicoli((prev) => [...prev, newV]);
+        const res = await fetch(`/api/clienti/${id}/veicoli`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("create failed");
+        const { veicolo } = (await res.json()) as { veicolo: Veicolo };
+        setVeicoli((prev) => [...prev, veicolo]);
         toast.success("Veicolo aggiunto");
       }
 
@@ -430,7 +443,8 @@ export default function ClienteDetailPage() {
   async function handleDeleteVeicolo(veicoloId: string) {
     if (!confirm("Eliminare questo veicolo? L'operazione non può essere annullata.")) return;
     try {
-      await deleteDoc(doc(db, "Clienti", id, "Veicolo", veicoloId));
+      const res = await fetch(`/api/veicoli/${veicoloId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("delete failed");
       setVeicoli((prev) => prev.filter((v) => v.id !== veicoloId));
       toast.success("Veicolo eliminato");
     } catch {

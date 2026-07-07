@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
 import { getSession, isCRM } from "@/lib/auth";
-import type { DocumentReference } from "firebase-admin/firestore";
+import { createCliente, sedeIdForUser } from "@/lib/clientiDb";
 
 // ─── Crea anagrafica Cliente ───────────────────────────────────────────────────
-// Replica del `crea_cliente` FlutterFlow: crea SOLO un documento nella collezione
-// `Clienti` (nessun account di login). Scrittura lato server con firebase-admin
-// così funziona sia con auth Firebase reale sia in modalità solo-cookie di sessione
-// (in cui una addDoc client-side verrebbe negata dalle regole `isAdmin() || isCRM()`).
+// Replica del `crea_cliente` FlutterFlow: crea SOLO un cliente (nessun account
+// di login). Migrazione Fase 3: scrive su Postgres (core.clienti) invece che
+// direttamente su Firestore — il bridge propaga la scrittura a Firestore in
+// pochi secondi, così il CRM FlutterFlow legacy continua a vederla.
 //
-// Default fedeli a FlutterFlow: B2B=false, Locale=true, ID='', Sede = sede
+// Default fedeli a FlutterFlow: B2B=false, Locale=true, Sede = sede
 // dell'operatore che crea. Controllo anti-duplicato per Email (come il flag
 // `clienteEsiste` che, nel form Flutter, bloccava il salvataggio).
 
@@ -49,62 +48,40 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Anti-duplicato per email (equivalente al flag `clienteEsiste` di FlutterFlow).
-    const dup = await adminDb()
-      .collection("Clienti")
-      .where("Email", "==", email)
-      .limit(1)
-      .get();
-    if (!dup.empty) {
+    const fidoRaw = Number(body.Fido);
+    const fido = Number.isFinite(fidoRaw) ? fidoRaw : 0;
+
+    // Sede dell'operatore che crea (come `currentUserDocument?.sede` in FlutterFlow).
+    const sedeId = await sedeIdForUser(session.uid).catch(() => null);
+
+    const cliente = await createCliente({
+      Nome: nome || undefined,
+      Ragione_Sociale: ragioneSociale || undefined,
+      Email: email,
+      Telefono: telefono,
+      Via: str(body.Via) || undefined,
+      Citta: str(body.Citta) || undefined,
+      CAP: cap,
+      Paese: str(body.Paese) || undefined,
+      Codice_Fiscale: str(body.Codice_Fiscale) || undefined,
+      Partita_Iva: str(body.Partita_Iva) || undefined,
+      PEC: str(body.PEC) || undefined,
+      Tipo: str(body.Tipo) || undefined,
+      Metodo_di_Pagamento: str(body.Metodo_di_Pagamento) || undefined,
+      Azienda: azienda,
+      Fido: fido,
+      SedeId: sedeId,
+    });
+
+    if (!cliente) {
+      // Anti-duplicato per email (equivalente al flag `clienteEsiste` di FlutterFlow).
       return NextResponse.json(
         { error: "Esiste già un cliente con questa email" },
         { status: 409 }
       );
     }
 
-    const fidoRaw = Number(body.Fido);
-    const fido = Number.isFinite(fidoRaw) ? fidoRaw : 0;
-
-    // Sede dell'operatore che crea (come `currentUserDocument?.sede` in FlutterFlow).
-    let sede: DocumentReference | undefined;
-    try {
-      const creator = await adminDb().collection("users").doc(session.uid).get();
-      const s = creator.data()?.Sede;
-      if (s && typeof s === "object" && "path" in s) sede = s as DocumentReference;
-    } catch {
-      /* Sede è opzionale: non blocca la creazione */
-    }
-
-    // Booleani, Fido e default sono sempre presenti; le stringhe solo se non vuote
-    // (equivalente a `.withoutNulls` del generatore FlutterFlow).
-    const data: Record<string, unknown> = {
-      Azienda: azienda,
-      B2B: false,
-      Locale: true,
-      ID: "",
-      Fido: fido,
-      Fido_Residuo: fido,
-    };
-    const optionalStrings: Record<string, string> = {
-      Nome: nome,
-      Ragione_Sociale: ragioneSociale,
-      Email: email,
-      Telefono: telefono,
-      Via: str(body.Via),
-      Citta: str(body.Citta),
-      CAP: cap,
-      Paese: str(body.Paese),
-      Codice_Fiscale: str(body.Codice_Fiscale),
-      Partita_Iva: str(body.Partita_Iva),
-      PEC: str(body.PEC),
-      Tipo: str(body.Tipo),
-      Metodo_di_Pagamento: str(body.Metodo_di_Pagamento),
-    };
-    for (const [k, v] of Object.entries(optionalStrings)) if (v) data[k] = v;
-    if (sede) data.Sede = sede;
-
-    const ref = await adminDb().collection("Clienti").add(data);
-    return NextResponse.json({ ok: true, id: ref.id });
+    return NextResponse.json({ ok: true, id: cliente.id });
   } catch (err) {
     console.error("[api/admin/clienti]", err);
     return NextResponse.json(
