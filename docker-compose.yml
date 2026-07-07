@@ -33,6 +33,12 @@ services:
       - /tmp:noexec,nosuid,size=64m
       - /app/.next/cache:noexec,nosuid,size=256m
 
+    # Storage locale (Fase 6 — migrazione da Firebase Storage). public/ servito
+    # diretto da nginx, private/ solo via X-Accel-Redirect (nginx location
+    # interna, mai esposta direttamente). uid 1001 = utente nextjs del container.
+    volumes:
+      - /opt/spiezia/storage:/app/storage
+
     # ── Resource limits (B2B tier) ────────────────────────────────────────────
     deploy:
       resources:
