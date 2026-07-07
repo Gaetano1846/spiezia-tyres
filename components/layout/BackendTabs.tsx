@@ -7,7 +7,6 @@ const TABS = [
   { label: "Ordini",      href: "/admin/ordini" },
   { label: "Spedizioni",  href: "/admin/spedizioni" },
   { label: "Promozioni",  href: "/admin/promozioni" },
-  { label: "Prodotti",    href: "/admin/prodotti" },
   { label: "Brand",       href: "/admin/brand" },
   { label: "Disegni",     href: "/admin/disegni" },
   { label: "Email",       href: "/admin/email" },

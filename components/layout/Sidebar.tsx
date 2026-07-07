@@ -38,7 +38,6 @@ const NAV: NavItem[] = [
 
   { href: "/admin/ordini",     label: "Ordini",      icon: ShoppingBag,  roles: ["Admin"], group: "Admin" },
   { href: "/admin/clienti",    label: "Clienti",     icon: Users,        roles: ["Admin"], group: "Admin" },
-  { href: "/admin/prodotti",   label: "Prodotti",    icon: Package,      roles: ["Admin"], group: "Admin" },
   { href: "/admin/brand",      label: "Brand",       icon: Tag,          roles: ["Admin"], group: "Admin" },
   { href: "/admin/promozioni", label: "Promozioni",  icon: Percent,      roles: ["Admin"], group: "Admin" },
   { href: "/admin/disegni",    label: "Disegni",     icon: ImageIcon,    roles: ["Admin"], group: "Admin" },
