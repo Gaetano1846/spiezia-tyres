@@ -5,7 +5,7 @@
 // Le funzioni restituiscono la stessa forma PascalCase di `lib/types.ts` così
 // i componenti React esistenti non cambiano (solo la sorgente dati cambia).
 
-import { getDb } from "@/lib/db";
+import { getDb, newId } from "@/lib/db";
 import type { Cliente, Veicolo } from "@/lib/types";
 
 export type ClienteApi = Omit<Cliente, "Sede"> & { SedeId?: string | null };
@@ -95,11 +95,6 @@ export async function sedeIdForUser(uid: string): Promise<string | null> {
   if (!db) return null;
   const { rows } = await db.query(`SELECT sede_id FROM core.utenti WHERE id = $1`, [uid]);
   return rows[0]?.sede_id ?? null;
-}
-
-/** ULID compatto per nuove righe (valido come doc ID Firestore) — timestamp + random. */
-function newId(): string {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.toUpperCase();
 }
 
 export interface CreateClienteInput {

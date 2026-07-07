@@ -31,3 +31,8 @@ export function getDb(): Pool | null {
 export function isDbConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL);
 }
+
+/** ULID compatto per nuove righe (valido come doc ID Firestore) — timestamp + random. */
+export function newId(): string {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.toUpperCase();
+}

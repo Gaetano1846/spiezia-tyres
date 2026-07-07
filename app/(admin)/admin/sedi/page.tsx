@@ -1,10 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc, doc,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Plus, Pencil, Trash2, X, Check, Loader2, MapPin, Briefcase, Users } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
@@ -171,14 +167,16 @@ export default function SediPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [sedeSnap, mansSnap, repSnap] = await Promise.all([
-        getDocs(collection(db, "Sede")),
-        getDocs(collection(db, "Mansione")),
-        getDocs(collection(db, "Reparto")),
+      const [sedeRes, mansRes, repRes] = await Promise.all([
+        fetch("/api/lookup/sede"),
+        fetch("/api/lookup/mansione"),
+        fetch("/api/lookup/reparto"),
       ]);
-      setSedi(sedeSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SimpleDoc, "id">) })));
-      setMansioni(mansSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SimpleDoc, "id">) })));
-      setReparti(repSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SimpleDoc, "id">) })));
+      const [sedeJson, mansJson, repJson] = await Promise.all([sedeRes.json(), mansRes.json(), repRes.json()]);
+      if (!sedeRes.ok || !mansRes.ok || !repRes.ok) throw new Error("Errore nel caricamento");
+      setSedi(sedeJson.items);
+      setMansioni(mansJson.items);
+      setReparti(repJson.items);
     } catch {
       toast.error("Errore nel caricamento");
     } finally {
@@ -188,21 +186,36 @@ export default function SediPage() {
 
   useEffect(() => { loadAll(); }, []);
 
+  async function createOrUpdate(kind: "sede" | "mansione" | "reparto", id: string | null, f: SimpleForm) {
+    const body = { nome: f.nome.trim(), indirizzo: f.indirizzo.trim(), citta: f.citta.trim() };
+    const res = await fetch(id ? `/api/lookup/${kind}/${encodeURIComponent(id)}` : `/api/lookup/${kind}`, {
+      method: id ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "Errore nel salvataggio");
+  }
+
+  async function removeItem(kind: "sede" | "mansione" | "reparto", id: string) {
+    const res = await fetch(`/api/lookup/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "Errore nell'eliminazione");
+  }
+
   // ── SEDE ──────────────────────────────────────────────────────────────────
 
   async function addSede(f: SimpleForm) {
-    await addDoc(collection(db, "Sede"), { Nome: f.nome.trim(), Indirizzo: f.indirizzo.trim(), Citta: f.citta.trim() });
+    await createOrUpdate("sede", null, f);
     toast.success("Sede aggiunta");
     await loadAll();
   }
   async function editSede(id: string, f: SimpleForm) {
-    await updateDoc(doc(db, "Sede", id), { Nome: f.nome.trim(), Indirizzo: f.indirizzo.trim(), Citta: f.citta.trim() });
+    await createOrUpdate("sede", id, f);
     toast.success("Sede aggiornata");
     await loadAll();
   }
   async function deleteSede(id: string, nome: string) {
     if (!confirm(`Eliminare la sede "${nome}"? Gli operatori assegnati perderanno il riferimento.`)) return;
-    await deleteDoc(doc(db, "Sede", id));
+    await removeItem("sede", id);
     toast.success("Sede eliminata");
     setSedi((p) => p.filter((s) => s.id !== id));
   }
@@ -210,18 +223,18 @@ export default function SediPage() {
   // ── MANSIONE ─────────────────────────────────────────────────────────────
 
   async function addMansione(f: SimpleForm) {
-    await addDoc(collection(db, "Mansione"), { Nome: f.nome.trim() });
+    await createOrUpdate("mansione", null, f);
     toast.success("Mansione aggiunta");
     await loadAll();
   }
   async function editMansione(id: string, f: SimpleForm) {
-    await updateDoc(doc(db, "Mansione", id), { Nome: f.nome.trim() });
+    await createOrUpdate("mansione", id, f);
     toast.success("Mansione aggiornata");
     await loadAll();
   }
   async function deleteMansione(id: string, nome: string) {
     if (!confirm(`Eliminare la mansione "${nome}"?`)) return;
-    await deleteDoc(doc(db, "Mansione", id));
+    await removeItem("mansione", id);
     toast.success("Mansione eliminata");
     setMansioni((p) => p.filter((m) => m.id !== id));
   }
@@ -229,18 +242,18 @@ export default function SediPage() {
   // ── REPARTO ──────────────────────────────────────────────────────────────
 
   async function addReparto(f: SimpleForm) {
-    await addDoc(collection(db, "Reparto"), { Nome: f.nome.trim() });
+    await createOrUpdate("reparto", null, f);
     toast.success("Reparto aggiunto");
     await loadAll();
   }
   async function editReparto(id: string, f: SimpleForm) {
-    await updateDoc(doc(db, "Reparto", id), { Nome: f.nome.trim() });
+    await createOrUpdate("reparto", id, f);
     toast.success("Reparto aggiornato");
     await loadAll();
   }
   async function deleteReparto(id: string, nome: string) {
     if (!confirm(`Eliminare il reparto "${nome}"?`)) return;
-    await deleteDoc(doc(db, "Reparto", id));
+    await removeItem("reparto", id);
     toast.success("Reparto eliminato");
     setReparti((p) => p.filter((r) => r.id !== id));
   }

@@ -141,14 +141,16 @@ export default function CatalogoPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [servSnap, modSnap, catSnap] = await Promise.all([
-        getDocs(collection(db, "Servizi")),
+      const [servRes, modSnap, catRes] = await Promise.all([
+        fetch("/api/lookup/servizio"),
         getDocs(collection(db, "Modello")),
-        getDocs(collection(db, "Categoria_Prodotti")),
+        fetch("/api/lookup/categoria"),
       ]);
-      setServizi(servSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SimpleDoc, "id">) })));
+      const [servJson, catJson] = await Promise.all([servRes.json(), catRes.json()]);
+      if (!servRes.ok || !catRes.ok) throw new Error("Errore nel caricamento");
+      setServizi(servJson.items);
       setModelli(modSnap.docs.map((d)  => ({ id: d.id, ...(d.data() as Omit<SimpleDoc, "id">) })));
-      setCategorie(catSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SimpleDoc, "id">) })));
+      setCategorie(catJson.items);
     } catch {
       toast.error("Errore nel caricamento");
     } finally {
@@ -158,19 +160,33 @@ export default function CatalogoPage() {
 
   useEffect(() => { loadAll(); }, []);
 
+  async function createOrUpdate(kind: "servizio" | "categoria", id: string | null, f: SimpleForm) {
+    const res = await fetch(id ? `/api/lookup/${kind}/${encodeURIComponent(id)}` : `/api/lookup/${kind}`, {
+      method: id ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nome: f.nome.trim() }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "Errore nel salvataggio");
+  }
+
+  async function removeItem(kind: "servizio" | "categoria", id: string) {
+    const res = await fetch(`/api/lookup/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "Errore nell'eliminazione");
+  }
+
   // ── SERVIZI ──────────────────────────────────────────────────────────────────
 
   async function addServizio(f: SimpleForm) {
-    await addDoc(collection(db, "Servizi"), { Nome: f.nome.trim() });
+    await createOrUpdate("servizio", null, f);
     toast.success("Servizio aggiunto"); await loadAll();
   }
   async function editServizio(id: string, f: SimpleForm) {
-    await updateDoc(doc(db, "Servizi", id), { Nome: f.nome.trim() });
+    await createOrUpdate("servizio", id, f);
     toast.success("Servizio aggiornato"); await loadAll();
   }
   async function deleteServizio(id: string, nome: string) {
     if (!confirm(`Eliminare il servizio "${nome}"?`)) return;
-    await deleteDoc(doc(db, "Servizi", id));
+    await removeItem("servizio", id);
     toast.success("Servizio eliminato");
     setServizi((p) => p.filter((s) => s.id !== id));
   }
@@ -195,16 +211,16 @@ export default function CatalogoPage() {
   // ── CATEGORIE ────────────────────────────────────────────────────────────────
 
   async function addCategoria(f: SimpleForm) {
-    await addDoc(collection(db, "Categoria_Prodotti"), { Nome: f.nome.trim() });
+    await createOrUpdate("categoria", null, f);
     toast.success("Categoria aggiunta"); await loadAll();
   }
   async function editCategoria(id: string, f: SimpleForm) {
-    await updateDoc(doc(db, "Categoria_Prodotti", id), { Nome: f.nome.trim() });
+    await createOrUpdate("categoria", id, f);
     toast.success("Categoria aggiornata"); await loadAll();
   }
   async function deleteCategoria(id: string, nome: string) {
     if (!confirm(`Eliminare la categoria "${nome}"?`)) return;
-    await deleteDoc(doc(db, "Categoria_Prodotti", id));
+    await removeItem("categoria", id);
     toast.success("Categoria eliminata");
     setCategorie((p) => p.filter((c) => c.id !== id));
   }
