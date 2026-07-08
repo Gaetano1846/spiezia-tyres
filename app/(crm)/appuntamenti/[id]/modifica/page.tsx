@@ -2,17 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import {
-  collection, getDocs, updateDoc, getDoc, orderBy, query,
-  Timestamp, doc, serverTimestamp,
-} from "firebase/firestore";
+import { collection, getDocs, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ArrowLeft, Search, Plus, X } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
-import type { Cliente, Veicolo, Sede, Appuntamento } from "@/lib/types";
+import type { ClienteApi, VeicoloApi } from "@/lib/clientiDb";
+import type { SimpleEntity } from "@/lib/lookupDb";
+import type { AppuntamentoApi } from "@/lib/appuntamentiDb";
 
 type OperatoreItem = { id: string; displayName?: string; email?: string; Nome?: string; Cognome?: string };
 type PneumaticoRow = { Marca: string; Misura: string; Stagione: string; Quantita: number };
@@ -23,7 +22,7 @@ function nomeOperatore(o: OperatoreItem): string {
 }
 const emptyPneumatico = (): PneumaticoRow => ({ Marca: "", Misura: "", Stagione: "Estive", Quantita: 4 });
 
-function nomeCliente(c: Cliente): string {
+function nomeCliente(c: ClienteApi): string {
   if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale;
   return c.Nome?.trim() || c.Ragione_Sociale || "—";
 }
@@ -33,12 +32,12 @@ export default function ModificaAppuntamentoPage() {
   const { id } = useParams<{ id: string }>();
 
   const [loading, setLoading] = useState(true);
-  const [sedi, setSedi] = useState<Sede[]>([]);
-  const [clienti, setClienti] = useState<Cliente[]>([]);
+  const [sedi, setSedi] = useState<SimpleEntity[]>([]);
+  const [clientiFiltrati, setClientiFiltrati] = useState<ClienteApi[]>([]);
   const [operatori, setOperatori] = useState<OperatoreItem[]>([]);
   const [clienteSearch, setClienteSearch] = useState("");
-  const [clienteSelezionato, setClienteSelezionato] = useState<Cliente | null>(null);
-  const [veicoliCliente, setVeicoliCliente] = useState<Veicolo[]>([]);
+  const [clienteSelezionato, setClienteSelezionato] = useState<ClienteApi | null>(null);
+  const [veicoliCliente, setVeicoliCliente] = useState<VeicoloApi[]>([]);
 
   const [data, setData] = useState("");
   const [ora, setOra] = useState("");
@@ -53,67 +52,44 @@ export default function ModificaAppuntamentoPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
-      const [appSnap, sediSnap, clientiSnap, usersSnap] = await Promise.all([
-        getDoc(doc(db, "Appuntamenti", id)),
-        getDocs(collection(db, "Sede")),
-        getDocs(query(collection(db, "Clienti"), orderBy("Nome"))),
+      const [appRes, sedeJson, usersSnap] = await Promise.all([
+        fetch(`/api/appuntamenti/${id}`),
+        fetch("/api/lookup/sede").then((r) => r.json()),
         getDocs(query(collection(db, "users"), orderBy("Nome"))),
       ]);
 
-      if (!appSnap.exists()) {
+      if (!appRes.ok) {
         toast.error("Appuntamento non trovato");
         router.push("/appuntamenti");
         return;
       }
-
-      const app = { id: appSnap.id, ...appSnap.data() } as Appuntamento;
-      const allSedi = sediSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Sede));
-      const allClienti = clientiSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente));
+      const { appuntamento: app } = await appRes.json() as { appuntamento: AppuntamentoApi };
       const allOps = usersSnap.docs
         .map((d) => ({ id: d.id, ...d.data() } as OperatoreItem & { CRM?: boolean }))
         .filter((u) => u.CRM === true);
 
-      setSedi(allSedi);
-      setClienti(allClienti);
+      setSedi(sedeJson.items ?? []);
       setOperatori(allOps);
 
-      // Pre-popola stato
       setStato(app.Stato ?? "Programmato");
-      if (app.Note) setNote(app.Note as string);
+      if (app.Note) setNote(app.Note);
 
-      // DataOra → data e ora string
-      const ts = app.DataOra as Timestamp;
-      if (ts?.toDate) {
-        const d = ts.toDate();
-        // Formatta da parti LOCALI: toISOString() converte in UTC e per l'Italia
-        // (UTC+1/+2) sposterebbe la data di un giorno indietro a mezzanotte.
+      // DataOra → data e ora string. Formatta da parti LOCALI: toISOString()
+      // converte in UTC e per l'Italia (UTC+1/+2) sposterebbe la data di un
+      // giorno indietro a mezzanotte.
+      if (app.DataOra) {
+        const d = new Date(app.DataOra);
         const pad = (n: number) => String(n).padStart(2, "0");
         setData(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
         setOra(d.toTimeString().slice(0, 5));
       }
 
-      // Sede
-      const sedeRef = app.Sede as { id?: string; path?: string } | null | undefined;
-      if (sedeRef) {
-        const sid = sedeRef.id ?? sedeRef.path?.split("/").pop() ?? "";
-        setSedeId(sid);
-      }
+      if (app.SedeId) setSedeId(app.SedeId);
+      if (app.Servizi?.[0]?.Titolo) setServizio(app.Servizi[0].Titolo);
+      if (app.OperatoreId) setOperatoreId(app.OperatoreId);
 
-      // Servizio
-      const servizi = app.Servizi as Array<{ Titolo?: string }> | undefined;
-      if (servizi?.[0]?.Titolo) setServizio(servizi[0].Titolo);
-
-      // Operatore
-      const operatoreRef = app.Operatore as { id?: string; path?: string } | null | undefined;
-      if (operatoreRef) {
-        const oid = operatoreRef.id ?? operatoreRef.path?.split("/").pop() ?? "";
-        if (oid) setOperatoreId(oid);
-      }
-
-      // Pneumatici
-      const pneumRaw = (app as Record<string, unknown>).Pneumatici as PneumaticoRow[] | undefined;
-      if (Array.isArray(pneumRaw) && pneumRaw.length > 0) {
-        setPneumatici(pneumRaw.map((p) => ({
+      if (Array.isArray(app.Pneumatici) && app.Pneumatici.length > 0) {
+        setPneumatici(app.Pneumatici.map((p) => ({
           Marca: p.Marca ?? "",
           Misura: p.Misura ?? "",
           Stagione: p.Stagione ?? "Estive",
@@ -121,22 +97,15 @@ export default function ModificaAppuntamentoPage() {
         })));
       }
 
-      // Cliente
-      const clienteRef = app.Cliente as { id?: string; path?: string } | null | undefined;
-      if (clienteRef) {
-        const cid = clienteRef.id ?? clienteRef.path?.split("/").pop() ?? "";
-        const found = allClienti.find((c) => c.id === cid);
-        if (found) {
-          setClienteSelezionato(found);
-          const vSnap = await getDocs(collection(db, "Clienti", cid, "Veicolo"));
-          const veicoli = vSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo));
-          setVeicoliCliente(veicoli);
-
-          const veicoloRef = app.Veicolo as { id?: string; path?: string } | null | undefined;
-          if (veicoloRef) {
-            const vid = veicoloRef.id ?? veicoloRef.path?.split("/").pop() ?? "";
-            setVeicoloId(vid);
-          }
+      if (app.ClienteId) {
+        const clienteRes = await fetch(`/api/clienti/${app.ClienteId}`);
+        if (clienteRes.ok) {
+          const { cliente } = await clienteRes.json() as { cliente: ClienteApi };
+          setClienteSelezionato(cliente);
+          const veicoliRes = await fetch(`/api/clienti/${app.ClienteId}/veicoli`);
+          const { veicoli } = await veicoliRes.json() as { veicoli: VeicoloApi[] };
+          setVeicoliCliente(veicoli ?? []);
+          if (app.VeicoloId) setVeicoloId(app.VeicoloId);
         }
       }
 
@@ -156,16 +125,16 @@ export default function ModificaAppuntamentoPage() {
     setPneumatici((p) => p.map((r, i) => i === idx ? { ...r, [field]: value } : r));
   }
 
-  const clientiFiltrati = clienti
-    .filter((c) => {
-      const nome = nomeCliente(c);
-      return (
-        nome.toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Email ?? "").toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Telefono ?? "").includes(clienteSearch)
-      );
-    })
-    .slice(0, 8);
+  // Ricerca cliente lato server (Postgres, Fase 3) — nessun preload di tutti i clienti.
+  useEffect(() => {
+    if (!clienteSearch.trim()) { setClientiFiltrati([]); return; }
+    const controller = new AbortController();
+    fetch(`/api/clienti?q=${encodeURIComponent(clienteSearch)}&limit=8`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((d) => setClientiFiltrati(d.clienti ?? []))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [clienteSearch]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -178,26 +147,24 @@ export default function ModificaAppuntamentoPage() {
       const [year, month, day] = data.split("-").map(Number);
       const [hours, minutes] = ora.split(":").map(Number);
       const dataOra = new Date(year, month - 1, day, hours, minutes);
-
-      const payload: Record<string, unknown> = {
-        Cliente: doc(db, "Clienti", clienteSelezionato.id),
-        Sede: doc(db, "Sede", sedeId),
-        DataOra: Timestamp.fromDate(dataOra),
-        Stato: stato,
-        DataModifica: serverTimestamp(),
-      };
-      if (veicoloId) {
-        payload.Veicolo = doc(db, "Clienti", clienteSelezionato.id, "Veicolo", veicoloId);
-      }
-      payload.Servizi = servizio.trim()
-        ? [{ Titolo: servizio.trim(), Prezzo: 0, Quantita: 1 }]
-        : [];
-      payload.Note = note.trim() || null;
-      payload.Operatore = operatoreId ? doc(db, "users", operatoreId) : null;
       const pneumaticiValidi = pneumatici.filter((p) => p.Marca.trim() && p.Misura.trim());
-      payload.Pneumatici = pneumaticiValidi.length > 0 ? pneumaticiValidi : null;
 
-      await updateDoc(doc(db, "Appuntamenti", id), payload);
+      const res = await fetch(`/api/appuntamenti/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clienteId: clienteSelezionato.id,
+          sedeId,
+          dataOra: dataOra.toISOString(),
+          stato,
+          veicoloId: veicoloId || undefined,
+          operatoreId: operatoreId || undefined,
+          servizi: servizio.trim() ? [{ Titolo: servizio.trim(), Prezzo: 0, Quantita: 1 }] : [],
+          pneumatici: pneumaticiValidi.length > 0 ? pneumaticiValidi : undefined,
+          note: note.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
       toast.success("Appuntamento aggiornato");
       router.push("/appuntamenti");
     } catch (err) {
@@ -273,8 +240,9 @@ export default function ModificaAppuntamentoPage() {
                               setClienteSelezionato(c);
                               setClienteSearch("");
                               setVeicoloId("");
-                              const vSnap = await getDocs(collection(db, "Clienti", c.id, "Veicolo"));
-                              setVeicoliCliente(vSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
+                              const res = await fetch(`/api/clienti/${c.id}/veicoli`);
+                              const { veicoli } = await res.json() as { veicoli: VeicoloApi[] };
+                              setVeicoliCliente(veicoli ?? []);
                             }}
                             className="w-full text-left px-4 py-2.5 text-sm hover:bg-[#F1F4F8] transition-colors"
                             style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>

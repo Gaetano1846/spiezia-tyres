@@ -2,22 +2,20 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import {
-  collection, query, getDocs, addDoc, orderBy,
-  Timestamp, doc, serverTimestamp,
-} from "firebase/firestore";
+import { collection, query, getDocs, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ArrowLeft, Search, Plus, X } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
-import type { Cliente, Veicolo, Sede } from "@/lib/types";
+import type { ClienteApi, VeicoloApi } from "@/lib/clientiDb";
+import type { SimpleEntity } from "@/lib/lookupDb";
 
 type OperatoreItem = { id: string; displayName?: string; email?: string; Nome?: string; Cognome?: string };
 type PneumaticoRow = { Marca: string; Misura: string; Stagione: string; Quantita: number };
 
-function nomeCliente(c: Cliente): string {
+function nomeCliente(c: ClienteApi): string {
   if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale;
   return c.Nome?.trim() || c.Ragione_Sociale || "—";
 }
@@ -32,12 +30,12 @@ const emptyPneumatico = (): PneumaticoRow => ({ Marca: "", Misura: "", Stagione:
 export default function NuovoAppuntamentoPage() {
   const router = useRouter();
 
-  const [sedi, setSedi] = useState<Sede[]>([]);
-  const [clienti, setClienti] = useState<Cliente[]>([]);
+  const [sedi, setSedi] = useState<SimpleEntity[]>([]);
+  const [clientiFiltrati, setClientiFiltrati] = useState<ClienteApi[]>([]);
   const [operatori, setOperatori] = useState<OperatoreItem[]>([]);
   const [clienteSearch, setClienteSearch] = useState("");
-  const [clienteSelezionato, setClienteSelezionato] = useState<Cliente | null>(null);
-  const [veicoliCliente, setVeicoliCliente] = useState<Veicolo[]>([]);
+  const [clienteSelezionato, setClienteSelezionato] = useState<ClienteApi | null>(null);
+  const [veicoliCliente, setVeicoliCliente] = useState<VeicoloApi[]>([]);
 
   const [data, setData] = useState("");
   const [ora, setOra] = useState("");
@@ -51,12 +49,10 @@ export default function NuovoAppuntamentoPage() {
 
   useEffect(() => {
     Promise.all([
-      getDocs(collection(db, "Sede")),
-      getDocs(query(collection(db, "Clienti"), orderBy("Nome"))),
+      fetch("/api/lookup/sede").then((r) => r.json()),
       getDocs(query(collection(db, "users"), orderBy("Nome"))),
-    ]).then(([sediSnap, clientiSnap, usersSnap]) => {
-      setSedi(sediSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Sede)));
-      setClienti(clientiSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente)));
+    ]).then(([sedeJson, usersSnap]) => {
+      setSedi(sedeJson.items ?? []);
       const ops = usersSnap.docs
         .map((d) => ({ id: d.id, ...d.data() } as OperatoreItem & { CRM?: boolean }))
         .filter((u) => u.CRM === true);
@@ -64,27 +60,27 @@ export default function NuovoAppuntamentoPage() {
     });
   }, []);
 
+  // Ricerca cliente lato server (Postgres, Fase 3) — nessun preload di tutti i clienti.
+  useEffect(() => {
+    if (!clienteSearch.trim()) { setClientiFiltrati([]); return; }
+    const controller = new AbortController();
+    fetch(`/api/clienti?q=${encodeURIComponent(clienteSearch)}&limit=8`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((d) => setClientiFiltrati(d.clienti ?? []))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [clienteSearch]);
+
   useEffect(() => {
     if (!clienteSelezionato) {
       setVeicoliCliente([]);
       setVeicoloId("");
       return;
     }
-    getDocs(collection(db, "Clienti", clienteSelezionato.id, "Veicolo")).then((snap) => {
-      setVeicoliCliente(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
-    });
+    fetch(`/api/clienti/${clienteSelezionato.id}/veicoli`)
+      .then((r) => r.json())
+      .then((d) => setVeicoliCliente(d.veicoli ?? []));
   }, [clienteSelezionato]);
-
-  const clientiFiltrati = clienti
-    .filter((c) => {
-      const nome = nomeCliente(c);
-      return (
-        nome.toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Email ?? "").toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Telefono ?? "").includes(clienteSearch)
-      );
-    })
-    .slice(0, 8);
 
   function addPneumatico() {
     setPneumatici((prev) => [...prev, emptyPneumatico()]);
@@ -110,31 +106,24 @@ export default function NuovoAppuntamentoPage() {
       const [hours, minutes] = ora.split(":").map(Number);
       const dataOra = new Date(year, month - 1, day, hours, minutes);
 
-      const payload: Record<string, unknown> = {
-        Cliente: doc(db, "Clienti", clienteSelezionato.id),
-        Sede: doc(db, "Sede", sedeId),
-        DataOra: Timestamp.fromDate(dataOra),
-        Stato: "Programmato",
-        DataCreazione: serverTimestamp(),
-      };
-      if (veicoloId) {
-        payload.Veicolo = doc(db, "Clienti", clienteSelezionato.id, "Veicolo", veicoloId);
-      }
-      if (operatoreId) {
-        payload.Operatore = doc(db, "users", operatoreId);
-      }
-      if (servizio.trim()) {
-        payload.Servizi = [{ Titolo: servizio.trim(), Prezzo: 0, Quantita: 1 }];
-      }
       const pneumaticiValidi = pneumatici.filter((p) => p.Marca.trim() && p.Misura.trim());
-      if (pneumaticiValidi.length > 0) {
-        payload.Pneumatici = pneumaticiValidi;
-      }
-      if (note.trim()) {
-        payload.Note = note.trim();
-      }
 
-      await addDoc(collection(db, "Appuntamenti"), payload);
+      const res = await fetch("/api/appuntamenti", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clienteId: clienteSelezionato.id,
+          sedeId,
+          dataOra: dataOra.toISOString(),
+          stato: "Programmato",
+          veicoloId: veicoloId || undefined,
+          operatoreId: operatoreId || undefined,
+          servizi: servizio.trim() ? [{ Titolo: servizio.trim(), Prezzo: 0, Quantita: 1 }] : undefined,
+          pneumatici: pneumaticiValidi.length > 0 ? pneumaticiValidi : undefined,
+          note: note.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
       toast.success("Appuntamento creato");
       router.push("/appuntamenti");
     } catch (err) {

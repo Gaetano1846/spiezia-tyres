@@ -1,17 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  collection, query, orderBy, getDocs, getDoc, limit,
-  type DocumentReference, type Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Plus, Calendar, User, Wrench, MapPin, Search, X, Pencil } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import type { Appuntamento, AppuntamentoStato } from "@/lib/types";
+import type { AppuntamentoApi } from "@/lib/appuntamentiDb";
 
 const statoVariant: Record<string, "success" | "brand" | "warning" | "neutral" | "error"> = {
   "In Attesa":  "neutral",
@@ -21,91 +16,45 @@ const statoVariant: Record<string, "success" | "brand" | "warning" | "neutral" |
   Annullato:    "error",
 };
 
-type AppEntry = {
-  app: Appuntamento;
-  clienteNome: string;
-  sedeNome: string;
-  servizioNome: string;
-};
-
-// Nome cliente robusto: azienda → Ragione_Sociale, persona → Nome; fallback all'altro campo
-// (gli appuntamenti storici hanno spesso solo Ragione_Sociale, senza il flag Azienda).
-function nomeClienteFrom(c: Record<string, unknown>): string {
-  const rs   = (c.Ragione_Sociale as string)?.trim();
-  const nome = (c.Nome as string)?.trim();
-  if (c.Azienda === true && rs) return rs;
-  return nome || rs || "—";
-}
-
 // Intervento/servizio: campo "Intervento" (stringa, app Flutter) oppure array "Servizi" (app nuova).
-function interventoFrom(app: Appuntamento): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const intervento = ((app as any).Intervento as string)?.trim();
-  if (intervento) return intervento;
+function interventoFrom(app: AppuntamentoApi): string {
+  if (app.Intervento?.trim()) return app.Intervento.trim();
   const servizi = (app.Servizi ?? []).map((s) => s.Titolo).filter(Boolean);
   return servizi.length ? servizi.join(", ") : "—";
 }
 
-async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Record<string, unknown>>> {
-  if (refs.length === 0) return new Map();
-  const unique = [...new Map(refs.map((r) => [r.path, r])).values()];
-  const snaps = await Promise.all(unique.map((r) => getDoc(r)));
-  const map = new Map<string, Record<string, unknown>>();
-  snaps.forEach((s) => {
-    if (s.exists()) map.set(s.ref.path, { id: s.id, ...s.data() } as Record<string, unknown>);
-  });
-  return map;
+function formatOra(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatOra(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+function formatData(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function formatData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-}
-
-function isToday(ts: Timestamp | null | undefined): boolean {
-  if (!ts?.toDate) return false;
-  const d = ts.toDate();
+function isToday(iso: string | null): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
   const n = new Date();
   return d.getDate() === n.getDate() && d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear();
 }
 
 export default function AppuntamentiPage() {
-  const [entries, setEntries]   = useState<AppEntry[]>([]);
+  const [entries, setEntries]   = useState<AppuntamentoApi[]>([]);
   const [loading, setLoading]   = useState(true);
   const [activeTab, setActiveTab] = useState<"Oggi" | "Tutti">("Oggi");
   const [search, setSearch]     = useState("");
-  const [stato, setStato]       = useState<AppuntamentoStato | "">("");
+  const [stato, setStato]       = useState<string>("");
 
   useEffect(() => {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const q = query(collection(db, "Appuntamenti"), orderBy("DataOra", "desc"), limit(200));
-        const snap = await getDocs(q);
-        const apps = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Appuntamento));
-
-        const clienteRefs = apps.map((a) => a.Cliente).filter(Boolean) as DocumentReference[];
-        const sedeRefs    = apps.map((a) => a.Sede).filter(Boolean) as DocumentReference[];
-        const [clientiMap, sediMap] = await Promise.all([
-          batchGetDocs(clienteRefs),
-          batchGetDocs(sedeRefs),
-        ]);
-
-        const resolved: AppEntry[] = apps.map((app) => {
-          const c = app.Cliente ? clientiMap.get(app.Cliente.path) : undefined;
-          const s = app.Sede ? sediMap.get(app.Sede.path) : undefined;
-          const clienteNome  = c ? nomeClienteFrom(c) : "—";
-          const sedeNome     = s ? (s.Nome as string) ?? "—" : "—";
-          const servizioNome = interventoFrom(app);
-          return { app, clienteNome, sedeNome, servizioNome };
-        });
-
-        setEntries(resolved);
+        const res = await fetch("/api/appuntamenti");
+        if (!res.ok) throw new Error(String(res.status));
+        const { appuntamenti } = await res.json();
+        setEntries(appuntamenti);
       } catch (e) {
         toast.error("Errore nel caricamento appuntamenti");
         console.error(e);
@@ -116,14 +65,14 @@ export default function AppuntamentiPage() {
     fetchAll();
   }, []);
 
-  const filtered = entries.filter(({ app, clienteNome, servizioNome }) => {
-    const byTab = activeTab === "Oggi" ? isToday(app.DataOra as Timestamp) : true;
-    const matchSearch = !search || [clienteNome, servizioNome].join(" ").toLowerCase().includes(search.toLowerCase());
+  const filtered = entries.filter((app) => {
+    const byTab = activeTab === "Oggi" ? isToday(app.DataOra) : true;
+    const matchSearch = !search || [app.ClienteNome, interventoFrom(app)].join(" ").toLowerCase().includes(search.toLowerCase());
     const matchStato  = !stato || app.Stato === stato;
     return byTab && matchSearch && matchStato;
   });
 
-  const oggiCount = entries.filter(({ app }) => isToday(app.DataOra as Timestamp)).length;
+  const oggiCount = entries.filter((app) => isToday(app.DataOra)).length;
 
   function reset() {
     setSearch("");
@@ -166,7 +115,7 @@ export default function AppuntamentiPage() {
           </div>
           <select
             value={stato}
-            onChange={(e) => setStato(e.target.value as AppuntamentoStato | "")}
+            onChange={(e) => setStato(e.target.value)}
             className="text-sm px-3 py-2 rounded-xl"
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)", outline: "none" }}
           >
@@ -214,7 +163,7 @@ export default function AppuntamentiPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {filtered.map(({ app, clienteNome, sedeNome, servizioNome }) => {
+            {filtered.map((app) => {
               return (
                 <div
                   key={app.id}
@@ -223,12 +172,12 @@ export default function AppuntamentiPage() {
                 >
                   <div className="flex-shrink-0 w-20">
                     <p className="text-sm font-bold" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
-                      {formatOra(app.DataOra as Timestamp)}
+                      {formatOra(app.DataOra)}
                     </p>
                     <div className="flex items-center gap-1 mt-0.5">
                       <Calendar size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
                       <p className="text-xs leading-tight" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                        {formatData(app.DataOra as Timestamp)}
+                        {formatData(app.DataOra)}
                       </p>
                     </div>
                   </div>
@@ -237,19 +186,19 @@ export default function AppuntamentiPage() {
                     <div className="flex items-center gap-1.5">
                       <User size={13} style={{ color: "var(--text-muted)" }} />
                       <span className="text-sm font-semibold truncate" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-                        {clienteNome}
+                        {app.ClienteNome}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Wrench size={13} style={{ color: "var(--text-muted)" }} />
                       <span className="text-sm" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-                        {servizioNome}
+                        {interventoFrom(app)}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <MapPin size={13} style={{ color: "#2563EB" }} />
                       <span className="text-sm font-medium" style={{ fontFamily: "var(--font-montserrat)", color: "#2563EB" }}>
-                        {sedeNome}
+                        {app.SedeNome}
                       </span>
                     </div>
                   </div>
