@@ -2,21 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import {
-  collection, getDocs, updateDoc, getDoc, orderBy, query,
-  serverTimestamp, doc,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { ArrowLeft, Search, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-import type { Cliente, Veicolo, Sede, Pneumatico, FoglioDiLavoro } from "@/lib/types";
+import type { SimpleEntity } from "@/lib/lookupDb";
+import type { PneumaticoFoglio } from "@/lib/fogliDb";
 
-function nomeCliente(c: Cliente): string {
-  if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale;
-  return c.Nome?.trim() || c.Ragione_Sociale || "—";
-}
+type ClienteOption = { id: string; nome: string; telefono?: string };
+type VeicoloOption = { id: string; Marca?: string; Modello?: string; Targa?: string };
 
 type PneumaticoForm = {
   Marca: string;
@@ -31,7 +25,7 @@ const emptyPneumatico = (): PneumaticoForm => ({
   Marca: "", Modello: "", Misura: "", Stagione: "Estive", Quantita: 4, Stato: "montati",
 });
 
-function toPneumaticoForm(p: Pneumatico, stato: "montati" | "smontati"): PneumaticoForm {
+function toPneumaticoForm(p: PneumaticoFoglio, stato: "montati" | "smontati"): PneumaticoForm {
   return {
     Marca: p.Marca ?? "",
     Modello: p.Modello ?? "",
@@ -47,11 +41,11 @@ export default function ModificaFoglioLavoroPage() {
   const { id } = useParams<{ id: string }>();
 
   const [loading, setLoading] = useState(true);
-  const [sedi, setSedi] = useState<Sede[]>([]);
-  const [clienti, setClienti] = useState<Cliente[]>([]);
+  const [sedi, setSedi] = useState<SimpleEntity[]>([]);
   const [clienteSearch, setClienteSearch] = useState("");
-  const [clienteSelezionato, setClienteSelezionato] = useState<Cliente | null>(null);
-  const [veicoliCliente, setVeicoliCliente] = useState<Veicolo[]>([]);
+  const [clientiSuggeriti, setClientiSuggeriti] = useState<ClienteOption[]>([]);
+  const [clienteSelezionato, setClienteSelezionato] = useState<ClienteOption | null>(null);
+  const [veicoliCliente, setVeicoliCliente] = useState<VeicoloOption[]>([]);
 
   const [sedeId, setSedeId] = useState("");
   const [veicoloId, setVeicoloId] = useState("");
@@ -62,61 +56,38 @@ export default function ModificaFoglioLavoroPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
-      const [foglioSnap, sediSnap, clientiSnap] = await Promise.all([
-        getDoc(doc(db, "Foglio_di_Lavoro", id)),
-        getDocs(collection(db, "Sede")),
-        getDocs(query(collection(db, "Clienti"), orderBy("Nome"))),
+      const [foglioRes, sediRes] = await Promise.all([
+        fetch(`/api/fogli-di-lavoro/${id}`),
+        fetch("/api/lookup/sede"),
       ]);
 
-      if (!foglioSnap.exists()) {
+      if (!foglioRes.ok) {
         toast.error("Foglio non trovato");
         router.push("/fogli-di-lavoro");
         return;
       }
 
-      const foglio = { id: foglioSnap.id, ...foglioSnap.data() } as FoglioDiLavoro;
-      const allSedi = sediSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Sede));
-      const allClienti = clientiSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente));
+      const { foglio } = await foglioRes.json();
+      const { items: allSedi } = await sediRes.json();
+      setSedi(allSedi ?? []);
 
-      setSedi(allSedi);
-      setClienti(allClienti);
+      setStatoFoglio(foglio.Stato ?? "Aperto");
+      setNote(foglio.Note ?? "");
+      setSedeId(foglio.SedeId ?? "");
 
-      if (foglio.Stato) setStatoFoglio(foglio.Stato);
-      const noteField = (foglio as Record<string, unknown>).Note;
-      if (noteField) setNote(noteField as string);
-
-      // Pneumatici montati + smontati
-      const montati = ((foglio as Record<string, unknown>).Pneumatici_Montati as Pneumatico[] | undefined) ?? [];
-      const smontati = ((foglio as Record<string, unknown>).Pneumatici_Smontati as Pneumatico[] | undefined) ?? [];
+      const montati  = (foglio.PneumaticiMontati  as PneumaticoFoglio[]) ?? [];
+      const smontati = (foglio.PneumaticiSmontati as PneumaticoFoglio[]) ?? [];
       setPneumatici([
         ...montati.map((p) => toPneumaticoForm(p, "montati")),
         ...smontati.map((p) => toPneumaticoForm(p, "smontati")),
       ]);
 
-      // Sede
-      const sedeRef = foglio.Sede as { id?: string; path?: string } | null | undefined;
-      if (sedeRef) {
-        const sid = sedeRef.id ?? sedeRef.path?.split("/").pop() ?? "";
-        setSedeId(sid);
-      }
-
-      // Cliente
-      const clienteRef = foglio.Cliente as { id?: string; path?: string } | null | undefined;
-      if (clienteRef) {
-        const cid = clienteRef.id ?? clienteRef.path?.split("/").pop() ?? "";
-        const found = allClienti.find((c) => c.id === cid);
-        if (found) {
-          setClienteSelezionato(found);
-          const vSnap = await getDocs(collection(db, "Clienti", cid, "Veicolo"));
-          const veicoli = vSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo));
-          setVeicoliCliente(veicoli);
-
-          const veicoloRef = foglio.Veicolo as { id?: string; path?: string } | null | undefined;
-          if (veicoloRef) {
-            const vid = veicoloRef.id ?? veicoloRef.path?.split("/").pop() ?? "";
-            setVeicoloId(vid);
-          }
-        }
+      if (foglio.ClienteId) {
+        setClienteSelezionato({ id: foglio.ClienteId, nome: foglio.ClienteNome, telefono: foglio.ClienteTelefono ?? undefined });
+        const vRes = await fetch(`/api/clienti/${foglio.ClienteId}/veicoli`);
+        const { veicoli } = await vRes.json();
+        setVeicoliCliente(veicoli ?? []);
+        if (foglio.VeicoloId) setVeicoloId(foglio.VeicoloId);
       }
 
       setLoading(false);
@@ -129,16 +100,25 @@ export default function ModificaFoglioLavoroPage() {
     });
   }, [id, router]);
 
-  const clientiFiltrati = clienti
-    .filter((c) => {
-      const nome = nomeCliente(c);
-      return (
-        nome.toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Email ?? "").toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Telefono ?? "").includes(clienteSearch)
-      );
-    })
-    .slice(0, 8);
+  useEffect(() => {
+    if (clienteSearch.trim().length < 1) {
+      setClientiSuggeriti([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      fetch(`/api/clienti?q=${encodeURIComponent(clienteSearch.trim())}&limit=8`)
+        .then((r) => r.json())
+        .then(({ clienti }) => {
+          setClientiSuggeriti((clienti ?? []).map((c: Record<string, unknown>) => ({
+            id: c.id as string,
+            nome: (c.Azienda && c.Ragione_Sociale) ? (c.Ragione_Sociale as string) : ((c.Nome as string)?.trim() || (c.Ragione_Sociale as string) || "—"),
+            telefono: c.Telefono as string | undefined,
+          })));
+        })
+        .catch(() => {});
+    }, 250);
+    return () => clearTimeout(t);
+  }, [clienteSearch]);
 
   function addPneumatico() { setPneumatici((p) => [...p, emptyPneumatico()]); }
   function removePneumatico(i: number) { setPneumatici((p) => p.filter((_, idx) => idx !== i)); }
@@ -154,28 +134,28 @@ export default function ModificaFoglioLavoroPage() {
     }
     setSaving(true);
     try {
-      const toPneumatico = (p: PneumaticoForm): Pneumatico => ({
+      const toPneumatico = (p: PneumaticoForm): PneumaticoFoglio => ({
         Marca: p.Marca, Modello: p.Modello, Misura: p.Misura, Stagione: p.Stagione, Quantita: p.Quantita,
       });
 
       const montati = pneumatici.filter((p) => p.Stato === "montati").map(toPneumatico);
       const smontati = pneumatici.filter((p) => p.Stato === "smontati").map(toPneumatico);
 
-      const payload: Record<string, unknown> = {
-        Cliente: doc(db, "Clienti", clienteSelezionato.id),
-        Sede: doc(db, "Sede", sedeId),
-        Stato: statoFoglio,
-        DataModifica: serverTimestamp(),
-        Pneumatici_Montati: montati,
-        Pneumatici_Smontati: smontati,
-        Note: note.trim() || null,
-      };
+      const res = await fetch(`/api/fogli-di-lavoro/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clienteId: clienteSelezionato.id,
+          sedeId,
+          veicoloId: veicoloId || undefined,
+          stato: statoFoglio,
+          pneumaticiMontati: montati,
+          pneumaticiSmontati: smontati,
+          note: note.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
 
-      if (veicoloId) {
-        payload.Veicolo = doc(db, "Clienti", clienteSelezionato.id, "Veicolo", veicoloId);
-      }
-
-      await updateDoc(doc(db, "Foglio_di_Lavoro", id), payload);
       toast.success("Foglio aggiornato");
       router.push(`/fogli-di-lavoro/${id}`);
     } catch (err) {
@@ -222,9 +202,9 @@ export default function ModificaFoglioLavoroPage() {
               {clienteSelezionato ? (
                 <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ border: "1px solid var(--brand)", background: "var(--bg-primary)" }}>
                   <span className="flex-1 text-sm font-semibold" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-                    {nomeCliente(clienteSelezionato)}
-                    {clienteSelezionato.Telefono && (
-                      <span className="ml-2 font-normal text-xs" style={{ color: "var(--text-muted)" }}>{clienteSelezionato.Telefono}</span>
+                    {clienteSelezionato.nome}
+                    {clienteSelezionato.telefono && (
+                      <span className="ml-2 font-normal text-xs" style={{ color: "var(--text-muted)" }}>{clienteSelezionato.telefono}</span>
                     )}
                   </span>
                   <button type="button" onClick={() => { setClienteSelezionato(null); setClienteSearch(""); setVeicoliCliente([]); setVeicoloId(""); }}
@@ -243,22 +223,23 @@ export default function ModificaFoglioLavoroPage() {
                   {clienteSearch.length >= 1 && (
                     <div className="absolute z-10 w-full mt-1 rounded-xl shadow-lg overflow-hidden"
                       style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
-                      {clientiFiltrati.length === 0 ? (
+                      {clientiSuggeriti.length === 0 ? (
                         <div className="px-4 py-3 text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>Nessun cliente trovato</div>
                       ) : (
-                        clientiFiltrati.map((c) => (
+                        clientiSuggeriti.map((c) => (
                           <button key={c.id} type="button"
                             onClick={async () => {
                               setClienteSelezionato(c);
                               setClienteSearch("");
                               setVeicoloId("");
-                              const vSnap = await getDocs(collection(db, "Clienti", c.id, "Veicolo"));
-                              setVeicoliCliente(vSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
+                              const vRes = await fetch(`/api/clienti/${c.id}/veicoli`);
+                              const { veicoli } = await vRes.json();
+                              setVeicoliCliente(veicoli ?? []);
                             }}
                             className="w-full text-left px-4 py-2.5 text-sm hover:bg-[#F1F4F8] transition-colors"
                             style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-                            {nomeCliente(c)}
-                            {c.Telefono && <span className="ml-2 text-xs" style={{ color: "var(--text-muted)" }}>{c.Telefono}</span>}
+                            {c.nome}
+                            {c.telefono && <span className="ml-2 text-xs" style={{ color: "var(--text-muted)" }}>{c.telefono}</span>}
                           </button>
                         ))
                       )}

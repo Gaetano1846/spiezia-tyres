@@ -3,17 +3,15 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
-  doc, getDoc, updateDoc, serverTimestamp, type Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import {
   ArrowLeft, Printer, CheckCircle2, Car, User, MapPin, Clock, Pencil,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import type { FoglioDiLavoro, FoglioStato, ServiziItem, Pneumatico } from "@/lib/types";
+import type { FoglioApi, PneumaticoFoglio, ServizioFoglio } from "@/lib/fogliDb";
+
+type FoglioStato = "Aperto" | "In lavorazione" | "Completato";
 
 const statoVariant: Record<string, "brand" | "success" | "neutral"> = {
   Aperto:            "neutral",
@@ -21,33 +19,21 @@ const statoVariant: Record<string, "brand" | "success" | "neutral"> = {
   Completato:        "success",
 };
 
-type ClienteInfo = { nome: string; email?: string; telefono?: string };
-type VeicoloInfo = { targa: string; marca?: string; modello?: string; anno?: number; km?: number };
-type SedeInfo    = { nome: string };
-
-function fmtData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
+function fmtData(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
 }
 
-function fmtTime(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
-}
-
-function euro(n: number | undefined | null) {
-  if (n == null || n === 0) return null;
-  return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+function fmtTime(iso: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 }
 
 export default function FoglioLavoroDetailPage() {
   const params = useParams();
   const id     = params.id as string;
 
-  const [foglio,      setFoglio]      = useState<FoglioDiLavoro | null>(null);
-  const [clienteInfo, setClienteInfo] = useState<ClienteInfo | null>(null);
-  const [veicoloInfo, setVeicoloInfo] = useState<VeicoloInfo | null>(null);
-  const [sedeInfo,    setSedeInfo]    = useState<SedeInfo | null>(null);
+  const [foglio,      setFoglio]      = useState<FoglioApi | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [savingStato, setSavingStato] = useState(false);
 
@@ -55,38 +41,10 @@ export default function FoglioLavoroDetailPage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, "Foglio_di_Lavoro", id));
-        if (!snap.exists()) { toast.error("Foglio non trovato"); return; }
-        const f = { id: snap.id, ...snap.data() } as FoglioDiLavoro;
+        const res = await fetch(`/api/fogli-di-lavoro/${id}`);
+        if (!res.ok) { toast.error("Foglio non trovato"); return; }
+        const { foglio: f } = await res.json();
         setFoglio(f);
-
-        const [cSnap, vSnap, sSnap] = await Promise.all([
-          f.Cliente ? getDoc(f.Cliente) : Promise.resolve(null),
-          f.Veicolo ? getDoc(f.Veicolo) : Promise.resolve(null),
-          f.Sede    ? getDoc(f.Sede)    : Promise.resolve(null),
-        ]);
-
-        if (cSnap?.exists()) {
-          const d = cSnap.data();
-          setClienteInfo({
-            nome:     String(d.Ragione_Sociale || d.Nome || "—").trim(),
-            email:    d.Email    ? String(d.Email)    : undefined,
-            telefono: d.Telefono ? String(d.Telefono) : undefined,
-          });
-        }
-        if (vSnap?.exists()) {
-          const d = vSnap.data();
-          setVeicoloInfo({
-            targa:   String(d.Targa   ?? ""),
-            marca:   d.Marca   ? String(d.Marca)   : undefined,
-            modello: d.Modello ? String(d.Modello) : undefined,
-            anno:    d.Anno    ? Number(d.Anno)    : undefined,
-            km:      d.Km      ? Number(d.Km)      : undefined,
-          });
-        }
-        if (sSnap?.exists()) {
-          setSedeInfo({ nome: String(sSnap.data().Nome ?? "—") });
-        }
       } catch (e) {
         toast.error("Errore nel caricamento foglio");
         console.error(e);
@@ -101,10 +59,12 @@ export default function FoglioLavoroDetailPage() {
     if (!foglio || savingStato || nuovoStato === foglio.Stato) return;
     setSavingStato(true);
     try {
-      await updateDoc(doc(db, "Foglio_di_Lavoro", id), {
-        Stato: nuovoStato,
-        ...(nuovoStato === "Completato" ? { DataCompletamento: serverTimestamp() } : {}),
+      const res = await fetch(`/api/fogli-di-lavoro/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stato: nuovoStato }),
       });
+      if (!res.ok) throw new Error(String(res.status));
       setFoglio({ ...foglio, Stato: nuovoStato });
       toast.success(`Foglio: ${nuovoStato}`);
     } catch {
@@ -136,18 +96,17 @@ export default function FoglioLavoroDetailPage() {
     );
   }
 
-  const dataTs = foglio.DataOra ?? foglio.Data_Creazione;
+  const dataIso = foglio.DataOra ?? foglio.DataCreazione;
 
   // Servizi: solo quelli selezionati, divisi per tipo
-  const tuttiServizi  = (foglio.Servizi ?? []) as ServiziItem[];
-  const serviziSelezionati = tuttiServizi.filter((s) => s.Selected);
-  const serviziPneu   = serviziSelezionati.filter((s) => s.Tipo === "Pneumatico");
+  const serviziSelezionati = foglio.Servizi.filter((s) => s.Selected);
+  const serviziPneu    = serviziSelezionati.filter((s) => s.Tipo === "Pneumatico");
   const serviziVeicolo = serviziSelezionati.filter((s) => s.Tipo === "Veicolo");
 
-  const pneuMontati   = (foglio.Pneumatici_Montati  ?? []) as Pneumatico[];
-  const pneuSmontati  = (foglio.Pneumatici_Smontati ?? []) as Pneumatico[];
+  const pneuMontati  = foglio.PneumaticiMontati;
+  const pneuSmontati = foglio.PneumaticiSmontati;
 
-  const foglioLabel = foglio.ID != null ? `#${foglio.ID}` : `#${id.slice(0, 6).toUpperCase()}`;
+  const foglioLabel = foglio.Numero != null ? `#${foglio.Numero}` : `#${id.slice(0, 6).toUpperCase()}`;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -171,16 +130,16 @@ export default function FoglioLavoroDetailPage() {
               <Badge variant={statoVariant[foglio.Stato] ?? "neutral"}>{foglio.Stato}</Badge>
             </div>
             <div className="flex items-center gap-4 text-sm" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-              {dataTs && (
+              {dataIso && (
                 <span className="flex items-center gap-1">
                   <Clock size={12} style={{ color: "var(--text-muted)" }} />
-                  {fmtData(dataTs)} {fmtTime(dataTs)}
+                  {fmtData(dataIso)} {fmtTime(dataIso)}
                 </span>
               )}
-              {sedeInfo && (
+              {foglio.SedeNome && foglio.SedeNome !== "—" && (
                 <span className="flex items-center gap-1">
                   <MapPin size={12} style={{ color: "var(--text-muted)" }} />
-                  {sedeInfo.nome}
+                  {foglio.SedeNome}
                 </span>
               )}
             </div>
@@ -226,17 +185,17 @@ export default function FoglioLavoroDetailPage() {
               Veicolo
             </p>
           </div>
-          {veicoloInfo ? (
+          {foglio.VeicoloId ? (
             <div className="space-y-1 text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
               <p className="text-xl font-bold font-mono" style={{ fontFamily: "var(--font-poppins)", color: "var(--text-primary)" }}>
-                {veicoloInfo.targa}
+                {foglio.VeicoloTarga || "—"}
               </p>
               <p style={{ color: "var(--text-secondary)" }}>
-                {[veicoloInfo.marca, veicoloInfo.modello, veicoloInfo.anno].filter(Boolean).join(" ")}
+                {[foglio.VeicoloMarca, foglio.VeicoloModello, foglio.VeicoloAnno].filter(Boolean).join(" ")}
               </p>
-              {veicoloInfo.km != null && (
+              {foglio.VeicoloKm != null && (
                 <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  Km: <span className="font-semibold">{veicoloInfo.km.toLocaleString("it-IT")}</span>
+                  Km: <span className="font-semibold">{foglio.VeicoloKm.toLocaleString("it-IT")}</span>
                 </p>
               )}
             </div>
@@ -252,11 +211,11 @@ export default function FoglioLavoroDetailPage() {
               Cliente
             </p>
           </div>
-          {clienteInfo ? (
+          {foglio.ClienteId ? (
             <div className="space-y-1 text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
-              <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{clienteInfo.nome}</p>
-              {clienteInfo.telefono && <p style={{ color: "var(--text-secondary)" }}>{clienteInfo.telefono}</p>}
-              {clienteInfo.email    && <p style={{ color: "var(--text-secondary)" }}>{clienteInfo.email}</p>}
+              <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{foglio.ClienteNome}</p>
+              {foglio.ClienteTelefono && <p style={{ color: "var(--text-secondary)" }}>{foglio.ClienteTelefono}</p>}
+              {foglio.ClienteEmail    && <p style={{ color: "var(--text-secondary)" }}>{foglio.ClienteEmail}</p>}
             </div>
           ) : (
             <p className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>—</p>
@@ -319,7 +278,7 @@ export default function FoglioLavoroDetailPage() {
   );
 }
 
-function ServiziList({ items }: { items: ServiziItem[] }) {
+function ServiziList({ items }: { items: ServizioFoglio[] }) {
   return (
     <div className="space-y-2">
       {items.map((s, i) => (
@@ -343,7 +302,7 @@ function ServiziList({ items }: { items: ServiziItem[] }) {
   );
 }
 
-function PneumaticiTable({ items, showUsura }: { items: Pneumatico[]; showUsura: boolean }) {
+function PneumaticiTable({ items, showUsura }: { items: PneumaticoFoglio[]; showUsura: boolean }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">

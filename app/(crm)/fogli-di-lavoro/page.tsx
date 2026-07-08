@@ -1,94 +1,42 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  collection, query, getDocs, getDoc, limit, orderBy,
-  type DocumentReference, type Timestamp,
-} from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Search, Plus, Eye, Wrench, X, FileDown, Clock, ChevronDown, Pencil, Printer, Car, User } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import type { FoglioDiLavoro, Cliente } from "@/lib/types";
+import type { FoglioApi } from "@/lib/fogliDb";
 
 const statoVariant: Record<string, "brand" | "success" | "neutral"> = {
   Aperto:           "neutral",
   "In lavorazione": "brand",
   Completato:       "success",
-  "In attesa":      "neutral",
-  "In corso":       "brand",
-  Completata:       "success",
-};
-
-type FoglioEntry = {
-  foglio:        FoglioDiLavoro;
-  clienteNome:   string;
-  clientePath:   string;
-  sedeNome:      string;
-  veicoloTag:    string;
-  operatoreNome: string;
-  operatorePath: string;
-  statoCalc:     string;
 };
 
 type OperatoreOption = { uid: string; nome: string };
+type ClienteOption = { id: string; nome: string; telefono?: string };
 
-function nomeCliente(c: Record<string, unknown>): string {
-  if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale as string;
-  return (c.Nome as string)?.trim() || "—";
-}
-
-async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Record<string, unknown>>> {
-  if (refs.length === 0) return new Map();
-  const unique = [...new Map(refs.map((r) => [r.path, r])).values()];
-  const snaps  = await Promise.all(unique.map((r) => getDoc(r)));
-  const map    = new Map<string, Record<string, unknown>>();
-  snaps.forEach((s) => {
-    if (s.exists()) map.set(s.ref.path, { id: s.id, ...s.data() } as Record<string, unknown>);
-  });
-  return map;
-}
-
-function statoFromFoglio(f: FoglioDiLavoro): string {
-  if (f.Stato) return f.Stato;
-  const d = f as Record<string, unknown>;
-  if (d.Ora_Fine)   return "Completato";
-  if (d.Ora_Inizio) return "In lavorazione";
-  return "Aperto";
-}
-
-function formatTs(ts: Timestamp | null | undefined, mode: "date" | "time" = "date"): string {
-  if (!ts?.toDate) return "—";
-  const d = ts.toDate();
-  if (mode === "time") return d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-}
-
-function formatOrario(foglio: FoglioDiLavoro): string {
-  const d     = foglio as Record<string, unknown>;
-  const start = d.Ora_Inizio as Timestamp | null | undefined;
-  const end   = d.Ora_Fine   as Timestamp | null | undefined;
-  if (start) {
-    const day   = formatTs(start, "date");
-    const tFrom = formatTs(start, "time");
-    const tTo   = end ? formatTs(end, "time") : null;
-    return tTo ? `${day}  ${tFrom} — ${tTo}` : `${day}  ${tFrom}`;
-  }
-  const creazione = (d.DataOra ?? d.Data_Creazione ?? d.DataCreazione) as Timestamp | null | undefined;
-  return formatTs(creazione);
+function formatOrario(foglio: FoglioApi): string {
+  const iso = foglio.DataOra ?? foglio.DataCreazione;
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const day  = d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
+  const time = d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+  return `${day}  ${time}`;
 }
 
 export default function FogliDiLavoroPage() {
-  const [entries, setEntries]         = useState<FoglioEntry[]>([]);
+  const [fogli, setFogli]             = useState<FoglioApi[]>([]);
   const [loading, setLoading]         = useState(true);
   const [operatori, setOperatori]     = useState<OperatoreOption[]>([]);
 
   // filtri
   const [clienteSearch, setClienteSearch]     = useState("");
   const [clienteSelezionato, setClienteSelezionato] = useState<{ id: string; nome: string } | null>(null);
-  const [clientiSuggeriti, setClientiSuggeriti] = useState<Cliente[]>([]);
+  const [clientiSuggeriti, setClientiSuggeriti] = useState<ClienteOption[]>([]);
   const [showDropdown, setShowDropdown]       = useState(false);
   const [operatoreSelezionato, setOperatoreSelezionato] = useState("");
   const searchRef = useRef<HTMLDivElement>(null);
@@ -104,13 +52,16 @@ export default function FogliDiLavoroPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Carica operatori (utenti CRM) e tutti i fogli
+  // Carica operatori (utenti CRM, ancora su Firestore) e tutti i fogli (Postgres)
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
-        // Operatori: utenti con CRM = true
-        const usersSnap = await getDocs(collection(db, "users"));
+        const [usersSnap, res] = await Promise.all([
+          getDocs(collection(db, "users")),
+          fetch("/api/fogli-di-lavoro"),
+        ]);
+
         const ops: OperatoreOption[] = usersSnap.docs
           .filter((d) => d.data().CRM === true || d.data().Ruolo === "Admin")
           .map((d) => ({
@@ -120,50 +71,9 @@ export default function FogliDiLavoroPage() {
           .sort((a, b) => a.nome.localeCompare(b.nome));
         setOperatori(ops);
 
-        // Fogli di lavoro
-        const q    = query(collection(db, "Foglio_di_Lavoro"), limit(300));
-        const snap = await getDocs(q);
-        const fogli = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as FoglioDiLavoro))
-          .sort((a, b) => {
-            const fa = a as Record<string, unknown>;
-            const fb = b as Record<string, unknown>;
-            const ta = ((fa.DataOra ?? fa.Data_Creazione ?? fa.DataCreazione) as Timestamp | null)?.seconds ?? 0;
-            const tb = ((fb.DataOra ?? fb.Data_Creazione ?? fb.DataCreazione) as Timestamp | null)?.seconds ?? 0;
-            return tb - ta;
-          });
-
-        const clienteRefs   = fogli.map((f) => f.Cliente).filter(Boolean) as DocumentReference[];
-        const sedeRefs      = fogli.map((f) => f.Sede).filter(Boolean) as DocumentReference[];
-        const veicoloRefs   = fogli.map((f) => f.Veicolo).filter(Boolean) as DocumentReference[];
-        const operatoreRefs = fogli.map((f) => f.Operatore).filter(Boolean) as DocumentReference[];
-
-        const [clientiMap, sediMap, veicoliMap, operatoriMap] = await Promise.all([
-          batchGetDocs(clienteRefs),
-          batchGetDocs(sedeRefs),
-          batchGetDocs(veicoloRefs),
-          batchGetDocs(operatoreRefs),
-        ]);
-
-        const resolved: FoglioEntry[] = fogli.map((foglio) => {
-          const c = foglio.Cliente   ? clientiMap.get(foglio.Cliente.path)     : undefined;
-          const s = foglio.Sede      ? sediMap.get(foglio.Sede.path)           : undefined;
-          const v = foglio.Veicolo   ? veicoliMap.get(foglio.Veicolo.path)    : undefined;
-          const o = foglio.Operatore ? operatoriMap.get(foglio.Operatore.path) : undefined;
-
-          return {
-            foglio,
-            clienteNome:   c ? nomeCliente(c) : "—",
-            clientePath:   foglio.Cliente?.path ?? "",
-            sedeNome:      s ? (s.Nome as string) ?? "—" : "—",
-            veicoloTag:    v ? (v.Targa as string) || (v.identificativo as string) || "—" : "—",
-            operatoreNome: o ? (o.displayName as string) || (o.email as string) || "—" : "—",
-            operatorePath: foglio.Operatore?.path ?? "",
-            statoCalc:     statoFromFoglio(foglio),
-          };
-        });
-
-        setEntries(resolved);
+        if (!res.ok) throw new Error(String(res.status));
+        const { fogli: list } = await res.json();
+        setFogli(list);
       } catch (e) {
         toast.error("Errore nel caricamento fogli di lavoro");
         console.error(e);
@@ -174,34 +84,33 @@ export default function FogliDiLavoroPage() {
     init();
   }, []);
 
-  // Ricerca clienti live nella collection Clienti
+  // Ricerca clienti live (server-side, Postgres)
   useEffect(() => {
-    if (clienteSearch.length < 1) {
+    if (clienteSearch.trim().length < 1) {
       setClientiSuggeriti([]);
       setShowDropdown(false);
       return;
     }
-    getDocs(query(collection(db, "Clienti"), orderBy("Nome"), limit(200))).then((snap) => {
-      const term = clienteSearch.toLowerCase();
-      const risultati = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as Cliente))
-        .filter((c) => {
-          const nome = nomeCliente(c as unknown as Record<string, unknown>);
-          return (
-            nome.toLowerCase().includes(term) ||
-            (c.Telefono ?? "").includes(term) ||
-            (c.Email ?? "").toLowerCase().includes(term)
-          );
+    const t = setTimeout(() => {
+      fetch(`/api/clienti?q=${encodeURIComponent(clienteSearch.trim())}&limit=8`)
+        .then((r) => r.json())
+        .then(({ clienti }) => {
+          const risultati: ClienteOption[] = (clienti ?? []).map((c: Record<string, unknown>) => ({
+            id: c.id as string,
+            nome: (c.Azienda && c.Ragione_Sociale) ? (c.Ragione_Sociale as string) : ((c.Nome as string)?.trim() || (c.Ragione_Sociale as string) || "—"),
+            telefono: c.Telefono as string | undefined,
+          }));
+          setClientiSuggeriti(risultati);
+          setShowDropdown(risultati.length > 0);
         })
-        .slice(0, 8);
-      setClientiSuggeriti(risultati);
-      setShowDropdown(risultati.length > 0);
-    });
+        .catch(() => {});
+    }, 250);
+    return () => clearTimeout(t);
   }, [clienteSearch]);
 
-  const filtered = entries.filter(({ clientePath, operatorePath }) => {
-    const matchCliente   = !clienteSelezionato || clientePath === `Clienti/${clienteSelezionato.id}`;
-    const matchOperatore = !operatoreSelezionato || operatorePath === `users/${operatoreSelezionato}`;
+  const filtered = fogli.filter((f) => {
+    const matchCliente   = !clienteSelezionato || f.ClienteId === clienteSelezionato.id;
+    const matchOperatore = !operatoreSelezionato || f.OperatoreId === operatoreSelezionato;
     return matchCliente && matchOperatore;
   });
 
@@ -285,17 +194,17 @@ export default function FogliDiLavoroPage() {
                         key={c.id}
                         type="button"
                         onMouseDown={() => {
-                          setClienteSelezionato({ id: c.id, nome: nomeCliente(c as unknown as Record<string, unknown>) });
+                          setClienteSelezionato({ id: c.id, nome: c.nome });
                           setClienteSearch("");
                           setShowDropdown(false);
                         }}
                         className="w-full text-left px-4 py-2.5 text-sm hover:bg-[#F1F4F8] transition-colors"
                         style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
                       >
-                        {nomeCliente(c as unknown as Record<string, unknown>)}
-                        {c.Telefono && (
+                        {c.nome}
+                        {c.telefono && (
                           <span className="ml-2 text-xs" style={{ color: "var(--text-muted)" }}>
-                            {c.Telefono}
+                            {c.telefono}
                           </span>
                         )}
                       </button>
@@ -346,13 +255,12 @@ export default function FogliDiLavoroPage() {
           <>
             {/* Mobile: lista a card */}
             <div className="md:hidden space-y-2.5">
-              {filtered.map(({ foglio, clienteNome, veicoloTag, operatoreNome, statoCalc }) => {
-                const fd     = foglio as Record<string, unknown>;
-                const num    = fd.ID?.toString() ?? foglio.id.slice(0, 6).toUpperCase();
-                const pdfUrl = (fd.URL as string | undefined) ?? (foglio as Record<string, unknown>).PDF as string | undefined;
+              {filtered.map((f) => {
+                const num = f.Numero != null ? String(f.Numero) : f.id.slice(0, 6).toUpperCase();
+                const operatoreNome = operatori.find((o) => o.uid === f.OperatoreId)?.nome ?? "—";
                 return (
                   <div
-                    key={foglio.id}
+                    key={f.id}
                     className="rounded-xl p-3.5"
                     style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
                   >
@@ -360,15 +268,15 @@ export default function FogliDiLavoroPage() {
                       <span className="font-bold text-sm" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
                         #{num}
                       </span>
-                      <Badge variant={statoVariant[statoCalc] ?? "neutral"}>{statoCalc}</Badge>
+                      <Badge variant={statoVariant[f.Stato] ?? "neutral"}>{f.Stato}</Badge>
                     </div>
                     <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                      {clienteNome}
+                      {f.ClienteNome}
                     </p>
                     <div className="mt-1.5 space-y-1 text-xs" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                       <div className="flex items-center gap-2">
                         <Car size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
-                        <span className="truncate">{veicoloTag}</span>
+                        <span className="truncate">{f.VeicoloTarga || "—"}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <User size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
@@ -376,12 +284,12 @@ export default function FogliDiLavoroPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <Clock size={12} className="flex-shrink-0" style={{ color: "var(--text-muted)" }} />
-                        <span className="truncate">{formatOrario(foglio)}</span>
+                        <span className="truncate">{formatOrario(f)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 mt-3">
                       <Link
-                        href={`/fogli-di-lavoro/${foglio.id}`}
+                        href={`/fogli-di-lavoro/${f.id}`}
                         className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
                         style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
                       >
@@ -389,7 +297,7 @@ export default function FogliDiLavoroPage() {
                         Apri
                       </Link>
                       <Link
-                        href={`/fogli-di-lavoro/${foglio.id}/modifica`}
+                        href={`/fogli-di-lavoro/${f.id}/modifica`}
                         className="flex items-center justify-center px-3 py-2 rounded-lg"
                         style={{ color: "#111", fontFamily: "var(--font-montserrat)", border: "1px solid #FFC803" }}
                         aria-label="Modifica"
@@ -397,7 +305,7 @@ export default function FogliDiLavoroPage() {
                         <Pencil size={14} />
                       </Link>
                       <Link
-                        href={`/fogli-di-lavoro/${foglio.id}/stampa`}
+                        href={`/fogli-di-lavoro/${f.id}/stampa`}
                         target="_blank"
                         className="flex items-center justify-center px-3 py-2 rounded-lg"
                         style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
@@ -405,9 +313,9 @@ export default function FogliDiLavoroPage() {
                       >
                         <Printer size={14} />
                       </Link>
-                      {pdfUrl && (
+                      {f.PdfUrl && (
                         <a
-                          href={pdfUrl}
+                          href={f.PdfUrl}
                           target="_blank"
                           rel="noreferrer"
                           className="flex items-center justify-center px-3 py-2 rounded-lg"
@@ -440,13 +348,12 @@ export default function FogliDiLavoroPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(({ foglio, clienteNome, veicoloTag, operatoreNome, statoCalc }) => {
-                    const fd     = foglio as Record<string, unknown>;
-                    const num    = fd.ID?.toString() ?? foglio.id.slice(0, 6).toUpperCase();
-                    const pdfUrl = (fd.URL as string | undefined) ?? (foglio as Record<string, unknown>).PDF as string | undefined;
+                  {filtered.map((f) => {
+                    const num = f.Numero != null ? String(f.Numero) : f.id.slice(0, 6).toUpperCase();
+                    const operatoreNome = operatori.find((o) => o.uid === f.OperatoreId)?.nome ?? "—";
                     return (
                       <tr
-                        key={foglio.id}
+                        key={f.id}
                         className="hover:bg-[#F1F4F8] transition-colors"
                         style={{ borderBottom: "1px solid var(--border)" }}
                       >
@@ -454,10 +361,10 @@ export default function FogliDiLavoroPage() {
                           {num}
                         </td>
                         <td className="px-2 py-3 font-medium" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                          {clienteNome}
+                          {f.ClienteNome}
                         </td>
                         <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                          {veicoloTag}
+                          {f.VeicoloTarga || "—"}
                         </td>
                         <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                           {operatoreNome}
@@ -465,16 +372,16 @@ export default function FogliDiLavoroPage() {
                         <td className="px-2 py-3 whitespace-nowrap" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                           <span className="flex items-center gap-1">
                             <Clock size={12} />
-                            {formatOrario(foglio)}
+                            {formatOrario(f)}
                           </span>
                         </td>
                         <td className="px-2 py-3">
-                          <Badge variant={statoVariant[statoCalc] ?? "neutral"}>{statoCalc}</Badge>
+                          <Badge variant={statoVariant[f.Stato] ?? "neutral"}>{f.Stato}</Badge>
                         </td>
                         <td className="px-2 py-3">
                           <div className="flex items-center gap-2">
                             <Link
-                              href={`/fogli-di-lavoro/${foglio.id}`}
+                              href={`/fogli-di-lavoro/${f.id}`}
                               className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
                               style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
                             >
@@ -482,23 +389,23 @@ export default function FogliDiLavoroPage() {
                               Apri
                             </Link>
                             <Link
-                              href={`/fogli-di-lavoro/${foglio.id}/modifica`}
+                              href={`/fogli-di-lavoro/${f.id}/modifica`}
                               className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors hover:bg-[#FFF8DC]"
                               style={{ color: "#111", fontFamily: "var(--font-montserrat)", border: "1px solid #FFC803" }}
                             >
                               <Pencil size={13} />
                             </Link>
                             <Link
-                              href={`/fogli-di-lavoro/${foglio.id}/stampa`}
+                              href={`/fogli-di-lavoro/${f.id}/stampa`}
                               target="_blank"
                               className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
                               style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
                             >
                               <Printer size={13} />
                             </Link>
-                            {pdfUrl && (
+                            {f.PdfUrl && (
                               <a
-                                href={pdfUrl}
+                                href={f.PdfUrl}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-lg"

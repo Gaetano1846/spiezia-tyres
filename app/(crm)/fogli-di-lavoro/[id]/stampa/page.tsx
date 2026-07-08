@@ -2,72 +2,34 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import type { Timestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
-import type { FoglioDiLavoro, Pneumatico } from "@/lib/types";
+import { storage } from "@/lib/firebase";
+import type { FoglioApi } from "@/lib/fogliDb";
 import { Loader2, Download, Printer } from "lucide-react";
 import toast from "react-hot-toast";
 
-function fmtDate(ts: Timestamp | null | undefined) {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
-}
-function fmtTime(ts: Timestamp | null | undefined) {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 export default function StampaFoglioPage() {
   const { id } = useParams<{ id: string }>();
-  const [foglio, setFoglio] = useState<FoglioDiLavoro | null>(null);
-  const [clienteNome, setClienteNome] = useState("—");
-  const [clienteTel, setClienteTel] = useState("");
-  const [veicoloLabel, setVeicoloLabel] = useState("");
-  const [sedeNome, setSedeNome] = useState("");
+  const [foglio, setFoglio] = useState<FoglioApi | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetch = async () => {
-      const snap = await getDoc(doc(db, "Foglio_di_Lavoro", id));
-      if (!snap.exists()) { setLoading(false); return; }
-      const f = { id: snap.id, ...snap.data() } as FoglioDiLavoro;
+    const fetchFoglio = async () => {
+      const res = await fetch(`/api/fogli-di-lavoro/${id}`);
+      if (!res.ok) { setLoading(false); return; }
+      const { foglio: f } = await res.json();
       setFoglio(f);
-
-      const data = f as Record<string, unknown>;
-
-      // Existing PDF URL (generated previously)
-      const existingUrl = (data.PDF ?? data.URL) as string | undefined;
-      if (existingUrl) setPdfUrl(existingUrl);
-
-      if (data.Cliente) {
-        const cSnap = await getDoc(data.Cliente as Parameters<typeof getDoc>[0]);
-        if (cSnap.exists()) {
-          const c = cSnap.data() as Record<string, unknown>;
-          setClienteNome((c.Azienda && c.Ragione_Sociale) ? String(c.Ragione_Sociale) : String(c.Nome ?? "")?.trim() || "—");
-          setClienteTel(String(c.Telefono ?? ""));
-        }
-      }
-
-      if (data.Veicolo) {
-        const vSnap = await getDoc(data.Veicolo as Parameters<typeof getDoc>[0]);
-        if (vSnap.exists()) {
-          const v = vSnap.data() as Record<string, unknown>;
-          setVeicoloLabel([v.Marca, v.Modello, v.Targa ? `(${v.Targa})` : ""].filter(Boolean).join(" "));
-        }
-      }
-
-      if (data.Sede) {
-        const sSnap = await getDoc(data.Sede as Parameters<typeof getDoc>[0]);
-        if (sSnap.exists()) setSedeNome(String((sSnap.data() as Record<string, unknown>).Nome ?? ""));
-      }
-
+      if (f.PdfUrl) setPdfUrl(f.PdfUrl);
       setLoading(false);
     };
-    fetch().catch(() => setLoading(false));
+    fetchFoglio().catch(() => setLoading(false));
   }, [id]);
 
   async function generaPDF() {
@@ -109,8 +71,14 @@ export default function StampaFoglioPage() {
       await uploadBytes(storageRef, new Uint8Array(pdfBytes), { contentType: "application/pdf" });
       const url = await getDownloadURL(storageRef);
 
-      // Salva URL nel documento Firestore (come fa Flutter)
-      await updateDoc(doc(db, "Foglio_di_Lavoro", id), { PDF: url, URL: url });
+      // Salva l'URL su Postgres — il bridge lo propaga a Firestore (campo URL)
+      // per il CRM FlutterFlow legacy.
+      const patchRes = await fetch(`/api/fogli-di-lavoro/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdfUrl: url }),
+      });
+      if (!patchRes.ok) throw new Error(String(patchRes.status));
 
       setPdfUrl(url);
       window.open(url, "_blank");
@@ -130,16 +98,11 @@ export default function StampaFoglioPage() {
   );
   if (!foglio) return <div style={{ padding: 40, fontFamily: "Arial" }}>Foglio non trovato.</div>;
 
-  const data = foglio as Record<string, unknown>;
-  const montati  = (data.Pneumatici_Montati  as Pneumatico[] | undefined) ?? [];
-  const smontati = (data.Pneumatici_Smontati as Pneumatico[] | undefined) ?? [];
-  const servizi  = (data.Servizi as Array<Record<string, unknown>> | undefined) ?? [];
-  const serviziFiltrati = servizi.filter((s) => s.Selected !== false);
-  const note = data.Note as string | undefined;
-  const oraInizio = data.Ora_Inizio as Timestamp | undefined;
-  const oraFine   = data.Ora_Fine   as Timestamp | undefined;
-  const dataTs    = (data.Data_Creazione ?? data.DataOra) as Timestamp | undefined;
-  const numero    = data.Numero ?? `#${id.slice(0, 6).toUpperCase()}`;
+  const montati  = foglio.PneumaticiMontati;
+  const smontati = foglio.PneumaticiSmontati;
+  const serviziFiltrati = foglio.Servizi.filter((s) => s.Selected !== false);
+  const dataIso = foglio.DataOra ?? foglio.DataCreazione;
+  const numero  = foglio.Numero != null ? String(foglio.Numero) : `#${id.slice(0, 6).toUpperCase()}`;
 
   return (
     <>
@@ -204,9 +167,9 @@ export default function StampaFoglioPage() {
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 20, fontWeight: 900 }}>{String(numero)}</div>
-            <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{fmtDate(dataTs)}</div>
-            {sedeNome && <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>Sede: {sedeNome}</div>}
+            <div style={{ fontSize: 20, fontWeight: 900 }}>{numero}</div>
+            <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{fmtDate(dataIso)}</div>
+            {foglio.SedeNome && foglio.SedeNome !== "—" && <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>Sede: {foglio.SedeNome}</div>}
           </div>
         </div>
 
@@ -216,19 +179,14 @@ export default function StampaFoglioPage() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
           <div style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8 }}>
             <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#888", marginBottom: 6 }}>Cliente</div>
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{clienteNome}</div>
-            {clienteTel && <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>{clienteTel}</div>}
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{foglio.ClienteNome}</div>
+            {foglio.ClienteTelefono && <div style={{ fontSize: 11, color: "#555", marginTop: 3 }}>{foglio.ClienteTelefono}</div>}
           </div>
           <div style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8 }}>
             <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#888", marginBottom: 6 }}>Veicolo</div>
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{veicoloLabel || "—"}</div>
-            {(oraInizio || oraFine) && (
-              <div style={{ fontSize: 10, color: "#666", marginTop: 4 }}>
-                {oraInizio && `Inizio: ${fmtTime(oraInizio)}`}
-                {oraInizio && oraFine && " · "}
-                {oraFine && `Fine: ${fmtTime(oraFine)}`}
-              </div>
-            )}
+            <div style={{ fontWeight: 700, fontSize: 13 }}>
+              {[foglio.VeicoloMarca, foglio.VeicoloModello, foglio.VeicoloTarga ? `(${foglio.VeicoloTarga})` : ""].filter(Boolean).join(" ") || "—"}
+            </div>
           </div>
         </div>
 
@@ -289,9 +247,9 @@ export default function StampaFoglioPage() {
               <tbody>
                 {serviziFiltrati.map((s, i) => (
                   <tr key={i}>
-                    <td>{String(s.Nome ?? s.Titolo ?? "—")}</td>
-                    <td>{String(s.Tipo ?? "—")}</td>
-                    <td style={{ textAlign: "center" }}>{String(s.Quantita ?? 1)}</td>
+                    <td>{s.Nome ?? "—"}</td>
+                    <td>{s.Tipo ?? "—"}</td>
+                    <td style={{ textAlign: "center" }}>{s.Quantita ?? 1}</td>
                   </tr>
                 ))}
               </tbody>
@@ -300,9 +258,9 @@ export default function StampaFoglioPage() {
         )}
 
         {/* Note */}
-        {note && (
+        {foglio.Note && (
           <div style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 20, fontSize: 11 }}>
-            <strong>Note:</strong> {note}
+            <strong>Note:</strong> {foglio.Note}
           </div>
         )}
 

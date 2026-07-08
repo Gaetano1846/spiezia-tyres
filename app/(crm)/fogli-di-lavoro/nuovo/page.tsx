@@ -2,22 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import {
-  collection, query, getDocs, addDoc, orderBy,
-  serverTimestamp, doc,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { nextCounter } from "@/lib/counters";
 import { ArrowLeft, Search, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-import type { Cliente, Veicolo, Sede, Pneumatico } from "@/lib/types";
+import type { SimpleEntity } from "@/lib/lookupDb";
+import type { PneumaticoFoglio } from "@/lib/fogliDb";
 
-function nomeCliente(c: Cliente): string {
-  if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale;
-  return c.Nome?.trim() || c.Ragione_Sociale || "—";
-}
+type ClienteOption = { id: string; nome: string; telefono?: string };
+type VeicoloOption = { id: string; Marca?: string; Modello?: string; Targa?: string };
 
 type PneumaticoForm = {
   Marca: string;
@@ -40,11 +34,11 @@ const emptyPneumatico = (): PneumaticoForm => ({
 export default function NuovoFoglioLavoroPage() {
   const router = useRouter();
 
-  const [sedi, setSedi] = useState<Sede[]>([]);
-  const [clienti, setClienti] = useState<Cliente[]>([]);
+  const [sedi, setSedi] = useState<SimpleEntity[]>([]);
   const [clienteSearch, setClienteSearch] = useState("");
-  const [clienteSelezionato, setClienteSelezionato] = useState<Cliente | null>(null);
-  const [veicoliCliente, setVeicoliCliente] = useState<Veicolo[]>([]);
+  const [clientiSuggeriti, setClientiSuggeriti] = useState<ClienteOption[]>([]);
+  const [clienteSelezionato, setClienteSelezionato] = useState<ClienteOption | null>(null);
+  const [veicoliCliente, setVeicoliCliente] = useState<VeicoloOption[]>([]);
 
   const [sedeId, setSedeId] = useState("");
   const [veicoloId, setVeicoloId] = useState("");
@@ -53,12 +47,10 @@ export default function NuovoFoglioLavoroPage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getDocs(collection(db, "Sede")).then((snap) => {
-      setSedi(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Sede)));
-    });
-    getDocs(query(collection(db, "Clienti"), orderBy("Nome"))).then((snap) => {
-      setClienti(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente)));
-    });
+    fetch("/api/lookup/sede")
+      .then((r) => r.json())
+      .then(({ items }) => setSedi(items ?? []))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -67,21 +59,31 @@ export default function NuovoFoglioLavoroPage() {
       setVeicoloId("");
       return;
     }
-    getDocs(collection(db, "Clienti", clienteSelezionato.id, "Veicolo")).then((snap) => {
-      setVeicoliCliente(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
-    });
+    fetch(`/api/clienti/${clienteSelezionato.id}/veicoli`)
+      .then((r) => r.json())
+      .then(({ veicoli }) => setVeicoliCliente(veicoli ?? []))
+      .catch(() => {});
   }, [clienteSelezionato]);
 
-  const clientiFiltrati = clienti
-    .filter((c) => {
-      const nome = nomeCliente(c);
-      return (
-        nome.toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Email ?? "").toLowerCase().includes(clienteSearch.toLowerCase()) ||
-        (c.Telefono ?? "").includes(clienteSearch)
-      );
-    })
-    .slice(0, 8);
+  useEffect(() => {
+    if (clienteSearch.trim().length < 1) {
+      setClientiSuggeriti([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      fetch(`/api/clienti?q=${encodeURIComponent(clienteSearch.trim())}&limit=8`)
+        .then((r) => r.json())
+        .then(({ clienti }) => {
+          setClientiSuggeriti((clienti ?? []).map((c: Record<string, unknown>) => ({
+            id: c.id as string,
+            nome: (c.Azienda && c.Ragione_Sociale) ? (c.Ragione_Sociale as string) : ((c.Nome as string)?.trim() || (c.Ragione_Sociale as string) || "—"),
+            telefono: c.Telefono as string | undefined,
+          })));
+        })
+        .catch(() => {});
+    }, 250);
+    return () => clearTimeout(t);
+  }, [clienteSearch]);
 
   function addPneumatico() {
     setPneumatici((prev) => [...prev, emptyPneumatico()]);
@@ -109,7 +111,7 @@ export default function NuovoFoglioLavoroPage() {
     }
     setSaving(true);
     try {
-      const toPneumatico = (p: PneumaticoForm): Pneumatico => ({
+      const toPneumatico = (p: PneumaticoForm): PneumaticoFoglio => ({
         Marca:    p.Marca,
         Modello:  p.Modello,
         Misura:   p.Misura,
@@ -117,34 +119,33 @@ export default function NuovoFoglioLavoroPage() {
         Quantita: p.Quantita,
       });
 
-      const montati: Pneumatico[] = pneumatici
+      const montati: PneumaticoFoglio[] = pneumatici
         .filter((p) => p.Stato === "montati")
         .map(toPneumatico);
 
-      const smontati: Pneumatico[] = pneumatici
+      const smontati: PneumaticoFoglio[] = pneumatici
         .filter((p) => p.Stato === "smontati")
         .map(toPneumatico);
 
-      // Numero progressivo per sede (atomico via transaction).
+      // Numero progressivo per sede — l'allocatore resta Firestore finché il
+      // bridge è vivo (vedi lib/counters.ts).
       const numero = await nextCounter("FoglioDiLavoro", sedeId);
 
-      const payload: Record<string, unknown> = {
-        Cliente: doc(db, "Clienti", clienteSelezionato.id),
-        Sede: doc(db, "Sede", sedeId),
-        Stato: "Aperto",
-        ID: numero,
-        Numero: numero,
-        Data_Creazione: serverTimestamp(),
-        ...(montati.length > 0 && { Pneumatici_Montati: montati }),
-        ...(smontati.length > 0 && { Pneumatici_Smontati: smontati }),
-        ...(note.trim() && { Note: note.trim() }),
-      };
+      const res = await fetch("/api/fogli-di-lavoro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clienteId: clienteSelezionato.id,
+          sedeId,
+          veicoloId: veicoloId || undefined,
+          numero,
+          pneumaticiMontati: montati,
+          pneumaticiSmontati: smontati,
+          note: note.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
 
-      if (veicoloId) {
-        payload.Veicolo = doc(db, "Clienti", clienteSelezionato.id, "Veicolo", veicoloId);
-      }
-
-      await addDoc(collection(db, "Foglio_di_Lavoro"), payload);
       toast.success("Foglio di lavoro creato");
       router.push("/fogli-di-lavoro");
     } catch (err) {
@@ -200,10 +201,10 @@ export default function NuovoFoglioLavoroPage() {
                     className="flex-1 text-sm font-semibold"
                     style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
                   >
-                    {nomeCliente(clienteSelezionato)}
-                    {clienteSelezionato.Telefono && (
+                    {clienteSelezionato.nome}
+                    {clienteSelezionato.telefono && (
                       <span className="ml-2 font-normal text-xs" style={{ color: "var(--text-muted)" }}>
-                        {clienteSelezionato.Telefono}
+                        {clienteSelezionato.telefono}
                       </span>
                     )}
                   </span>
@@ -238,12 +239,12 @@ export default function NuovoFoglioLavoroPage() {
                       className="absolute z-10 w-full mt-1 rounded-xl shadow-lg overflow-hidden"
                       style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}
                     >
-                      {clientiFiltrati.length === 0 ? (
+                      {clientiSuggeriti.length === 0 ? (
                         <div className="px-4 py-3 text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                           Nessun cliente trovato
                         </div>
                       ) : (
-                        clientiFiltrati.map((c) => (
+                        clientiSuggeriti.map((c) => (
                           <button
                             key={c.id}
                             type="button"
@@ -251,10 +252,10 @@ export default function NuovoFoglioLavoroPage() {
                             className="w-full text-left px-4 py-2.5 text-sm hover:bg-[#F1F4F8] transition-colors"
                             style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
                           >
-                            {nomeCliente(c)}
-                            {c.Telefono && (
+                            {c.nome}
+                            {c.telefono && (
                               <span className="ml-2 text-xs" style={{ color: "var(--text-muted)" }}>
-                                {c.Telefono}
+                                {c.telefono}
                               </span>
                             )}
                           </button>
