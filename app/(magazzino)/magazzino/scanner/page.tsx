@@ -1,11 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import {
-  collection, getDocs, getDoc,
-  type DocumentReference,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { searchProdotti, stockTotale, formatMisura, type ProdottoHit } from "@/lib/algolia";
 import { QrCode, Camera, Search, Car, Package, Loader2, AlertCircle, CameraOff } from "lucide-react";
 
@@ -22,7 +17,6 @@ declare global {
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import Link from "next/link";
-import type { Gabbia } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,39 +50,17 @@ const stagioneBadge: Record<string, "brand" | "neutral" | "success"> = {
 
 /** Cerca nelle gabbie quelle che contengono il prodotto con l'ID specificato (Algolia objectID). */
 async function cercaInMagazzino(prodottoId: string): Promise<GabbiaMatch[]> {
-  const snap = await getDocs(collection(db, "Magazzino"));
-  const matches: GabbiaMatch[] = [];
-
-  const sedeRefs = new Map<string, DocumentReference>();
-  const gabbie: (Gabbia & { id: string })[] = snap.docs.map((d) => {
-    const g = { id: d.id, ...d.data() } as Gabbia & { id: string };
-    if (g.Sede) sedeRefs.set((g.Sede as DocumentReference).path, g.Sede as DocumentReference);
-    return g;
-  });
-
-  // resolve sedi
-  const sedeMap = new Map<string, string>();
-  await Promise.all(
-    [...sedeRefs.values()].map(async (ref) => {
-      const s = await getDoc(ref);
-      if (s.exists()) sedeMap.set(ref.path, String(s.data().Nome ?? "—"));
-    }),
-  );
-
-  for (const g of gabbie) {
-    for (const lotto of g.Prodotti ?? []) {
-      if (lotto.Prodotto_Ref?.id === prodottoId) {
-        matches.push({
-          gabbiaId: g.id,
-          posizione: g.ID ?? "—",
-          sedeName: g.Sede ? (sedeMap.get((g.Sede as DocumentReference).path) ?? "—") : "—",
-          quantita: lotto.Quantita ?? 0,
-        });
-      }
-    }
-  }
-
-  return matches;
+  const res = await fetch(`/api/magazzino/cerca?prodottoId=${encodeURIComponent(prodottoId)}`);
+  if (!res.ok) return [];
+  const { gabbie } = (await res.json()) as {
+    gabbie: Array<{ GabbiaId: string; Codice: string; SedeNome: string; Quantita: number }>;
+  };
+  return gabbie.map((g) => ({
+    gabbiaId: g.GabbiaId,
+    posizione: g.Codice,
+    sedeName: g.SedeNome,
+    quantita: g.Quantita,
+  }));
 }
 
 // ---------------------------------------------------------------------------

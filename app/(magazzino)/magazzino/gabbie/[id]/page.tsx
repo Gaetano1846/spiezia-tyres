@@ -2,21 +2,16 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
-import {
-  doc, getDoc, updateDoc, arrayRemove,
-  type DocumentReference,
-} from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Package, ChevronRight, Plus, Trash2, QrCode, Search, X, Loader2 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import toast from "react-hot-toast";
-import type { Gabbia, LottoMagazzino } from "@/lib/types";
+import type { GabbiaApi, LottoApi } from "@/lib/magazzinoDb";
 import { searchProdotti, type ProdottoHit } from "@/lib/algolia";
 
-type GabbiaUI = Gabbia & { sedeName: string };
-
-function PosCoord({ label, value }: { label: string; value?: number }) {
+function PosCoord({ label, value }: { label: string; value?: number | null }) {
   return (
     <div
       className="flex flex-col items-center justify-center rounded-xl px-4 py-3"
@@ -36,7 +31,7 @@ export default function GabbiaPage() {
   const params = useParams();
   const id = params.id as string;
 
-  const [gabbia, setGabbia] = useState<GabbiaUI | null>(null);
+  const [gabbia, setGabbia] = useState<GabbiaApi | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -51,31 +46,11 @@ export default function GabbiaPage() {
   const [generatingQR, setGeneratingQR] = useState(false);
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [prodottiCache, setProdottiCache] = useState<Record<string, {
-    Marca: string; Modello: string; misura: string; Stagione?: string; stockSede: number;
-  }>>({});
-
-  function stockFieldForSede(sedeName: string): string {
-    const n = sedeName.toLowerCase();
-    if (n.includes("nola 2") || n.includes("nola2")) return "Stock_Nola_2";
-    if (n.includes("nola")) return "Stock_Nola";
-    if (n.includes("volla")) return "Stock_Volla";
-    if (n.includes("roma")) return "Stock_Roma";
-    if (n.includes("portici")) return "Stock_Portici";
-    if (n.includes("ocp")) return "Stock_OCP";
-    return "Stock_Nola";
-  }
-
   async function reload() {
-    const snap = await getDoc(doc(db, "Magazzino", id));
-    if (!snap.exists()) return;
-    const data = { id: snap.id, ...snap.data() } as Gabbia;
-    let sedeName = "—";
-    if (data.Sede) {
-      const sedeSnap = await getDoc(data.Sede as DocumentReference);
-      if (sedeSnap.exists()) sedeName = (sedeSnap.data().Nome as string) ?? "—";
-    }
-    setGabbia({ ...data, sedeName });
+    const res = await fetch(`/api/magazzino/${id}`);
+    if (!res.ok) throw new Error(String(res.status));
+    const { gabbia: g } = await res.json();
+    setGabbia(g);
   }
 
   useEffect(() => {
@@ -95,35 +70,7 @@ export default function GabbiaPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Risolve i Prodotto_Ref quando cambia la gabbia
-  useEffect(() => {
-    if (!gabbia?.Prodotti?.length) { setProdottiCache({}); return; }
-    const uniqueRefs = [
-      ...new Map(
-        gabbia.Prodotti.filter((l) => l.Prodotto_Ref).map((l) => [l.Prodotto_Ref.id, l.Prodotto_Ref])
-      ).values(),
-    ] as DocumentReference[];
-    const field = stockFieldForSede(gabbia.sedeName);
-    Promise.all(uniqueRefs.map((ref) => getDoc(ref))).then((snaps) => {
-      const cache: typeof prodottiCache = {};
-      for (const snap of snaps) {
-        if (snap.exists()) {
-          const d = snap.data() as Record<string, unknown>;
-          cache[snap.id] = {
-            Marca: (d.Marca as string) ?? "?",
-            Modello: (d.Modello as string) ?? "?",
-            misura: `${d.Larghezza ?? "?"}/${d.Altezza ?? "?"} R${d.Diametro ?? "?"}`,
-            Stagione: d.Stagione as string | undefined,
-            stockSede: ((d[field] as number) ?? 0),
-          };
-        }
-      }
-      setProdottiCache(cache);
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gabbia]);
-
-  // Algolia search con debounce
+  // Algolia/Meili search con debounce (catalogo prodotti, già su Postgres — Fase 2)
   useEffect(() => {
     if (!showModal) return;
     if (debRef.current) clearTimeout(debRef.current);
@@ -154,35 +101,12 @@ export default function GabbiaPage() {
     if (!selected || !gabbia) return;
     setAdding(true);
     try {
-      const gabbiaRef = doc(db, "Magazzino", id);
-      const prodottoRef = doc(db, "Prodotti", selected.objectID);
-
-      // Leggi stato attuale per gestire merge/incremento quantità
-      const snap = await getDoc(gabbiaRef);
-      const data = snap.data() as Record<string, unknown>;
-      const prodotti: Array<Record<string, unknown>> = ((data.Prodotti as unknown[]) ?? []).map((p) => p as Record<string, unknown>);
-
-      // Trova se il prodotto è già presente
-      const existingIdx = prodotti.findIndex((p) => {
-        const ref = p.Prodotto_Ref as DocumentReference | undefined;
-        return ref?.id === selected.objectID;
+      const res = await fetch(`/api/magazzino/${id}/prodotti`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prodottoId: selected.objectID, quantita: qty }),
       });
-
-      if (existingIdx !== -1) {
-        // Incrementa quantità esistente
-        prodotti[existingIdx] = {
-          ...prodotti[existingIdx],
-          Quantita: ((prodotti[existingIdx].Quantita as number) ?? 0) + qty,
-        };
-        await updateDoc(gabbiaRef, { Prodotti: prodotti });
-      } else {
-        // Nuovo lotto: arrayUnion su entrambi
-        const { arrayUnion } = await import("firebase/firestore");
-        await updateDoc(gabbiaRef, {
-          Prodotti: arrayUnion({ Quantita: qty, Prodotto_Ref: prodottoRef }),
-          Pneumatici_IN: arrayUnion(prodottoRef),
-        });
-      }
+      if (!res.ok) throw new Error(String(res.status));
 
       toast.success(`${qty} × ${selected.Marca} ${selected.Modello} aggiunti`);
       setShowModal(false);
@@ -195,36 +119,11 @@ export default function GabbiaPage() {
     }
   }
 
-  async function handleRemove(lotto: LottoMagazzino) {
-    if (!gabbia) return;
-    const gabbiaRef = doc(db, "Magazzino", id);
+  async function handleRemove(lotto: LottoApi) {
+    if (!gabbia || !lotto.ProdottoId) return;
     try {
-      const snap = await getDoc(gabbiaRef);
-      const data = snap.data() as Record<string, unknown>;
-      const prodotti: Array<Record<string, unknown>> = ((data.Prodotti as unknown[]) ?? []).map((p) => p as Record<string, unknown>);
-
-      const idx = prodotti.findIndex((p) => {
-        const ref = p.Prodotto_Ref as DocumentReference | undefined;
-        return ref?.id === lotto.Prodotto_Ref?.id;
-      });
-
-      if (idx === -1) return;
-
-      const updatedProdotti = [...prodotti];
-      updatedProdotti.splice(idx, 1);
-
-      const updates: Record<string, unknown> = { Prodotti: updatedProdotti };
-
-      // Se era l'ultimo lotto di questo prodotto, rimuovi anche da Pneumatici_IN
-      const hasOther = updatedProdotti.some((p) => {
-        const ref = p.Prodotto_Ref as DocumentReference | undefined;
-        return ref?.id === lotto.Prodotto_Ref?.id;
-      });
-      if (!hasOther && lotto.Prodotto_Ref) {
-        updates.Pneumatici_IN = arrayRemove(lotto.Prodotto_Ref);
-      }
-
-      await updateDoc(gabbiaRef, updates);
+      const res = await fetch(`/api/magazzino/${id}/prodotti/${lotto.ProdottoId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(String(res.status));
       toast.success("Pneumatico rimosso");
       await reload();
     } catch (err) {
@@ -238,8 +137,8 @@ export default function GabbiaPage() {
 
     // Se il QR è già stato generato, aprilo direttamente (come nel vecchio
     // progetto FlutterFlow: launchURL del campo QR_code).
-    if (gabbia.QR_code) {
-      window.open(gabbia.QR_code, "_blank", "noopener");
+    if (gabbia.QrCode) {
+      window.open(gabbia.QrCode, "_blank", "noopener");
       return;
     }
 
@@ -249,7 +148,10 @@ export default function GabbiaPage() {
       // Payload identico al vecchio GeneraQRCall: la Cloud Function vuole
       // ESATTAMENTE { link, id }. Il link è la pagina della gabbia da aprire
       // scansionando il QR; la CF genera l'immagine e scrive l'URL nel campo
-      // Magazzino/<id>.QR_code (NON restituisce un PNG nel body).
+      // Magazzino/<id>.QR_code direttamente su Firestore (NON restituisce un
+      // PNG nel body) — resta l'unica lettura Firestore diretta di questa
+      // pagina: legge un valore appena scritto da un sistema esterno alla
+      // nostra API, il bridge lo sincronizzerà su Postgres in autonomia.
       const link = `https://newb2b.spieziatyres.it/Gabbia?gabbiaRef=${id}`;
       const res = await fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/GenerateQR", {
         method: "POST",
@@ -258,12 +160,11 @@ export default function GabbiaPage() {
       });
       if (!res.ok) throw new Error(`CF ${res.status}`);
 
-      // Rileggi il documento: la CF ha scritto l'URL del QR su QR_code.
       const snap = await getDoc(doc(db, "Magazzino", id));
       const qrUrl = (snap.data()?.QR_code as string | undefined) ?? "";
-      await reload();
       toast.dismiss(toastId);
       if (qrUrl) {
+        setGabbia((g) => (g ? { ...g, QrCode: qrUrl } : g));
         window.open(qrUrl, "_blank", "noopener");
         toast.success("QR generato");
       } else {
@@ -305,9 +206,8 @@ export default function GabbiaPage() {
     );
   }
 
-  const prodotti = gabbia.Prodotti ?? [];
-  const pzTotali = prodotti.reduce((sum, l) => sum + (l.Quantita ?? 0), 0);
-  const pneumaticiIN = gabbia.Pneumatici_IN ?? [];
+  const prodotti = gabbia.Prodotti;
+  const pneumaticiIN = gabbia.PneumaticiIn;
 
   return (
     <div className="px-4 md:px-5 py-5 space-y-6">
@@ -443,7 +343,7 @@ export default function GabbiaPage() {
         >
           <a href="/magazzino" style={{ color: "#6b7280" }}>Magazzino</a>
           <ChevronRight size={12} />
-          <span style={{ color: "#111", fontWeight: 600 }}>Gabbia {gabbia.ID || gabbia.id}</span>
+          <span style={{ color: "#111", fontWeight: 600 }}>Gabbia {gabbia.Codice || gabbia.id}</span>
         </nav>
 
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -451,11 +351,11 @@ export default function GabbiaPage() {
             <div className="flex items-center gap-2">
               <QrCode size={20} style={{ color: "#FFC803" }} />
               <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
-                Gabbia {gabbia.ID || gabbia.id}
+                Gabbia {gabbia.Codice || gabbia.id}
               </h1>
             </div>
             <p className="text-sm mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-              {gabbia.sedeName}
+              {gabbia.SedeNome}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -484,7 +384,7 @@ export default function GabbiaPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
           label="Pezzi stoccati"
-          value={pzTotali}
+          value={gabbia.PzTotali}
           sub="quantità totale"
           icon={<Package size={22} />}
           accent="#FFC803"
@@ -556,55 +456,51 @@ export default function GabbiaPage() {
               <span>Qtà</span>
             </div>
 
-            {prodotti.map((lotto, i) => {
-              const pid = lotto.Prodotto_Ref?.id;
-              const info = pid ? prodottiCache[pid] : undefined;
-              return (
-                <div
-                  key={i}
-                  className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors gap-3 flex-wrap"
-                  style={{ background: i % 2 === 0 ? "#f9fafb" : "#fff" }}
-                >
-                  {/* Prodotto */}
-                  <div className="flex-1 min-w-0" style={{ minWidth: 0 }}>
-                    {info ? (
-                      <>
-                        <p className="text-sm font-bold truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
-                          {info.Marca} {info.Modello}
-                        </p>
-                        <p className="text-xs mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-                          {info.misura}{info.Stagione ? ` · ${info.Stagione}` : ""}
-                          {" · "}
-                          <span style={{ color: info.stockSede > 0 ? "#059669" : "#dc2626" }}>
-                            stock sede: {info.stockSede}
-                          </span>
-                        </p>
-                      </>
-                    ) : (
-                      <span className="font-mono text-xs animate-pulse" style={{ color: "#9ca3af" }}>
-                        {pid ?? "—"}
-                      </span>
-                    )}
-                  </div>
-                  {/* Quantità + Rimuovi */}
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <span
-                      className="text-sm font-bold whitespace-nowrap"
-                      style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}
-                    >
-                      {lotto.Quantita ?? 0} pz
+            {prodotti.map((lotto, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-[#FFFDF0] transition-colors gap-3 flex-wrap"
+                style={{ background: i % 2 === 0 ? "#f9fafb" : "#fff" }}
+              >
+                {/* Prodotto */}
+                <div className="flex-1 min-w-0" style={{ minWidth: 0 }}>
+                  {lotto.Marca || lotto.Modello ? (
+                    <>
+                      <p className="text-sm font-bold truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
+                        {lotto.Marca} {lotto.Modello}
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                        {lotto.Misura}{lotto.Stagione ? ` · ${lotto.Stagione}` : ""}
+                        {" · "}
+                        <span style={{ color: (lotto.StockSede ?? 0) > 0 ? "#059669" : "#dc2626" }}>
+                          stock sede: {lotto.StockSede ?? 0}
+                        </span>
+                      </p>
+                    </>
+                  ) : (
+                    <span className="font-mono text-xs" style={{ color: "#9ca3af" }}>
+                      {lotto.ProdottoId || "—"}
                     </span>
-                    <button
-                      onClick={() => handleRemove(lotto)}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors hover:bg-red-100 whitespace-nowrap"
-                      style={{ background: "#FEE2E2", color: "#991B1B", border: "1px solid #FECACA" }}
-                    >
-                      <Trash2 size={11} /> Rimuovi
-                    </button>
-                  </div>
+                  )}
                 </div>
-              );
-            })}
+                {/* Quantità + Rimuovi */}
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <span
+                    className="text-sm font-bold whitespace-nowrap"
+                    style={{ color: "#374151", fontFamily: "var(--font-montserrat)" }}
+                  >
+                    {lotto.Quantita ?? 0} pz
+                  </span>
+                  <button
+                    onClick={() => handleRemove(lotto)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors hover:bg-red-100 whitespace-nowrap"
+                    style={{ background: "#FEE2E2", color: "#991B1B", border: "1px solid #FECACA" }}
+                  >
+                    <Trash2 size={11} /> Rimuovi
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </Card>
@@ -619,7 +515,7 @@ export default function GabbiaPage() {
             Riferimenti diretti
           </h2>
           <div className="space-y-1.5">
-            {pneumaticiIN.map((ref, i) => (
+            {pneumaticiIN.map((prodottoId, i) => (
               <div
                 key={i}
                 className="flex items-center px-3 py-2 rounded-xl text-sm"
@@ -627,7 +523,7 @@ export default function GabbiaPage() {
               >
                 <Package size={13} style={{ color: "#9ca3af", marginRight: 8 }} />
                 <span className="font-mono text-xs" style={{ color: "#374151" }}>
-                  {ref.id}
+                  {prodottoId}
                 </span>
               </div>
             ))}

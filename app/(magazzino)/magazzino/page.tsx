@@ -1,30 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { collection, getDocs, getDoc, query, orderBy, addDoc, doc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Package, Plus, ChevronDown, ChevronUp, QrCode, X } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
-import type { Gabbia, LottoMagazzino } from "@/lib/types";
-import type { DocumentReference } from "firebase/firestore";
+import type { GabbiaApi } from "@/lib/magazzinoDb";
+import type { SimpleEntity } from "@/lib/lookupDb";
 
-type GabbiaUI = Gabbia & {
-  sedeName: string;
-  pzTotali: number;
-};
-
-async function resolveSede(ref: DocumentReference | undefined): Promise<string> {
-  if (!ref) return "—";
-  try {
-    const snap = await getDoc(ref);
-    return snap.exists() ? ((snap.data()?.Nome as string) ?? "—") : "—";
-  } catch {
-    return "—";
-  }
-}
-
-function PosCoord({ label, value }: { label: string; value?: number }) {
+function PosCoord({ label, value }: { label: string; value?: number | null }) {
   return (
     <div
       className="flex flex-col items-center justify-center rounded-lg px-2 py-1"
@@ -40,9 +23,9 @@ function PosCoord({ label, value }: { label: string; value?: number }) {
   );
 }
 
-function GabbiaCard({ g }: { g: GabbiaUI }) {
+function GabbiaCard({ g }: { g: GabbiaApi }) {
   const [expanded, setExpanded] = useState(false);
-  const vuota = g.pzTotali === 0;
+  const vuota = g.PzTotali === 0;
 
   return (
     <div
@@ -60,7 +43,7 @@ function GabbiaCard({ g }: { g: GabbiaUI }) {
             className="font-black text-sm"
             style={{ color: vuota ? "#374151" : "#111", fontFamily: "var(--font-poppins)" }}
           >
-            {g.ID || g.id}
+            {g.Codice || g.id}
           </span>
         </div>
         <span
@@ -71,7 +54,7 @@ function GabbiaCard({ g }: { g: GabbiaUI }) {
             fontFamily: "var(--font-montserrat)",
           }}
         >
-          {g.sedeName}
+          {g.SedeNome}
         </span>
       </div>
 
@@ -92,14 +75,14 @@ function GabbiaCard({ g }: { g: GabbiaUI }) {
               className="text-sm font-black"
               style={{ color: vuota ? "#9ca3af" : "#111", fontFamily: "var(--font-poppins)" }}
             >
-              {g.pzTotali}
+              {g.PzTotali}
             </span>
             <span className="text-[10px]" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>pz</span>
           </div>
         </div>
 
         {/* Lista prodotti espandibile */}
-        {(g.Prodotti?.length ?? 0) > 0 && (
+        {g.Prodotti.length > 0 && (
           <>
             <button
               onClick={(e) => { e.preventDefault(); setExpanded((v) => !v); }}
@@ -107,19 +90,19 @@ function GabbiaCard({ g }: { g: GabbiaUI }) {
               style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}
             >
               {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-              Lista Pneumatici ({g.Prodotti!.length})
+              Lista Pneumatici ({g.Prodotti.length})
             </button>
 
             {expanded && (
               <div className="mt-2 space-y-1">
-                {g.Prodotti!.map((lotto, i) => (
+                {g.Prodotti.map((lotto, i) => (
                   <div
                     key={i}
                     className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs"
                     style={{ background: "#f9fafb", fontFamily: "var(--font-montserrat)" }}
                   >
                     <span style={{ color: "#374151" }} className="truncate flex-1">
-                      {lotto.Prodotto_Ref?.id ?? "—"}
+                      {lotto.Marca || lotto.Modello ? `${lotto.Marca ?? ""} ${lotto.Modello ?? ""}`.trim() : (lotto.ProdottoId || "—")}
                     </span>
                     <span
                       className="font-bold ml-2 px-2 py-0.5 rounded-full"
@@ -160,42 +143,31 @@ function GabbiaCard({ g }: { g: GabbiaUI }) {
 type NuovaGabbiaForm = { id: string; x: string; y: string; z: string; sede: string };
 
 export default function MagazzinoPage() {
-  const [gabbie, setGabbie] = useState<GabbiaUI[]>([]);
+  const [gabbie, setGabbie] = useState<GabbiaApi[]>([]);
   const [loading, setLoading] = useState(true);
   const [sedi, setSedi] = useState<string[]>([]);
   const [sedeFilter, setSedeFilter] = useState("Tutte");
   const [showModal, setShowModal] = useState(false);
   const [nuova, setNuova] = useState<NuovaGabbiaForm>({ id: "", x: "0", y: "0", z: "0", sede: "" });
-  const [sedeOptions, setSedeOptions] = useState<{ id: string; nome: string }[]>([]);
+  const [sedeOptions, setSedeOptions] = useState<SimpleEntity[]>([]);
   const [saving, setSaving] = useState(false);
+
+  async function loadGabbie() {
+    const res = await fetch("/api/magazzino");
+    if (!res.ok) throw new Error(String(res.status));
+    const { gabbie: list } = await res.json();
+    setGabbie(list);
+    const sediUniche = [...new Set((list as GabbiaApi[]).map((g) => g.SedeNome).filter((s) => s !== "—"))];
+    setSedi(sediUniche.sort());
+  }
 
   useEffect(() => {
     async function load() {
       try {
-        const snap = await getDocs(query(collection(db, "Magazzino"), orderBy("ID")));
-        const raw = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Gabbia));
-
-        // Risolvi le sedi in parallelo
-        const sedeNames = await Promise.all(raw.map((g) => resolveSede(g.Sede)));
-
-        const result: GabbiaUI[] = raw.map((g, i) => {
-          const pzTotali =
-            g.Prodotti?.reduce((sum, l) => sum + (l.Quantita ?? 0), 0) ??
-            (g.Pneumatici_IN?.length ?? 0);
-          return { ...g, sedeName: sedeNames[i], pzTotali };
-        });
-
-        setGabbie(result);
-        const sediUniche = [...new Set(result.map((g) => g.sedeName).filter((s) => s !== "—"))];
-        setSedi(sediUniche.sort());
-
-        // Opzioni Sede (id + nome) per il selettore della nuova gabbia
-        const sedeSnap = await getDocs(collection(db, "Sede"));
-        setSedeOptions(
-          sedeSnap.docs
-            .map((s) => ({ id: s.id, nome: (s.data().Nome as string) ?? s.id }))
-            .sort((a, b) => a.nome.localeCompare(b.nome))
-        );
+        await loadGabbie();
+        const sedeRes = await fetch("/api/lookup/sede");
+        const { items } = await sedeRes.json();
+        setSedeOptions(items ?? []);
       } catch (err) {
         console.error(err);
         toast.error("Errore nel caricamento del magazzino");
@@ -212,26 +184,24 @@ export default function MagazzinoPage() {
     if (!nuova.sede) { toast.error("Seleziona la sede della gabbia"); return; }
     setSaving(true);
     try {
-      await addDoc(collection(db, "Magazzino"), {
-        ID: nuova.id.trim().toUpperCase(),
-        X: parseInt(nuova.x) || 0,
-        Y: parseInt(nuova.y) || 0,
-        Z: parseInt(nuova.z) || 0,
-        Sede: doc(db, "Sede", nuova.sede),
-        Prodotti: [],
+      const res = await fetch("/api/magazzino", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codice: nuova.id.trim().toUpperCase(),
+          x: parseInt(nuova.x) || 0,
+          y: parseInt(nuova.y) || 0,
+          z: parseInt(nuova.z) || 0,
+          sedeId: nuova.sede,
+        }),
       });
+      if (!res.ok) throw new Error(String(res.status));
+
       toast.success(`Gabbia ${nuova.id.toUpperCase()} creata`);
       setShowModal(false);
       setNuova({ id: "", x: "0", y: "0", z: "0", sede: "" });
-      // Reload
       setLoading(true);
-      const snap = await getDocs(query(collection(db, "Magazzino"), orderBy("ID")));
-      const raw = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Gabbia));
-      const sedeNames = await Promise.all(raw.map((g) => resolveSede(g.Sede)));
-      setGabbie(raw.map((g, i) => ({
-        ...g, sedeName: sedeNames[i],
-        pzTotali: g.Prodotti?.reduce((s, l) => s + (l.Quantita ?? 0), 0) ?? 0,
-      })));
+      await loadGabbie();
     } catch (err) {
       console.error(err);
       toast.error("Errore nella creazione");
@@ -241,9 +211,9 @@ export default function MagazzinoPage() {
     }
   }
 
-  const filtered = sedeFilter === "Tutte" ? gabbie : gabbie.filter((g) => g.sedeName === sedeFilter);
-  const totalePneumatici = gabbie.reduce((s, g) => s + g.pzTotali, 0);
-  const gabbieVuote = gabbie.filter((g) => g.pzTotali === 0).length;
+  const filtered = sedeFilter === "Tutte" ? gabbie : gabbie.filter((g) => g.SedeNome === sedeFilter);
+  const totalePneumatici = gabbie.reduce((s, g) => s + g.PzTotali, 0);
+  const gabbieVuote = gabbie.filter((g) => g.PzTotali === 0).length;
 
   return (
     <div className="px-4 md:px-5 py-4 sm:py-5 space-y-4 sm:space-y-6">
@@ -359,7 +329,7 @@ export default function MagazzinoPage() {
                 >
                   <option value="">Seleziona sede…</option>
                   {sedeOptions.map((s) => (
-                    <option key={s.id} value={s.id}>{s.nome}</option>
+                    <option key={s.id} value={s.id}>{s.Nome}</option>
                   ))}
                 </select>
               </div>
