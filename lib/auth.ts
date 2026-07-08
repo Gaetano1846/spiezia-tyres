@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, createHmac } from "node:crypto";
 import type { SessionPayload, Ruolo } from "@/lib/types";
 
 const SESSION_COOKIE = "spiezia_session";
@@ -91,6 +91,17 @@ export function verifyInternalSecret(req: Request): boolean {
   if (!expected) return false;
   const provided = req.headers.get("x-internal-secret") ?? "";
   const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/** Verifica la firma HMAC-SHA256 di un webhook WooCommerce (header X-WC-Webhook-Signature, base64 di hash_hmac('sha256', $payload, $secret, true)). Richiede il body raw (pre-JSON.parse). */
+export function verifyWooWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const secret = process.env.WC_WEBHOOK_SECRET;
+  if (!secret || !signatureHeader) return false;
+  const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
+  const a = Buffer.from(signatureHeader);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
