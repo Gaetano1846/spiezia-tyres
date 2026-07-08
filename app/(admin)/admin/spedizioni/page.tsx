@@ -1,22 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  getDoc,
-  getDocs,
-  doc,
-  updateDoc,
-  where,
-  limit,
-  getCountFromServer,
-  Timestamp,
-  type DocumentReference,
-  type QueryConstraint,
-} from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import { Truck, Search, Printer, Eye, RefreshCw, X, ChevronDown, SlidersHorizontal, CalendarDays, Trash2, MapPin, Send, Share2 } from "lucide-react";
@@ -25,32 +10,8 @@ import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import HeaderFilter from "@/components/ui/HeaderFilter";
 import toast from "react-hot-toast";
-
-// ---------------------------------------------------------------------------
-// Types (matching actual Firestore schema from Flutter app)
-// ---------------------------------------------------------------------------
-
-type SpedizioneFS = {
-  id: string;
-  parcelId?: string;           // GLS shipment ID
-  orderId?: string;            // Order number string
-  orderReference?: DocumentReference;
-  destinationName?: string;    // Customer name (already a string)
-  createdAt?: Timestamp;
-  Source?: string;             // "B2B"|"eBay"|"Amazon"|"Tyre24"|"WooCommerce"|"Prezzo-Gomme"|"Anonimo"|"AdTyres"
-  Corriere?: string;           // "GLS" | "SDA"
-  contractIndex?: number;      // 0 = GLS Nola, 1 = GLS Roma
-  Warehouse?: DocumentReference;
-  status?: string;             // "created" | "closed" | "deleted"
-  warehouseStatus?: string;    // "In Preparazione" | "Annullato" | "Spedito"
-  motivoAnnullamento?: string;
-  noteAggiuntive?: string;
-};
-
-type SpedizioneRow = SpedizioneFS & {
-  sedeLabel: string;
-  magazzinoLabel: string;
-};
+import type { SpedizioneApi } from "@/lib/spedizioniDb";
+import type { SimpleEntity } from "@/lib/lookupDb";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -86,17 +47,13 @@ const STATO_MAG_COLORS: Record<string, { bg: string; color: string }> = {
   Spedito:           { bg: "#D1FAE5", color: "#065F46" },
 };
 
-// Tetto di sicurezza per la query lista (per intervallo date). Le righe oltre
-// questo limite non vengono caricate; l'UI lo segnala.
-const LIST_LIMIT = 2000;
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatDateTime(ts?: Timestamp): string {
-  if (!ts) return "—";
-  return ts.toDate().toLocaleString("it-IT", {
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("it-IT", {
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
@@ -107,9 +64,9 @@ function todayStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function isToday(ts?: Timestamp): boolean {
-  if (!ts) return false;
-  const d = ts.toDate();
+function isToday(iso: string | null): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
   const now = new Date();
   return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
 }
@@ -120,11 +77,10 @@ function formatISOToDisplay(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
-// Filtro per intervallo [dataDa 00:00 → dataA 23:59]. Lenient: se manca la data, non nasconde.
-function inDateRange(ts: Timestamp | undefined, dataDa: string, dataA: string): boolean {
-  if (!ts?.toDate) return true;
-  const t = ts.toDate().getTime();
-  return t >= new Date(dataDa + "T00:00:00").getTime() && t <= new Date(dataA + "T23:59:59.999").getTime();
+function sedeGlsLabel(contractIndex: number | null): string {
+  if (contractIndex === 0) return "GLS Nola";
+  if (contractIndex === 1) return "GLS Roma";
+  return "—";
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +138,7 @@ function DateRangeField({
 
 export default function SpedizioniPage() {
   const router = useRouter();
-  const [rows, setRows]       = useState<SpedizioneRow[]>([]);
+  const [rows, setRows]       = useState<SpedizioneApi[]>([]);
   const [capped, setCapped]   = useState(false); // true se la query ha toccato il limite
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -213,7 +169,7 @@ export default function SpedizioniPage() {
   const [statoMag,  setStatoMag]  = useState("");
 
   // Azioni bulk
-  const [sediOptions, setSediOptions] = useState<{ id: string; nome: string }[]>([]);
+  const [sediOptions, setSediOptions] = useState<SimpleEntity[]>([]);
   const [showSedeModal, setShowSedeModal] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -224,108 +180,49 @@ export default function SpedizioniPage() {
   );
   const [kpiTick, setKpiTick] = useState(0);
 
-  // ── Real-time listener (filtro data lato server, come nel FlutterFlow) ──────
-  // La query carica SOLO l'intervallo date selezionato, ordinato per createdAt
-  // desc, con un tetto di sicurezza (LIST_LIMIT). Usa solo il campo createdAt
-  // (range + orderBy) → indice a campo singolo, nessun indice composto richiesto.
-  // I filtri Fonte/Corriere/Magazzino/Stati + ricerca restano client-side su
-  // questo insieme ridotto (poche centinaia di righe): istantanei, zero indici.
+  // ── Lista (filtro data lato server) ─────────────────────────────────────
+  // La query carica SOLO l'intervallo date selezionato, ordinato per created_at
+  // desc, con un tetto di sicurezza (LIST_LIMIT lato API). I filtri Fonte/
+  // Corriere/Magazzino/Stati + ricerca restano client-side su questo insieme
+  // ridotto (poche centinaia di righe): istantanei, zero query aggiuntive.
   useEffect(() => {
     setLoading(true);
-    const startTs = Timestamp.fromDate(new Date(dataDa + "T00:00:00"));
-    const endTs   = Timestamp.fromDate(new Date(dataA + "T23:59:59.999"));
-    const q = query(
-      collection(db, "Spedizioni"),
-      where("createdAt", ">=", startTs),
-      where("createdAt", "<=", endTs),
-      orderBy("createdAt", "desc"),
-      limit(LIST_LIMIT),
-    );
-    const unsub = onSnapshot(
-      q,
-      async (snap) => {
-        const docs: SpedizioneFS[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<SpedizioneFS, "id">),
-        }));
-        setCapped(snap.size >= LIST_LIMIT);
-
-        // Resolve Warehouse refs in batch
-        const wareRefs = [...new Map(
-          docs.filter((d) => d.Warehouse).map((d) => [d.Warehouse!.path, d.Warehouse!])
-        ).values()];
-        const wareSnaps = await Promise.all(wareRefs.map((r) => getDoc(r)));
-        const wareMap = new Map<string, string>();
-        for (const s of wareSnaps) {
-          if (s.exists()) {
-            const data = s.data() as Record<string, unknown>;
-            wareMap.set(s.ref.path, (data.Nome as string) ?? (data.name as string) ?? s.id);
-          }
-        }
-
-        setRows(
-          docs.map((d) => ({
-            ...d,
-            sedeLabel:
-              d.contractIndex === 0 ? "GLS Nola" :
-              d.contractIndex === 1 ? "GLS Roma" : "—",
-            magazzinoLabel:
-              d.Warehouse ? (wareMap.get(d.Warehouse.path) ?? d.Warehouse.id) : "—",
-          }))
-        );
-        setLoading(false);
-      },
-      (err) => {
+    fetch(`/api/spedizioni?da=${dataDa}&a=${dataA}`)
+      .then((r) => r.json())
+      .then(({ spedizioni, capped: isCapped }) => {
+        setRows(spedizioni ?? []);
+        setCapped(!!isCapped);
+      })
+      .catch((err) => {
         console.error(err);
         toast.error("Errore nel caricamento spedizioni");
-        setLoading(false);
-      }
-    );
-    return () => unsub();
+      })
+      .finally(() => setLoading(false));
   }, [dataDa, dataA]);
 
-  // ── KPI via count aggregate (server-side, niente download dei documenti) ────
-  // Da spedire / In transito / Anomalie = count a campo singolo (nessun indice
-  // composto). "Consegnate oggi" è calcolato client-side dalle righe caricate.
+  // ── KPI (count aggregate lato server) ───────────────────────────────────
   useEffect(() => {
-    const col = collection(db, "Spedizioni");
-    const safeCount = async (...cs: QueryConstraint[]): Promise<number | null> => {
-      try { const s = await getCountFromServer(query(col, ...cs)); return s.data().count; }
-      catch (e) { console.error("KPI count error:", e); return null; }
-    };
     let cancelled = false;
-    (async () => {
-      const [daSpedire, inTransito, anomalie] = await Promise.all([
-        // "Da spedire" = created + In Preparazione (2 condizioni → indice composto).
-        // Se l'indice non esiste, safeCount ritorna null e la card mostra "—"
-        // (il console error di Firestore include il link per crearlo con 1 click).
-        safeCount(where("status", "==", "created"), where("warehouseStatus", "==", "In Preparazione")),
-        safeCount(where("status", "==", "closed")),
-        safeCount(where("warehouseStatus", "==", "Annullato")),
-      ]);
-      if (!cancelled) setKpi({ daSpedire, inTransito, anomalie });
-    })();
+    fetch("/api/spedizioni/kpi")
+      .then((r) => r.json())
+      .then(({ kpi: k }) => { if (!cancelled) setKpi(k ?? { daSpedire: null, inTransito: null, anomalie: null }); })
+      .catch((e) => console.error("KPI error:", e));
     return () => { cancelled = true; };
   }, [kpiTick]);
 
   // Opzioni Sede magazzino (Nola, Nola 2, Volla, Roma, Portici) per il modal
-  // "Imposta Sede Magazzino". Il campo Spedizioni.Warehouse è un ref a Sede.
+  // "Imposta Sede Magazzino".
   useEffect(() => {
-    getDocs(collection(db, "Sede"))
-      .then((snap) => {
-        setSediOptions(
-          snap.docs
-            .map((d) => ({ id: d.id, nome: String((d.data() as { Nome?: string }).Nome ?? d.id) }))
-            .sort((a, b) => a.nome.localeCompare(b.nome))
-        );
-      })
+    fetch("/api/lookup/sede")
+      .then((r) => r.json())
+      .then(({ items }) => setSediOptions(items ?? []))
       .catch(() => {});
   }, []);
 
   // ── Stats: "In transito"/"Anomalie"/"Da spedire" da count aggregate server;
   //    "Consegnate oggi" calcolato dalle righe caricate (chiuse in data odierna).
   const stats = useMemo(() => {
-    const consegnateOggi = rows.filter((d) => d.status === "closed" && isToday(d.createdAt)).length;
+    const consegnateOggi = rows.filter((d) => d.Status === "closed" && isToday(d.CreatedAt)).length;
     return [
       { label: "Da spedire",      value: kpi.daSpedire ?? "—",  sub: "in attesa",     accent: "#FFC803" },
       { label: "In transito",     value: kpi.inTransito ?? "—", sub: "in viaggio",    accent: "#EE8B60" },
@@ -336,19 +233,18 @@ export default function SpedizioniPage() {
 
   // ── Filtered rows ───────────────────────────────────────────────────────
   const filtered = useMemo(() => rows.filter((r) => {
-    if (!inDateRange(r.createdAt, dataDa, dataA)) return false;
-    if (sedeGLS  !== "" && r.contractIndex !== Number(sedeGLS)) return false;
-    if (fonte    && r.Source        !== fonte)    return false;
-    if (corriere && r.Corriere      !== corriere) return false;
-    if (magazzino && !r.magazzinoLabel.toLowerCase().includes(magazzino.toLowerCase())) return false;
-    if (statoGLS && r.status        !== statoGLS) return false;
-    if (statoMag && r.warehouseStatus !== statoMag) return false;
+    if (sedeGLS  !== "" && r.ContractIndex !== Number(sedeGLS)) return false;
+    if (fonte    && r.Source          !== fonte)    return false;
+    if (corriere && r.Corriere        !== corriere) return false;
+    if (magazzino && !r.MagazzinoLabel.toLowerCase().includes(magazzino.toLowerCase())) return false;
+    if (statoGLS && r.Status          !== statoGLS) return false;
+    if (statoMag && r.WarehouseStatus !== statoMag) return false;
     if (search) {
       const q = search.toLowerCase();
-      if (![r.parcelId, r.orderId, r.destinationName].some((v) => v?.toLowerCase().includes(q))) return false;
+      if (![r.ParcelId, r.OrderIdExt, r.DestinationName].some((v) => v?.toLowerCase().includes(q))) return false;
     }
     return true;
-  }), [rows, dataDa, dataA, sedeGLS, fonte, corriere, magazzino, statoGLS, statoMag, search]);
+  }), [rows, sedeGLS, fonte, corriere, magazzino, statoGLS, statoMag, search]);
 
   const today = todayStr();
   const isDefaultRange = dataDa === today && dataA === today;
@@ -356,7 +252,7 @@ export default function SpedizioniPage() {
   // ── Dynamic dropdown options ────────────────────────────────────────────
   const fontiList    = useMemo(() => [...new Set(rows.map((r) => r.Source).filter(Boolean))].sort()     as string[], [rows]);
   const corrieriList = useMemo(() => [...new Set(rows.map((r) => r.Corriere).filter(Boolean))].sort()   as string[], [rows]);
-  const magazzinoList= useMemo(() => [...new Set(rows.map((r) => r.magazzinoLabel).filter((v) => v !== "—"))].sort(), [rows]);
+  const magazzinoList= useMemo(() => [...new Set(rows.map((r) => r.MagazzinoLabel).filter((v) => v !== "—"))].sort(), [rows]);
 
   // ── Selection ───────────────────────────────────────────────────────────
   const allSelected = filtered.length > 0 && selected.size === filtered.length;
@@ -378,13 +274,13 @@ export default function SpedizioniPage() {
   //  • SDA → CloseShippingSDACall: action "closeSda" con gli ID doc spedizione SDA
   //    (LDV). Chiude il manifesto su reshark e marca le spedizioni "closed".
   async function handleChiudiManifesto() {
-    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.orderReference);
+    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.OrdineId);
     const sdaSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere === "SDA");
     if (glsSelected.length === 0 && sdaSelected.length === 0) {
       toast.error("Nessuna spedizione GLS o SDA selezionata");
       return;
     }
-    const ordiniIds = [...new Set(glsSelected.map((r) => r.orderReference!.id))];
+    const ordiniIds = [...new Set(glsSelected.map((r) => r.OrdineId!))];
     const sdaLdvs   = [...new Set(sdaSelected.map((r) => r.id))];
 
     setBusy("trasmetti");
@@ -442,12 +338,12 @@ export default function SpedizioniPage() {
   // base a Source (Tyre24/Anonimo → Alzura, eBay, Amazon, AdTyres). Le fonti senza
   // marketplace (B2B/WooCommerce/Prezzo-Gomme) vengono saltate. Un push per ordine.
   async function handleAggiornaTrackingMarketplace() {
-    const sel = filtered.filter((r) => selected.has(r.id) && r.orderReference);
+    const sel = filtered.filter((r) => selected.has(r.id) && r.OrdineId);
     if (sel.length === 0) { toast.error("Nessuna spedizione con ordine collegato"); return; }
     // Dedup per ordine, mantenendo il corriere della prima spedizione dell'ordine.
     const perOrder = new Map<string, string>();
     for (const r of sel) {
-      const oid = r.orderReference!.id;
+      const oid = r.OrdineId!;
       if (!perOrder.has(oid)) perOrder.set(oid, r.Corriere ?? "GLS");
     }
     const entries = [...perOrder.entries()];
@@ -499,9 +395,9 @@ export default function SpedizioniPage() {
   // di quegli ordini presso GLS (DeleteSped) e marca i doc Spedizioni "deleted".
   // Irreversibile. (Il FF non chiedeva conferma; qui la aggiungiamo per sicurezza.)
   async function handleElimina() {
-    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.orderReference);
+    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.OrdineId);
     if (glsSelected.length === 0) { toast.error("Nessuna spedizione GLS selezionata"); return; }
-    const ordiniIds = [...new Set(glsSelected.map((r) => r.orderReference!.id))];
+    const ordiniIds = [...new Set(glsSelected.map((r) => r.OrdineId!))];
     if (!window.confirm(`Eliminare le spedizioni GLS di ${ordiniIds.length} ordini? Annulla i colli presso GLS e non è reversibile.`)) return;
 
     setBusy("elimina");
@@ -534,9 +430,9 @@ export default function SpedizioniPage() {
   // NB: NON è l'"Aggiorna Tracking" del FlutterFlow (push del tracking ai
   // marketplace), che richiede le CF marketplace non ancora portate qui.
   async function handleAggiornaTracking() {
-    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.orderReference);
+    const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.OrdineId);
     if (glsSelected.length === 0) { toast.error("Nessuna spedizione GLS con ordine collegato"); return; }
-    const orderIds = [...new Set(glsSelected.map((r) => r.orderReference!.id))];
+    const orderIds = [...new Set(glsSelected.map((r) => r.OrdineId!))];
 
     setBusy("tracking");
     const toastId = toast.loading(`Aggiornamento etichette GLS — ${orderIds.length} ordini…`);
@@ -564,23 +460,31 @@ export default function SpedizioniPage() {
   }
 
   // Imposta Sede Magazzino — assegna il riferimento Sede (Nola, Nola 2, Volla,
-  // Roma, Portici) ai doc Spedizioni selezionati. Solo scrittura Firestore sul
-  // campo Warehouse (nessuna CF). Il listener real-time aggiorna la colonna.
+  // Roma, Portici) alle spedizioni selezionate. Unica scrittura pura di questo
+  // dominio (nessuna Cloud Function) — cutover su Postgres, propagata a
+  // Firestore dal bridge.
   async function handleImpostaSede(sedeId: string) {
     const sel = filtered.filter((r) => selected.has(r.id));
     if (sel.length === 0) { setShowSedeModal(false); return; }
 
     setBusy("sede");
-    const sedeRef = doc(db, "Sede", sedeId);
     const toastId = toast.loading("Impostazione sede magazzino…");
     try {
-      // Mirror FF (SelezionaSedeSpedizioneWidget): oltre a Warehouse imposta
-      // warehouseStatus = "In Preparazione".
-      await Promise.all(sel.map((r) => updateDoc(doc(db, "Spedizioni", r.id), { Warehouse: sedeRef, warehouseStatus: "In Preparazione" })));
+      const res = await fetch("/api/spedizioni/warehouse", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: sel.map((r) => r.id), sedeId }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
       toast.dismiss(toastId);
       toast.success(`Sede impostata per ${sel.length} spedizioni`);
       setShowSedeModal(false);
       setSelected(new Set());
+      // Ricarica la lista per riflettere subito il nuovo magazzino/stato.
+      const listRes = await fetch(`/api/spedizioni?da=${dataDa}&a=${dataA}`);
+      const { spedizioni, capped: isCapped } = await listRes.json();
+      setRows(spedizioni ?? []);
+      setCapped(!!isCapped);
     } catch {
       toast.dismiss(toastId);
       toast.error("Errore nell'impostazione della sede");
@@ -590,22 +494,21 @@ export default function SpedizioniPage() {
     }
   }
 
-  function handleViewOrder(r: SpedizioneRow) {
-    const orderId = r.orderReference?.id;
-    if (!orderId) { toast.error("Ordine non collegato"); return; }
-    router.push(`/admin/ordini/${orderId}`);
+  function handleViewOrder(r: SpedizioneApi) {
+    if (!r.OrdineId) { toast.error("Ordine non collegato"); return; }
+    router.push(`/admin/ordini/${r.OrdineId}`);
   }
 
-  async function handlePrintLabel(r: SpedizioneRow) {
+  async function handlePrintLabel(r: SpedizioneApi) {
     const isSDA = r.Corriere === "SDA";
 
     if (isSDA) {
       // SDA: parcelId richiesto per reshark-shipping CF
-      if (!r.parcelId) { toast.error("Nessun ID spedizione SDA disponibile"); return; }
+      if (!r.ParcelId) { toast.error("Nessun ID spedizione SDA disponibile"); return; }
       const toastId = toast.loading("Recupero etichetta SDA…");
       try {
         const res = await fetch(
-          `https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=label&parcelId=${r.parcelId}`
+          `https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=label&parcelId=${r.ParcelId}`
         );
         if (!res.ok) throw new Error(`CF error ${res.status}`);
         const blob = await res.blob();
@@ -619,10 +522,10 @@ export default function SpedizioniPage() {
     }
 
     // GLS: leggo GLS_PdfUrl dall'Ordine collegato (stesso comportamento del Flutter)
-    if (!r.orderReference) { toast.error("Ordine collegato non trovato"); return; }
+    if (!r.OrdineId) { toast.error("Ordine collegato non trovato"); return; }
     const toastId = toast.loading("Recupero etichetta GLS…");
     try {
-      const ordineSnap = await getDoc(r.orderReference);
+      const ordineSnap = await getDoc(doc(db, "Ordini", r.OrdineId));
       if (!ordineSnap.exists()) throw new Error("Ordine non trovato");
       const pdfUrl = (ordineSnap.data() as Record<string, unknown>).GLS_PdfUrl as string | undefined;
       if (!pdfUrl) throw new Error("GLS_PdfUrl non disponibile su questo ordine");
@@ -643,7 +546,7 @@ export default function SpedizioniPage() {
       <div>
         <h1 className="text-xl md:text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Spedizioni</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-          {loading ? "Caricamento…" : `${filtered.length} spedizioni${capped ? ` · primi ${LIST_LIMIT} dell'intervallo` : ""}`}
+          {loading ? "Caricamento…" : `${filtered.length} spedizioni${capped ? ` · primi 2000 dell'intervallo` : ""}`}
         </p>
       </div>
 
@@ -893,8 +796,8 @@ export default function SpedizioniPage() {
               ) : (
                 filtered.map((r, idx) => {
                   const srcStyle   = SOURCE_COLORS[r.Source ?? ""]          ?? { bg: "#e5e7eb", color: "#374151" };
-                  const glsStyle   = STATO_GLS_COLORS[r.status ?? ""]       ?? { bg: "#e5e7eb", color: "#374151" };
-                  const magStyle   = STATO_MAG_COLORS[r.warehouseStatus ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
+                  const glsStyle   = STATO_GLS_COLORS[r.Status ?? ""]       ?? { bg: "#e5e7eb", color: "#374151" };
+                  const magStyle   = STATO_MAG_COLORS[r.WarehouseStatus ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
                   const isSel      = selected.has(r.id);
                   const rowBg      = isSel ? "#FFFBEB" : idx % 2 === 0 ? "#fff" : "#fafafa";
 
@@ -912,28 +815,28 @@ export default function SpedizioniPage() {
                       {/* ID Spedizione */}
                       <td className="py-3.5 pr-3">
                         <span className="font-mono text-xs font-bold" style={{ color: "#111" }}>
-                          {r.parcelId ?? r.id.slice(0, 8).toUpperCase()}
+                          {r.ParcelId ?? r.id.slice(0, 8).toUpperCase()}
                         </span>
                       </td>
 
                       {/* Ordine */}
                       <td className="py-3.5 pr-3">
                         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-                          {r.orderId ?? "—"}
+                          {r.OrderIdExt ?? "—"}
                         </span>
                       </td>
 
                       {/* Cliente */}
                       <td className="py-3.5 pr-3">
                         <span className="text-sm" style={{ color: "var(--text-primary)" }}>
-                          {r.destinationName ?? "—"}
+                          {r.DestinationName ?? "—"}
                         </span>
                       </td>
 
                       {/* Creato Il */}
                       <td className="py-3.5 pr-3 whitespace-nowrap">
                         <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                          {formatDateTime(r.createdAt)}
+                          {formatDateTime(r.CreatedAt)}
                         </span>
                       </td>
 
@@ -951,20 +854,20 @@ export default function SpedizioniPage() {
                       <td className="py-3.5 pr-3">
                         <div className="flex flex-col gap-0.5">
                           <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{r.Corriere ?? "—"}</span>
-                          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{r.sedeLabel}</span>
+                          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{sedeGlsLabel(r.ContractIndex)}</span>
                         </div>
                       </td>
 
                       {/* Magazzino */}
                       <td className="py-3.5 pr-3">
-                        <span className="text-xs" style={{ color: "var(--text-primary)" }}>{r.magazzinoLabel}</span>
+                        <span className="text-xs" style={{ color: "var(--text-primary)" }}>{r.MagazzinoLabel}</span>
                       </td>
 
                       {/* Stato GLS */}
                       <td className="py-3.5 pr-3">
                         <span className="px-2.5 py-1 rounded-lg text-xs font-semibold"
                           style={{ background: glsStyle.bg, color: glsStyle.color }}>
-                          {STATO_GLS_LABELS[r.status ?? ""] ?? r.status ?? "—"}
+                          {STATO_GLS_LABELS[r.Status ?? ""] ?? r.Status ?? "—"}
                         </span>
                       </td>
 
@@ -972,7 +875,7 @@ export default function SpedizioniPage() {
                       <td className="py-3.5 pr-3">
                         <span className="px-2.5 py-1 rounded-lg text-xs font-semibold"
                           style={{ background: magStyle.bg, color: magStyle.color }}>
-                          {r.warehouseStatus ?? "—"}
+                          {r.WarehouseStatus ?? "—"}
                         </span>
                       </td>
 
@@ -1018,8 +921,8 @@ export default function SpedizioniPage() {
           ) : (
             filtered.map((r) => {
               const srcStyle = SOURCE_COLORS[r.Source ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
-              const glsStyle = STATO_GLS_COLORS[r.status ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
-              const magStyle = STATO_MAG_COLORS[r.warehouseStatus ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
+              const glsStyle = STATO_GLS_COLORS[r.Status ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
+              const magStyle = STATO_MAG_COLORS[r.WarehouseStatus ?? ""] ?? { bg: "#e5e7eb", color: "#374151" };
               const isSel = selected.has(r.id);
               const isOpen = expandedSpedizioni.has(r.id);
               return (
@@ -1028,7 +931,7 @@ export default function SpedizioniPage() {
                   <div className="flex items-center gap-2.5">
                     <input type="checkbox" checked={isSel} onChange={() => toggleOne(r.id)} className="w-4 h-4 cursor-pointer flex-shrink-0" style={{ accentColor: "#FFC803" }} />
                     <span className="font-mono text-xs font-bold flex-1 min-w-0 truncate" style={{ color: "#111" }}>
-                      {r.parcelId ?? r.id.slice(0, 8).toUpperCase()}
+                      {r.ParcelId ?? r.id.slice(0, 8).toUpperCase()}
                     </span>
                     {r.Source && (
                       <span className="px-2 py-0.5 rounded-full text-[11px] font-bold flex-shrink-0" style={{ background: srcStyle.bg, color: srcStyle.color }}>
@@ -1038,15 +941,15 @@ export default function SpedizioniPage() {
                   </div>
 
                   {/* Cliente */}
-                  <p className="text-xs mt-1.5 truncate" style={{ color: "var(--text-primary)" }}>{r.destinationName ?? "—"}</p>
+                  <p className="text-xs mt-1.5 truncate" style={{ color: "var(--text-primary)" }}>{r.DestinationName ?? "—"}</p>
 
                   {/* Stati + toggle */}
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: glsStyle.bg, color: glsStyle.color }}>
-                      {STATO_GLS_LABELS[r.status ?? ""] ?? r.status ?? "—"}
+                      {STATO_GLS_LABELS[r.Status ?? ""] ?? r.Status ?? "—"}
                     </span>
                     <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: magStyle.bg, color: magStyle.color }}>
-                      {r.warehouseStatus ?? "—"}
+                      {r.WarehouseStatus ?? "—"}
                     </span>
                     <button
                       onClick={() => toggleSpedDetails(r.id)}
@@ -1062,10 +965,10 @@ export default function SpedizioniPage() {
                   {/* Tendina dettagli */}
                   {isOpen && (
                     <div className="mt-2 pt-2 flex flex-col gap-1.5 text-xs" style={{ borderTop: "1px dashed #e5e7eb", fontFamily: "var(--font-montserrat)" }}>
-                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Ordine</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.orderId ?? "—"}</span></div>
-                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Creato il</span><span className="text-right" style={{ color: "var(--text-secondary)" }}>{formatDateTime(r.createdAt)}</span></div>
-                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Corriere</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.Corriere ?? "—"} · {r.sedeLabel}</span></div>
-                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Magazzino</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.magazzinoLabel}</span></div>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Ordine</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.OrderIdExt ?? "—"}</span></div>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Creato il</span><span className="text-right" style={{ color: "var(--text-secondary)" }}>{formatDateTime(r.CreatedAt)}</span></div>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Corriere</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.Corriere ?? "—"} · {sedeGlsLabel(r.ContractIndex)}</span></div>
+                      <div className="flex justify-between gap-3"><span style={{ color: "#9ca3af" }}>Magazzino</span><span className="text-right" style={{ color: "var(--text-primary)" }}>{r.MagazzinoLabel}</span></div>
                       <div className="flex items-center gap-2 mt-1">
                         <button onClick={() => handlePrintLabel(r)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors hover:bg-[#FFF8DC]" style={{ color: "#111", border: "1px solid #FFC803" }}>
                           <Printer size={13} /> Etichetta
@@ -1083,7 +986,7 @@ export default function SpedizioniPage() {
         </div>
       </div>
 
-      {/* Modal "Imposta Sede Magazzino" — picker delle sedi (ref a collezione Sede) */}
+      {/* Modal "Imposta Sede Magazzino" — picker delle sedi */}
       {showSedeModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -1116,7 +1019,7 @@ export default function SpedizioniPage() {
                     className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#FFF8DC] disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ border: "1px solid #FFC803", color: "#111", fontFamily: "var(--font-montserrat)", background: "#fff" }}
                   >
-                    <MapPin size={14} style={{ color: "#FFC803" }} /> {s.nome}
+                    <MapPin size={14} style={{ color: "#FFC803" }} /> {s.Nome}
                   </button>
                 ))}
               </div>
