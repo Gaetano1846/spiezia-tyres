@@ -103,8 +103,17 @@ export function verifyWooWebhookSignature(rawBody: string, signatureHeader: stri
   const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
   const a = Buffer.from(signatureHeader);
   const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  const match = a.length === b.length && timingSafeEqual(a, b);
+  if (!match) {
+    // TEMP debug (Fase 9, rimuovere dopo aver diagnosticato il 403 sul webhook Woo):
+    // nessun dato sensibile — la firma HMAC non permette di risalire al secret.
+    console.warn("[verifyWooWebhookSignature] mismatch", {
+      bodyLength: rawBody.length,
+      received: signatureHeader,
+      expected,
+    });
+  }
+  return match;
 }
 
 export function clearCookies(): string[] {
