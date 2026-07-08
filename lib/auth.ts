@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { timingSafeEqual } from "node:crypto";
 import type { SessionPayload, Ruolo } from "@/lib/types";
 
 const SESSION_COOKIE = "spiezia_session";
@@ -79,6 +80,20 @@ export function buildSessionCookie(value: string): string {
 export function buildRoleCookie(Ruolo: string, CRM: boolean): string {
   const value = encodeURIComponent(JSON.stringify({ Ruolo, CRM }));
   return `user-role=${value}; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`;
+}
+
+// Auth machine-to-machine per endpoint chiamati da cron/script interni (Fase 9
+// — importer ordini), non da browser: nessun cookie di sessione disponibile.
+// Header `x-internal-secret` confrontato a tempo costante contro
+// IMPORT_ORDINI_SECRET. Fail-closed se il secret non è configurato.
+export function verifyInternalSecret(req: Request): boolean {
+  const expected = process.env.IMPORT_ORDINI_SECRET;
+  if (!expected) return false;
+  const provided = req.headers.get("x-internal-secret") ?? "";
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 export function clearCookies(): string[] {
