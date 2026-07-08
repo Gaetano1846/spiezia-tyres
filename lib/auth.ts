@@ -86,10 +86,16 @@ export function buildRoleCookie(Ruolo: string, CRM: boolean): string {
 // — importer ordini), non da browser: nessun cookie di sessione disponibile.
 // Header `x-internal-secret` confrontato a tempo costante contro
 // IMPORT_ORDINI_SECRET. Fail-closed se il secret non è configurato.
+// Fallback su query param `internal_secret` per chiamanti che non possono
+// garantire header custom in uscita (es. wp.prezzo-gomme.it: un plugin di
+// sicurezza lato WordPress filtra tutti gli header X-WC-* sulle richieste
+// in uscita, verificato — vedi Fase 9 del piano). nginx non logga la query
+// string su questo prefisso apposta (access_log off su /api/import-ordini/).
 export function verifyInternalSecret(req: Request): boolean {
   const expected = process.env.IMPORT_ORDINI_SECRET;
   if (!expected) return false;
-  const provided = req.headers.get("x-internal-secret") ?? "";
+  const url = new URL(req.url);
+  const provided = req.headers.get("x-internal-secret") ?? url.searchParams.get("internal_secret") ?? "";
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
