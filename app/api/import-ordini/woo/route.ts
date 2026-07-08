@@ -18,8 +18,6 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   const rawBody = await req.text();
   const signature = req.headers.get("x-wc-webhook-signature");
-  // TEMP debug (Fase 9, rimuovere dopo aver diagnosticato il 403 sul webhook Woo):
-  console.warn("[import-ordini/woo] incoming headers:", [...req.headers.keys()]);
   const isWooWebhook = verifyWooWebhookSignature(rawBody, signature);
 
   if (!isWooWebhook && !verifyInternalSecret(req)) {
