@@ -1,34 +1,28 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import {
-  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, limit, Timestamp, serverTimestamp,
-  type DocumentReference,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Plus, Pencil, Trash2, Search, X, Check, ChevronDown, Loader2 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import type { Promozione } from "@/lib/types";
+import type { PromozioneApi } from "@/lib/promozioniDb";
 import { searchProdotti } from "@/lib/algolia";
 
-type PromozioneFS = Promozione & { _stato: "Attiva" | "Scaduta" | "In bozza" };
+type PromozioneUI = PromozioneApi & { _stato: "Attiva" | "Scaduta" | "In bozza" };
 
-function derivaStato(p: Promozione): "Attiva" | "Scaduta" | "In bozza" {
+function derivaStato(p: PromozioneApi): "Attiva" | "Scaduta" | "In bozza" {
   if (!p.Attiva) return "In bozza";
-  const scad = p.Scadenza instanceof Timestamp ? p.Scadenza.toDate() : new Date(0);
+  const scad = p.Scadenza ? new Date(p.Scadenza) : new Date(0);
   return scad > new Date() ? "Attiva" : "Scaduta";
 }
 
-function formatScadenza(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" });
+function formatScadenza(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-function clientiLabel(refs: DocumentReference[]): string {
-  return refs.length > 0 ? `${refs.length} clienti` : "Tutti";
+function clientiLabel(ids: string[]): string {
+  return ids.length > 0 ? `${ids.length} clienti` : "Tutti";
 }
 
 const statoVariant: Record<string, "success" | "error" | "neutral"> = {
@@ -62,7 +56,7 @@ const FORM_DEFAULT: FormState = {
   scadenza: "",
 };
 
-type ClienteOption = { id: string; label: string; ref: DocumentReference };
+type ClienteOption = { id: string; label: string };
 
 // Compact searchable dropdown for large lists (e.g. brands)
 function SearchableMultiSelect({
@@ -296,7 +290,7 @@ function ClientiDropdown({
 }
 
 export default function PromozioniPage() {
-  const [promozioni, setPromozioni] = useState<PromozioneFS[]>([]);
+  const [promozioni, setPromozioni] = useState<PromozioneUI[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"attive" | "archiviate">("attive");
   const [search, setSearch] = useState("");
@@ -315,14 +309,10 @@ export default function PromozioniPage() {
 
   async function loadPromozioni() {
     try {
-      const snap = await getDocs(
-        query(collection(db, "Promozione"), orderBy("Scadenza", "desc"), limit(200))
-      );
-      const docs = snap.docs.map((d) => {
-        const raw = { id: d.id, ...d.data() } as Promozione;
-        return { ...raw, _stato: derivaStato(raw) } satisfies PromozioneFS;
-      });
-      setPromozioni(docs);
+      const res = await fetch("/api/promozioni");
+      if (!res.ok) throw new Error(String(res.status));
+      const { promozioni: list } = await res.json();
+      setPromozioni((list as PromozioneApi[]).map((raw) => ({ ...raw, _stato: derivaStato(raw) })));
     } catch (err) {
       console.error(err);
       toast.error("Errore nel caricamento delle promozioni");
@@ -333,21 +323,20 @@ export default function PromozioniPage() {
 
   useEffect(() => { loadPromozioni(); }, []);
 
-  async function openModal(promo?: PromozioneFS) {
+  async function openModal(promo?: PromozioneUI) {
     setLoadingOptions(true);
     setShowModal(true);
     if (promo) {
       setEditId(promo.id);
-      const importoVal = promo.Importo ?? promo.Sconto ?? 0;
-      const scad = promo.Scadenza?.toDate?.();
+      const scad = promo.Scadenza ? new Date(promo.Scadenza) : null;
       setForm({
-        fisso: promo.Fisso ?? true,
-        attiva: promo.Attiva ?? true,
-        brand: promo.Brand_Nome ?? [],
-        stagioni: promo.Stagione ?? [],
-        raggi: promo.Raggio ?? [],
-        clientiIds: [], // loaded below
-        importo: importoVal ? String(importoVal) : "",
+        fisso: promo.Fisso,
+        attiva: promo.Attiva,
+        brand: promo.BrandNome,
+        stagioni: promo.Stagione,
+        raggi: promo.Raggio,
+        clientiIds: promo.ClientiIds,
+        importo: promo.Importo ? String(promo.Importo) : "",
         scadenza: scad ? scad.toISOString().slice(0, 16) : "",
       });
     } else {
@@ -357,27 +346,18 @@ export default function PromozioniPage() {
 
     // Load brands + clienti in parallel
     try {
-      const [brandRes, clientiSnap] = await Promise.all([
+      const [brandRes, clientiRes] = await Promise.all([
         searchProdotti({ withFacets: true, hitsPerPage: 0, soloDisponibili: false })
           .then((r) => r.facets?.Marca ? Object.keys(r.facets.Marca).sort() : []),
-        getDocs(query(collection(db, "Clienti"), limit(500))),
+        fetch("/api/clienti?limit=500").then((r) => r.json()),
       ]);
       setBrandList(brandRes);
-      const opts: ClienteOption[] = clientiSnap.docs.map((d) => {
-        const data = d.data() as Record<string, unknown>;
-        const label = data.Ragione_Sociale
-          ? String(data.Ragione_Sociale)
-          : [data.Nome, data.Cognome].filter(Boolean).join(" ") || d.id;
-        return { id: d.id, label, ref: doc(db, "Clienti", d.id) };
-      });
+      const opts: ClienteOption[] = (clientiRes.clienti ?? []).map((c: Record<string, unknown>) => ({
+        id: c.id as string,
+        label: (c.Ragione_Sociale as string) || (c.Nome as string) || (c.id as string),
+      }));
       opts.sort((a, b) => a.label.localeCompare(b.label, "it"));
       setClientiList(opts);
-
-      // If editing, map Clienti refs to ids
-      if (promo?.Clienti?.length) {
-        const ids = promo.Clienti.map((r) => r.id);
-        setForm((f) => ({ ...f, clientiIds: ids }));
-      }
     } catch {
       toast.error("Errore nel caricamento opzioni");
     } finally {
@@ -408,28 +388,27 @@ export default function PromozioniPage() {
 
     setSaving(true);
     try {
-      const scadenza = Timestamp.fromDate(new Date(form.scadenza));
-      const clientiRefs = form.clientiIds.map((cid) => doc(db, "Clienti", cid));
-
       const payload = {
-        Fisso: form.fisso,
-        Brand_Nome: form.brand,
-        Stagione: form.stagioni,
-        Raggio: form.raggi,
-        Clienti: clientiRefs,
-        Importo: importoNum,
-        Scadenza: scadenza,
-        Attiva: form.attiva,
+        fisso: form.fisso,
+        brandNome: form.brand,
+        stagione: form.stagioni,
+        raggio: form.raggi,
+        clientiIds: form.clientiIds,
+        importo: importoNum,
+        scadenza: new Date(form.scadenza).toISOString(),
+        attiva: form.attiva,
       };
 
-      if (editId) {
-        await updateDoc(doc(db, "Promozione", editId), payload);
-        toast.success("Promozione aggiornata");
-      } else {
-        await addDoc(collection(db, "Promozione"), { ...payload, createdAt: serverTimestamp() });
-        toast.success("Promozione creata");
-      }
+      const res = editId
+        ? await fetch(`/api/promozioni/${editId}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+          })
+        : await fetch("/api/promozioni", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+          });
+      if (!res.ok) throw new Error(String(res.status));
 
+      toast.success(editId ? "Promozione aggiornata" : "Promozione creata");
       closeModal();
       setLoading(true);
       await loadPromozioni();
@@ -444,7 +423,8 @@ export default function PromozioniPage() {
   async function handleDelete(id: string) {
     if (!confirm("Eliminare questa promozione?")) return;
     try {
-      await deleteDoc(doc(db, "Promozione", id));
+      const res = await fetch(`/api/promozioni/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(String(res.status));
       setPromozioni((prev) => prev.filter((p) => p.id !== id));
       toast.success("Promozione eliminata");
     } catch {
@@ -459,7 +439,7 @@ export default function PromozioniPage() {
     if (!search) return byTab;
     const q = search.toLowerCase();
     return byTab.filter((p) =>
-      (p.Brand_Nome ?? []).join(" ").toLowerCase().includes(q)
+      p.BrandNome.join(" ").toLowerCase().includes(q)
     );
   }, [promozioni, tab, search]);
 
@@ -545,63 +525,60 @@ export default function PromozioniPage() {
           <>
             {/* Mobile: lista a card (la tabella su schermo stretto tagliava le colonne) */}
             <div className="md:hidden space-y-2.5">
-              {filtered.map((p) => {
-                const importoVal = p.Importo ?? p.Sconto ?? 0;
-                return (
-                  <div
-                    key={p.id}
-                    className="rounded-xl p-3.5"
-                    style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <div className="flex items-baseline gap-2 min-w-0">
-                        <span className="text-base font-bold" style={{ color: "var(--text-primary)" }}>
-                          {p.Fisso ? `€ ${importoVal}` : `${importoVal}%`}
-                        </span>
-                        <span className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
-                          {p.Fisso ? "importo fisso" : "percentuale"}
-                        </span>
-                      </div>
-                      <Badge variant={statoVariant[p._stato] ?? "neutral"}>{p._stato}</Badge>
+              {filtered.map((p) => (
+                <div
+                  key={p.id}
+                  className="rounded-xl p-3.5"
+                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)" }}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-baseline gap-2 min-w-0">
+                      <span className="text-base font-bold" style={{ color: "var(--text-primary)" }}>
+                        {p.Fisso ? `€ ${p.Importo ?? 0}` : `${p.Importo ?? 0}%`}
+                      </span>
+                      <span className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                        {p.Fisso ? "importo fisso" : "percentuale"}
+                      </span>
                     </div>
-
-                    <div className="flex flex-wrap gap-1 mb-2">
-                      {(p.Brand_Nome ?? []).length > 0 ? (
-                        p.Brand_Nome.map((b) => (
-                          <span key={b} className="px-2 py-0.5 rounded-full text-xs font-medium"
-                            style={{ background: "#f3f4f6", color: "#374151" }}>{b}</span>
-                        ))
-                      ) : (
-                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>Tutte le marche</span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs" style={{ color: "var(--text-secondary)" }}>
-                      <span>{clientiLabel(p.Clienti ?? [])}</span>
-                      <span style={{ color: "var(--text-muted)" }}>·</span>
-                      <span>Scad. {formatScadenza(p.Scadenza)}</span>
-                    </div>
-
-                    <div className="flex items-center gap-2 mt-3">
-                      <button
-                        onClick={() => openModal(p)}
-                        className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
-                        style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}
-                      >
-                        <Pencil size={13} /> Modifica
-                      </button>
-                      <button
-                        onClick={() => handleDelete(p.id)}
-                        className="flex items-center justify-center px-3 py-2 rounded-lg"
-                        style={{ color: "#DC2626", border: "1px solid var(--border)" }}
-                        aria-label="Elimina"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                    <Badge variant={statoVariant[p._stato] ?? "neutral"}>{p._stato}</Badge>
                   </div>
-                );
-              })}
+
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {p.BrandNome.length > 0 ? (
+                      p.BrandNome.map((b) => (
+                        <span key={b} className="px-2 py-0.5 rounded-full text-xs font-medium"
+                          style={{ background: "#f3f4f6", color: "#374151" }}>{b}</span>
+                      ))
+                    ) : (
+                      <span className="text-xs" style={{ color: "var(--text-muted)" }}>Tutte le marche</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                    <span>{clientiLabel(p.ClientiIds)}</span>
+                    <span style={{ color: "var(--text-muted)" }}>·</span>
+                    <span>Scad. {formatScadenza(p.Scadenza)}</span>
+                  </div>
+
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      onClick={() => openModal(p)}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
+                      style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+                    >
+                      <Pencil size={13} /> Modifica
+                    </button>
+                    <button
+                      onClick={() => handleDelete(p.id)}
+                      className="flex items-center justify-center px-3 py-2 rounded-lg"
+                      style={{ color: "#DC2626", border: "1px solid var(--border)" }}
+                      aria-label="Elimina"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
 
             {/* Desktop: tabella */}
@@ -617,54 +594,51 @@ export default function PromozioniPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((p) => {
-                    const importoVal = p.Importo ?? p.Sconto ?? 0;
-                    return (
-                      <tr key={p.id} className="border-t hover:bg-[#FFFDF0] transition-colors" style={{ borderColor: "var(--border)" }}>
-                        <td className="py-3 pr-4">
-                          <div className="flex flex-wrap gap-1">
-                            {(p.Brand_Nome ?? []).length > 0 ? (
-                              p.Brand_Nome.map((b) => (
-                                <span key={b} className="px-2 py-0.5 rounded-full text-xs font-medium"
-                                  style={{ background: "#f3f4f6", color: "#374151" }}>{b}</span>
-                              ))
-                            ) : (
-                              <span className="text-xs" style={{ color: "var(--text-muted)" }}>Tutte le marche</span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
-                          {p.Fisso ? "€ fisso" : "% percentuale"}
-                        </td>
-                        <td className="py-3 pr-4 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                          {p.Fisso ? `€ ${importoVal}` : `${importoVal}%`}
-                        </td>
-                        <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
-                          {clientiLabel(p.Clienti ?? [])}
-                        </td>
-                        <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
-                          {formatScadenza(p.Scadenza)}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <Badge variant={statoVariant[p._stato] ?? "neutral"}>{p._stato}</Badge>
-                        </td>
-                        <td className="py-3">
-                          <div className="flex items-center gap-1.5">
-                            <button onClick={() => openModal(p)}
-                              className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
-                              style={{ border: "1px solid var(--border)" }}>
-                              <Pencil size={13} style={{ color: "var(--text-secondary)" }} />
-                            </button>
-                            <button onClick={() => handleDelete(p.id)}
-                              className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                              style={{ border: "1px solid var(--border)" }}>
-                              <Trash2 size={13} style={{ color: "#DC2626" }} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {filtered.map((p) => (
+                    <tr key={p.id} className="border-t hover:bg-[#FFFDF0] transition-colors" style={{ borderColor: "var(--border)" }}>
+                      <td className="py-3 pr-4">
+                        <div className="flex flex-wrap gap-1">
+                          {p.BrandNome.length > 0 ? (
+                            p.BrandNome.map((b) => (
+                              <span key={b} className="px-2 py-0.5 rounded-full text-xs font-medium"
+                                style={{ background: "#f3f4f6", color: "#374151" }}>{b}</span>
+                            ))
+                          ) : (
+                            <span className="text-xs" style={{ color: "var(--text-muted)" }}>Tutte le marche</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+                        {p.Fisso ? "€ fisso" : "% percentuale"}
+                      </td>
+                      <td className="py-3 pr-4 text-sm font-bold" style={{ color: "var(--text-primary)" }}>
+                        {p.Fisso ? `€ ${p.Importo ?? 0}` : `${p.Importo ?? 0}%`}
+                      </td>
+                      <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+                        {clientiLabel(p.ClientiIds)}
+                      </td>
+                      <td className="py-3 pr-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+                        {formatScadenza(p.Scadenza)}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Badge variant={statoVariant[p._stato] ?? "neutral"}>{p._stato}</Badge>
+                      </td>
+                      <td className="py-3">
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={() => openModal(p)}
+                            className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                            style={{ border: "1px solid var(--border)" }}>
+                            <Pencil size={13} style={{ color: "var(--text-secondary)" }} />
+                          </button>
+                          <button onClick={() => handleDelete(p.id)}
+                            className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                            style={{ border: "1px solid var(--border)" }}>
+                            <Trash2 size={13} style={{ color: "#DC2626" }} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
