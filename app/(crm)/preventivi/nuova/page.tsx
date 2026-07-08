@@ -2,22 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import {
-  collection,
-  getDocs,
-  addDoc,
-  serverTimestamp,
-  doc,
-  query,
-  orderBy,
-  limit,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { nextCounter } from "@/lib/counters";
 import { algoliaClient, INDEX_NAME, formatMisura } from "@/lib/algolia";
 import type { ProdottoHit } from "@/lib/algolia";
-import type { Cliente, Veicolo, PneumaticoPrev } from "@/lib/types";
+import type { ArticoloPreventivo } from "@/lib/preventiviDb";
 import {
   ArrowLeft, Plus, X, Search, Check, Loader2, Car, User, FileText,
 } from "lucide-react";
@@ -26,6 +15,9 @@ import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+type ClienteOption = { id: string; nome: string; telefono?: string; tipo?: string };
+type VeicoloOption = { id: string; Marca?: string; Modello?: string; Targa?: string };
 
 type RigaPneumatico = {
   id: string; // local key
@@ -41,11 +33,6 @@ type AlgoliaRaw = {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function nomeCliente(c: Cliente): string {
-  if (c.Azienda && c.Ragione_Sociale) return c.Ragione_Sociale;
-  return c.Nome?.trim() || c.Ragione_Sociale || "—";
-}
 
 function euro(n: number): string {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
@@ -216,15 +203,14 @@ export default function NuovoPreventivoPage() {
 
   // ── Step 1: Cliente + Veicolo ────────────────────────────────────────────────
 
-  const [clienti, setClienti] = useState<Cliente[]>([]);
-  const [loadingClienti, setLoadingClienti] = useState(true);
   const [clienteSearch, setClienteSearch] = useState("");
   const [clienteFocus, setClienteFocus] = useState(false);
-  const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
+  const [clientiSuggeriti, setClientiSuggeriti] = useState<ClienteOption[]>([]);
+  const [selectedCliente, setSelectedCliente] = useState<ClienteOption | null>(null);
 
-  const [veicoli, setVeicoli] = useState<Veicolo[]>([]);
+  const [veicoli, setVeicoli] = useState<VeicoloOption[]>([]);
   const [loadingVeicoli, setLoadingVeicoli] = useState(false);
-  const [selectedVeicolo, setSelectedVeicolo] = useState<Veicolo | null>(null);
+  const [selectedVeicolo, setSelectedVeicolo] = useState<VeicoloOption | null>(null);
 
   // ── Step 2: Pneumatici ──────────────────────────────────────────────────────
 
@@ -239,23 +225,28 @@ export default function NuovoPreventivoPage() {
 
   const [saving, setSaving] = useState(false);
 
-  // ── Load clienti ────────────────────────────────────────────────────────────
+  // ── Ricerca clienti server-side (debounced) ─────────────────────────────────
 
   useEffect(() => {
-    const fetchClienti = async () => {
-      setLoadingClienti(true);
-      try {
-        const q = query(collection(db, "Clienti"), orderBy("Nome"), limit(500));
-        const snap = await getDocs(q);
-        setClienti(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente)));
-      } catch {
-        toast.error("Errore nel caricamento clienti");
-      } finally {
-        setLoadingClienti(false);
-      }
-    };
-    fetchClienti();
-  }, []);
+    if (clienteSearch.trim().length < 1) {
+      setClientiSuggeriti([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      fetch(`/api/clienti?q=${encodeURIComponent(clienteSearch.trim())}&limit=40`)
+        .then((r) => r.json())
+        .then(({ clienti }) => {
+          setClientiSuggeriti((clienti ?? []).map((c: Record<string, unknown>) => ({
+            id: c.id as string,
+            nome: (c.Azienda && c.Ragione_Sociale) ? (c.Ragione_Sociale as string) : ((c.Nome as string)?.trim() || (c.Ragione_Sociale as string) || "—"),
+            telefono: c.Telefono as string | undefined,
+            tipo: c.Tipo as string | undefined,
+          })));
+        })
+        .catch(() => setClientiSuggeriti([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [clienteSearch]);
 
   // ── Load veicoli when cliente selected ──────────────────────────────────────
 
@@ -268,10 +259,9 @@ export default function NuovoPreventivoPage() {
     const fetchVeicoli = async () => {
       setLoadingVeicoli(true);
       try {
-        const snap = await getDocs(
-          collection(db, "Clienti", selectedCliente.id, "Veicolo")
-        );
-        setVeicoli(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Veicolo)));
+        const res = await fetch(`/api/clienti/${selectedCliente.id}/veicoli`);
+        const { veicoli: list } = await res.json();
+        setVeicoli(list ?? []);
       } catch {
         setVeicoli([]);
       } finally {
@@ -282,20 +272,9 @@ export default function NuovoPreventivoPage() {
     setSelectedVeicolo(null);
   }, [selectedCliente]);
 
-  // ── Cliente dropdown filter ──────────────────────────────────────────────────
-
-  const filteredClienti = clienti.filter((c) => {
-    if (!clienteSearch) return true;
-    const nome = nomeCliente(c);
-    return [nome, c.Telefono ?? "", c.Email ?? ""]
-      .join(" ")
-      .toLowerCase()
-      .includes(clienteSearch.toLowerCase());
-  });
-
-  function handleSelectCliente(c: Cliente) {
+  function handleSelectCliente(c: ClienteOption) {
     setSelectedCliente(c);
-    setClienteSearch(nomeCliente(c));
+    setClienteSearch(c.nome);
     setClienteFocus(false);
   }
 
@@ -379,9 +358,11 @@ export default function NuovoPreventivoPage() {
         return;
       }
 
+      // Numero progressivo per sede — l'allocatore resta Firestore finché il
+      // bridge è vivo (vedi lib/counters.ts, stesso pattern di Fogli).
       const numero = await nextCounter("Preventivo", sedeId);
 
-      const pneumaticiNuovi: PneumaticoPrev[] = righe.map((r) => ({
+      const articoli: ArticoloPreventivo[] = righe.map((r) => ({
         Marca: r.Marca || undefined,
         Modello: r.Modello || undefined,
         Misura: r.Misura || undefined,
@@ -389,30 +370,25 @@ export default function NuovoPreventivoPage() {
         PrezzoUnitario: parseFloat(r.PrezzoUnitario.replace(",", ".")) || 0,
       }));
 
-      const veicoloRef = selectedVeicolo
-        ? doc(db, "Clienti", selectedCliente.id, "Veicolo", selectedVeicolo.id)
-        : null;
-
-      const payload: Record<string, unknown> = {
-        ID: numero,
-        Data: formatDate(new Date()),
-        Data_Creazione: serverTimestamp(),
-        Pneumatici_Nuovi: pneumaticiNuovi,
-        Note: note.trim() || null,
-        Accettato: false,
-        Stato: "In attesa",
-        Operatore: doc(db, "users", user!.uid),
-        Sede: sedeDocRef,
-      };
-      if (veicoloRef) payload.Veicolo = veicoloRef;
-
-      const docRef = await addDoc(
-        collection(db, "Clienti", selectedCliente.id, "Preventivo"),
-        payload
-      );
+      const res = await fetch("/api/preventivi", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clienteId: selectedCliente.id,
+          sedeId,
+          operatoreId: user!.uid,
+          veicoloId: selectedVeicolo?.id,
+          numero,
+          data: formatDate(new Date()),
+          articoli,
+          note: note.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const { preventivo } = await res.json();
 
       toast.success(`Preventivo #${numero} creato`);
-      router.push(`/preventivi/${selectedCliente.id}/${docRef.id}`);
+      router.push(`/preventivi/${selectedCliente.id}/${preventivo.id}`);
     } catch (e) {
       console.error(e);
       toast.error("Errore nella creazione del preventivo");
@@ -499,19 +475,14 @@ export default function NuovoPreventivoPage() {
                     setClienteSearch(e.target.value);
                     if (
                       selectedCliente &&
-                      e.target.value !== nomeCliente(selectedCliente)
+                      e.target.value !== selectedCliente.nome
                     ) {
                       setSelectedCliente(null);
                     }
                   }}
                   onFocus={() => setClienteFocus(true)}
                   onBlur={() => setTimeout(() => setClienteFocus(false), 180)}
-                  placeholder={
-                    loadingClienti
-                      ? "Caricamento clienti…"
-                      : "Cerca per nome, telefono…"
-                  }
-                  disabled={loadingClienti}
+                  placeholder="Cerca per nome, telefono…"
                   style={{
                     ...inputStyle,
                     paddingLeft: 36,
@@ -531,7 +502,7 @@ export default function NuovoPreventivoPage() {
               </div>
 
               {/* Dropdown list */}
-              {clienteFocus && !selectedCliente && filteredClienti.length > 0 && (
+              {clienteFocus && !selectedCliente && clientiSuggeriti.length > 0 && (
                 <div
                   className="absolute z-30 w-full mt-1 rounded-xl overflow-hidden"
                   style={{
@@ -542,7 +513,7 @@ export default function NuovoPreventivoPage() {
                     overflowY: "auto",
                   }}
                 >
-                  {filteredClienti.slice(0, 40).map((c) => (
+                  {clientiSuggeriti.map((c) => (
                     <button
                       key={c.id}
                       type="button"
@@ -558,9 +529,9 @@ export default function NuovoPreventivoPage() {
                             fontFamily: "var(--font-montserrat)",
                           }}
                         >
-                          {nomeCliente(c)}
+                          {c.nome}
                         </p>
-                        {c.Telefono && (
+                        {c.telefono && (
                           <p
                             className="text-xs"
                             style={{
@@ -568,11 +539,11 @@ export default function NuovoPreventivoPage() {
                               fontFamily: "var(--font-montserrat)",
                             }}
                           >
-                            {c.Telefono}
+                            {c.telefono}
                           </p>
                         )}
                       </div>
-                      {c.Tipo && (
+                      {c.tipo && (
                         <span
                           className="text-xs px-2 py-0.5 rounded-full"
                           style={{
@@ -581,7 +552,7 @@ export default function NuovoPreventivoPage() {
                             fontFamily: "var(--font-montserrat)",
                           }}
                         >
-                          {c.Tipo}
+                          {c.tipo}
                         </span>
                       )}
                     </button>

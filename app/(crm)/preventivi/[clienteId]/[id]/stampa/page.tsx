@@ -2,43 +2,31 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import type { Timestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
+import { storage } from "@/lib/firebase";
 import { Loader2, Download, Printer } from "lucide-react";
 import toast from "react-hot-toast";
-
-function fmtDate(ts: Timestamp | null | undefined) {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
-}
+import type { PreventivoApi } from "@/lib/preventiviDb";
 
 function euro(n: number | undefined | null): string {
   if (n == null) return "—";
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normaliseArticoli(raw: any[]) {
-  return raw.map((r) => ({
-    marca:          r.Marca || r.marca || "—",
-    modello:        r.Modello || r.modello || r.Titolo || r.titolo || "—",
-    misura:         r.Misura || r.misura || (r.Larghezza ? `${r.Larghezza}/${r.Altezza}R${r.Diametro}` : "—"),
-    stagione:       r.Stagione || r.stagione || "",
-    quantita:       Number(r.Quantita ?? r.quantita ?? 1),
-    prezzoUnitario: Number(r.PrezzoUnitario ?? r.Prezzo ?? r.prezzoUnitario ?? 0),
-    pfu:            Number(r.PFU ?? 0),
-  }));
+function fmtIso(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normaliseServizi(raw: any[]) {
-  return raw.map((s) => ({
-    titolo:   s.Titolo || s.titolo || "Servizio",
-    prezzo:   Number(s.Prezzo ?? s.prezzoUnitario ?? 0),
-    quantita: Number(s.Quantita ?? s.quantita ?? 1),
-  })).filter((s) => s.prezzo > 0 || s.titolo !== "Servizio");
+function getServizi(p: PreventivoApi) {
+  return p.Servizi.map((raw) => {
+    const s = raw as Record<string, unknown>;
+    return {
+      titolo:   (s.Titolo as string) || (s.titolo as string) || "Servizio",
+      prezzo:   Number(s.Prezzo ?? s.prezzoUnitario ?? 0),
+      quantita: Number(s.Quantita ?? s.quantita ?? 1),
+    };
+  }).filter((s) => s.prezzo > 0 || s.titolo !== "Servizio");
 }
 
 export default function StampaPreventivoPage() {
@@ -47,72 +35,17 @@ export default function StampaPreventivoPage() {
   const [loading,    setLoading]    = useState(true);
   const [generating, setGenerating] = useState(false);
   const [pdfUrl,     setPdfUrl]     = useState<string | null>(null);
-
-  // Resolved display data
-  const [numero,      setNumero]      = useState("");
-  const [dataDoc,     setDataDoc]     = useState("—");
-  const [scadenza,    setScadenza]    = useState("");
-  const [clienteNome, setClienteNome] = useState("—");
-  const [clienteEmail,setClienteEmail] = useState("");
-  const [clienteTel,  setClienteTel]  = useState("");
-  const [clienteCF,   setClienteCF]   = useState("");
-  const [clientePIVA, setClientePIVA] = useState("");
-  const [veicoloLabel,setVeicoloLabel] = useState("");
-  const [targa,       setTarga]       = useState("");
-  const [articoli,    setArticoli]    = useState<ReturnType<typeof normaliseArticoli>>([]);
-  const [servizi,     setServizi]     = useState<ReturnType<typeof normaliseServizi>>([]);
-  const [note,        setNote]        = useState("");
-  const [stato,       setStato]       = useState("");
+  const [preventivo, setPreventivo] = useState<PreventivoApi | null>(null);
 
   useEffect(() => {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, "Clienti", clienteId, "Preventivo", id));
-        if (!snap.exists()) { setLoading(false); return; }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const p: Record<string, any> = { id: snap.id, ...snap.data() };
-
-        // Number / stato
-        setNumero(p.Numero ?? (p.ID != null ? `#${p.ID}` : `#${id.slice(0, 6).toUpperCase()}`));
-        setStato(p.Stato ?? (p.Accettato ? "Accettato" : "In attesa"));
-        setDataDoc(p.Data ?? fmtDate(p.Data_Creazione ?? p.DataCreazione));
-        if (p.DataScadenza) setScadenza(fmtDate(p.DataScadenza));
-        if (p.PDF_URL) setPdfUrl(p.PDF_URL);
-
-        // Articoli / servizi / note
-        const rawArticoli = Array.isArray(p.Pneumatici_Nuovi) && p.Pneumatici_Nuovi.length > 0
-          ? p.Pneumatici_Nuovi
-          : (Array.isArray(p.Articoli) ? p.Articoli : []);
-        setArticoli(normaliseArticoli(rawArticoli));
-
-        const rawServizi = Array.isArray(p.Servizi) ? p.Servizi : [];
-        setServizi(normaliseServizi(rawServizi));
-        setNote(p.Note || p.note || "");
-
-        // Cliente
-        const cSnap = await getDoc(doc(db, "Clienti", clienteId));
-        if (cSnap.exists()) {
-          const c = cSnap.data() as Record<string, string>;
-          setClienteNome(
-            (c.Ragione_Sociale && c.Azienda) ? String(c.Ragione_Sociale) :
-            String(c.Nome ?? "").trim() || "—"
-          );
-          setClienteEmail(c.Email ?? "");
-          setClienteTel(c.Telefono ?? "");
-          setClienteCF(c.Codice_Fiscale ?? "");
-          setClientePIVA(c.Partita_IVA ?? "");
-        }
-
-        // Veicolo
-        if (p.Veicolo && typeof p.Veicolo === "object" && "path" in p.Veicolo) {
-          const vSnap = await getDoc(p.Veicolo);
-          if (vSnap.exists()) {
-            const v = vSnap.data() as Record<string, string | number>;
-            setTarga(String(v.Targa ?? ""));
-            setVeicoloLabel([v.Marca, v.Modello, v.Anno ? `(${v.Anno})` : ""].filter(Boolean).join(" "));
-          }
-        }
+        const res = await fetch(`/api/preventivi/${clienteId}/${id}`);
+        if (!res.ok) { setLoading(false); return; }
+        const { preventivo: p } = (await res.json()) as { preventivo: PreventivoApi };
+        setPreventivo(p);
+        if (p.PdfUrl) setPdfUrl(p.PdfUrl);
       } catch (e) {
         console.error(e);
       } finally {
@@ -159,7 +92,15 @@ export default function StampaPreventivoPage() {
       await uploadBytes(storageRef, new Uint8Array(pdfBytes), { contentType: "application/pdf" });
       const url = await getDownloadURL(storageRef);
 
-      await updateDoc(doc(db, "Clienti", clienteId, "Preventivo", id), { PDF_URL: url });
+      // Salva l'URL su Postgres — il bridge lo propaga a Firestore (PDF_URL)
+      // per il CRM FlutterFlow legacy.
+      const patchRes = await fetch(`/api/preventivi/${clienteId}/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdfUrl: url }),
+      });
+      if (!patchRes.ok) throw new Error(String(patchRes.status));
+
       setPdfUrl(url);
       window.open(url, "_blank");
       toast.success("PDF generato e salvato");
@@ -171,14 +112,6 @@ export default function StampaPreventivoPage() {
     }
   }
 
-  // ── Computed totals ──────────────────────────────────────────────────────────
-
-  const totArt = articoli.reduce((s, a) => s + (a.prezzoUnitario + a.pfu) * a.quantita, 0);
-  const totSrv = servizi.reduce((s, sv) => s + sv.prezzo * sv.quantita, 0);
-  const imponibile = totArt + totSrv;
-  const iva = imponibile * 0.22;
-  const totale = imponibile + iva;
-
   if (loading) {
     return (
       <div style={{ padding: 40, fontFamily: "Arial", display: "flex", alignItems: "center", gap: 12 }}>
@@ -186,6 +119,21 @@ export default function StampaPreventivoPage() {
       </div>
     );
   }
+  if (!preventivo) return <div style={{ padding: 40, fontFamily: "Arial" }}>Preventivo non trovato.</div>;
+
+  const numero = preventivo.Numero != null ? `#${preventivo.Numero}` : `#${id.slice(0, 6).toUpperCase()}`;
+  const stato = preventivo.Stato ?? (preventivo.Accettato ? "Accettato" : "In attesa");
+  const dataDoc = preventivo.Data ?? fmtIso(preventivo.DataCreazione);
+  const scadenza = preventivo.DataScadenza ? fmtIso(preventivo.DataScadenza) : "";
+  const articoli = preventivo.Articoli;
+  const servizi = getServizi(preventivo);
+  const note = preventivo.Note ?? "";
+
+  const totArt = articoli.reduce((s, a) => s + ((a.PrezzoUnitario ?? 0) + (a.PFU ?? 0)) * (a.Quantita ?? 0), 0);
+  const totSrv = servizi.reduce((s, sv) => s + sv.prezzo * sv.quantita, 0);
+  const imponibile = totArt + totSrv;
+  const iva = imponibile * 0.22;
+  const totale = imponibile + iva;
 
   return (
     <>
@@ -297,17 +245,19 @@ export default function StampaPreventivoPage() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
           <div style={{ padding: "12px 16px", background: "#F9FAFB", borderRadius: 8 }}>
             <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#9CA3AF", margin: "0 0 8px" }}>Cliente</p>
-            <p style={{ fontWeight: 700, fontSize: 13, margin: "0 0 4px" }}>{clienteNome}</p>
-            {clienteCF   && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>CF: {clienteCF}</p>}
-            {clientePIVA && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>P.IVA: {clientePIVA}</p>}
-            {clienteTel  && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>Tel: {clienteTel}</p>}
-            {clienteEmail && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>{clienteEmail}</p>}
+            <p style={{ fontWeight: 700, fontSize: 13, margin: "0 0 4px" }}>{preventivo.ClienteNome}</p>
+            {preventivo.ClienteCodiceFiscale && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>CF: {preventivo.ClienteCodiceFiscale}</p>}
+            {preventivo.ClientePartitaIva   && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>P.IVA: {preventivo.ClientePartitaIva}</p>}
+            {preventivo.ClienteTelefono     && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>Tel: {preventivo.ClienteTelefono}</p>}
+            {preventivo.ClienteEmail        && <p style={{ fontSize: 11, color: "#6b7280", margin: "2px 0" }}>{preventivo.ClienteEmail}</p>}
           </div>
-          {(veicoloLabel || targa) && (
+          {(preventivo.VeicoloTarga || preventivo.VeicoloMarca) && (
             <div style={{ padding: "12px 16px", background: "#F9FAFB", borderRadius: 8 }}>
               <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#9CA3AF", margin: "0 0 8px" }}>Veicolo</p>
-              {targa && <p style={{ fontWeight: 800, fontSize: 18, letterSpacing: "0.1em", margin: "0 0 4px" }}>{targa}</p>}
-              {veicoloLabel && <p style={{ fontSize: 11, color: "#6b7280", margin: 0 }}>{veicoloLabel}</p>}
+              {preventivo.VeicoloTarga && <p style={{ fontWeight: 800, fontSize: 18, letterSpacing: "0.1em", margin: "0 0 4px" }}>{preventivo.VeicoloTarga}</p>}
+              <p style={{ fontSize: 11, color: "#6b7280", margin: 0 }}>
+                {[preventivo.VeicoloMarca, preventivo.VeicoloModello, preventivo.VeicoloAnno ? `(${preventivo.VeicoloAnno})` : ""].filter(Boolean).join(" ")}
+              </p>
             </div>
           )}
         </div>
@@ -321,23 +271,22 @@ export default function StampaPreventivoPage() {
             <table>
               <thead>
                 <tr>
-                  {["Marca", "Modello", "Misura", "Stagione", "Qtà", "Prezzo unit.", "PFU", "Totale"].map((h) => (
+                  {["Marca", "Modello", "Misura", "Qtà", "Prezzo unit.", "PFU", "Totale"].map((h) => (
                     <th key={h}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {articoli.map((a, i) => {
-                  const tot = (a.prezzoUnitario + a.pfu) * a.quantita;
+                  const tot = ((a.PrezzoUnitario ?? 0) + (a.PFU ?? 0)) * (a.Quantita ?? 0);
                   return (
                     <tr key={i}>
-                      <td style={{ fontWeight: 600 }}>{a.marca}</td>
-                      <td>{a.modello}</td>
-                      <td style={{ fontFamily: "monospace" }}>{a.misura}</td>
-                      <td>{a.stagione}</td>
-                      <td style={{ textAlign: "center" }}>{a.quantita}</td>
-                      <td>{euro(a.prezzoUnitario)}</td>
-                      <td>{a.pfu > 0 ? euro(a.pfu) : "—"}</td>
+                      <td style={{ fontWeight: 600 }}>{a.Marca ?? "—"}</td>
+                      <td>{a.Modello ?? "—"}</td>
+                      <td style={{ fontFamily: "monospace" }}>{a.Misura ?? "—"}</td>
+                      <td style={{ textAlign: "center" }}>{a.Quantita}</td>
+                      <td>{euro(a.PrezzoUnitario)}</td>
+                      <td>{(a.PFU ?? 0) > 0 ? euro(a.PFU) : "—"}</td>
                       <td style={{ fontWeight: 700 }}>{euro(tot)}</td>
                     </tr>
                   );

@@ -3,16 +3,13 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  doc, getDoc, updateDoc, serverTimestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import {
   ArrowLeft, Plus, Trash2, Save,
 } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
+import type { PreventivoApi } from "@/lib/preventiviDb";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,31 +32,28 @@ type ServizioRiga = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function rawToRighe(raw: any): Riga[] {
-  const src: any[] = raw.Pneumatici_Nuovi?.length
-    ? raw.Pneumatici_Nuovi
-    : raw.Articoli ?? [];
-  return src.map((r, i) => ({
+function preventivoToRighe(p: PreventivoApi): Riga[] {
+  return p.Articoli.map((r, i) => ({
     key: i,
-    marca:          r.Marca ?? r.marca ?? "",
-    modello:        r.Modello ?? r.modello ?? r.Titolo ?? r.titolo ?? "",
-    misura:         r.Misura ?? r.misura ?? "",
-    quantita:       Number(r.Quantita ?? r.quantita ?? r.qta ?? 1),
-    prezzoUnitario: Number(r.PrezzoUnitario ?? r.Prezzo ?? r.prezzoUnitario ?? 0),
-    pfu:            Number(r.PFU ?? r.pfu ?? 0),
+    marca:          r.Marca ?? "",
+    modello:        r.Modello ?? "",
+    misura:         r.Misura ?? "",
+    quantita:       r.Quantita ?? 1,
+    prezzoUnitario: r.PrezzoUnitario ?? 0,
+    pfu:            r.PFU ?? 0,
   }));
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function rawToServizi(raw: any): ServizioRiga[] {
-  if (!Array.isArray(raw.Servizi)) return [];
-  return raw.Servizi.map((s: any, i: number) => ({
-    key:      i,
-    titolo:   s.Titolo ?? s.titolo ?? "",
-    prezzo:   Number(s.Prezzo ?? s.prezzo ?? s.PrezzoUnitario ?? 0),
-    quantita: Number(s.Quantita ?? s.quantita ?? 1),
-  }));
+function preventivoToServizi(p: PreventivoApi): ServizioRiga[] {
+  return p.Servizi.map((raw, i) => {
+    const s = raw as Record<string, unknown>;
+    return {
+      key: i,
+      titolo:   (s.Titolo as string) ?? (s.titolo as string) ?? "",
+      prezzo:   Number(s.Prezzo ?? s.prezzo ?? s.PrezzoUnitario ?? 0),
+      quantita: Number(s.Quantita ?? s.quantita ?? 1),
+    };
+  });
 }
 
 let _keySeq = 100;
@@ -88,20 +82,20 @@ export default function ModificaPreventivoPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const snap = await getDoc(doc(db, "Clienti", clienteId, "Preventivo", id));
-        if (!snap.exists()) { toast.error("Preventivo non trovato"); return; }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const raw = snap.data() as any;
-        setStato(raw.Stato ?? (raw.Accettato ? "Accettato" : "In attesa"));
-        setNote(raw.Note ?? raw.note ?? "");
-        if (raw.DataScadenza?.toDate) {
+        const res = await fetch(`/api/preventivi/${clienteId}/${id}`);
+        if (!res.ok) { toast.error("Preventivo non trovato"); return; }
+        const { preventivo: p } = (await res.json()) as { preventivo: PreventivoApi };
+
+        setStato(p.Stato ?? (p.Accettato ? "Accettato" : "In attesa"));
+        setNote(p.Note ?? "");
+        if (p.DataScadenza) {
           // Da parti locali: toISOString() (UTC) sfaserebbe la data di -1 giorno.
-          const d = raw.DataScadenza.toDate();
+          const d = new Date(p.DataScadenza);
           const pad = (n: number) => String(n).padStart(2, "0");
           setScadenza(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
         }
-        setRighe(rawToRighe(raw));
-        setServizi(rawToServizi(raw));
+        setRighe(preventivoToRighe(p));
+        setServizi(preventivoToServizi(p));
       } catch (e) {
         console.error(e);
         toast.error("Errore nel caricamento");
@@ -154,7 +148,7 @@ export default function ModificaPreventivoPage() {
   async function handleSave() {
     setSaving(true);
     try {
-      const articoliOut = righe.map((r) => ({
+      const articoli = righe.map((r) => ({
         Marca:          r.marca,
         Modello:        r.modello,
         Misura:         r.misura,
@@ -168,24 +162,30 @@ export default function ModificaPreventivoPage() {
         Quantita: s.quantita,
       }));
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const patch: Record<string, any> = {
-        Stato:           stato,
-        Accettato:       stato === "Accettato",
-        Articoli:        articoliOut,
-        Pneumatici_Nuovi: articoliOut,   // keep both for backward compat
-        Servizi:         serviziOut,
-        Note:            note,
-        Totale:          Math.round(totale * 100) / 100,
-        IVA:             Math.round(iva * 100) / 100,
-        _aggiornatoIl:   serverTimestamp(),
+      // Stato/Servizi/Totale/IVA/DataScadenza non hanno colonne dedicate
+      // (zero utilizzo reale finora) — passano come extra, merge shallow
+      // in fs_extra lato repository (vedi lib/preventiviDb.ts).
+      const extra: Record<string, unknown> = {
+        Stato: stato,
+        Servizi: serviziOut,
+        Totale: Math.round(totale * 100) / 100,
+        IVA: Math.round(iva * 100) / 100,
       };
-      if (stato === "Accettato") patch.Data_Accettazione = serverTimestamp();
-      if (stato !== "Accettato") patch.Data_Accettazione = null;
       // "T00:00:00" → mezzanotte LOCALE (senza, verrebbe interpretata come UTC).
-      if (scadenza) patch.DataScadenza = new Date(scadenza + "T00:00:00");
+      if (scadenza) extra.DataScadenza = new Date(scadenza + "T00:00:00").toISOString();
 
-      await updateDoc(doc(db, "Clienti", clienteId, "Preventivo", id), patch);
+      const res = await fetch(`/api/preventivi/${clienteId}/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          articoli,
+          note,
+          accettato: stato === "Accettato",
+          extra,
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+
       toast.success("Preventivo aggiornato");
       router.push(`/preventivi/${clienteId}/${id}`);
     } catch (e) {

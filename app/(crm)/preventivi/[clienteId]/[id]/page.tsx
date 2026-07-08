@@ -2,9 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, Timestamp,
-} from "firebase/firestore";
+import { doc, addDoc, updateDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { nextCounter } from "@/lib/counters";
 import {
@@ -15,106 +13,45 @@ import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
+import type { PreventivoApi } from "@/lib/preventiviDb";
 
-// ─── Normalised display type ────────────────────────────────────────────────
-
-type ArticoloDisplay = {
-  marca?: string;
-  modello?: string;
-  misura?: string;
-  titolo?: string;
-  quantita: number;
-  prezzoUnitario?: number;
-  pfu?: number;
-  stagione?: string;
-};
-
-type ClienteInfo = { nome: string; codiceFiscale?: string; email?: string; telefono?: string };
-type VeicoloInfo = { targa: string; marca?: string; modello?: string; anno?: number; km?: number };
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+type ServizioDisplay = { titolo: string; prezzo: number; quantita: number };
 
 function euro(n: number | undefined | null): string {
   if (n == null) return "—";
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function fmtTs(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
+function fmtIso(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normaliseArticoli(raw: any): ArticoloDisplay[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((r) => {
-    const misura =
-      r.Misura ||
-      r.misura ||
-      (r.Larghezza && r.Diametro
-        ? `${r.Larghezza}/${r.Altezza ?? ""}R${r.Diametro}`
-        : undefined);
-
-    const prezzoUnitario =
-      r.PrezzoUnitario ?? r.Prezzo ?? r.prezzoUnitario ?? r.Prezzo_Unitario;
-
-    return {
-      marca:         r.Marca || r.marca || undefined,
-      modello:       r.Modello || r.modello || r.Titolo || r.titolo || undefined,
-      misura,
-      titolo:        r.Titolo || r.titolo || undefined,
-      quantita:      Number(r.Quantita ?? r.quantita ?? r.qta ?? 1),
-      prezzoUnitario: prezzoUnitario != null ? Number(prezzoUnitario) : undefined,
-      pfu:           r.PFU != null ? Number(r.PFU) : undefined,
-      stagione:      r.Stagione || r.stagione || undefined,
-    };
-  });
-}
-
-// ─── Preventivo raw type (union of old Flutter + new Next.js fields) ──────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type PrevRaw = Record<string, any> & { id: string };
-
-function getNumero(p: PrevRaw): string {
-  if (p.Numero)           return p.Numero;
-  if (p.ID != null)       return `#${p.ID}`;
+function getNumero(p: PreventivoApi): string {
+  if (p.Numero != null) return `#${p.Numero}`;
   return `#${p.id.slice(0, 6).toUpperCase()}`;
 }
 
-function getStato(p: PrevRaw): "Accettato" | "In attesa" | "Bozza" | "Rifiutato" {
-  if (p.Stato) return p.Stato as "Accettato" | "In attesa" | "Bozza" | "Rifiutato";
+function getStato(p: PreventivoApi): "Accettato" | "In attesa" {
   return p.Accettato ? "Accettato" : "In attesa";
 }
 
-function getArticoli(p: PrevRaw): ArticoloDisplay[] {
-  // Old Flutter: Pneumatici_Nuovi
-  if (Array.isArray(p.Pneumatici_Nuovi) && p.Pneumatici_Nuovi.length > 0)
-    return normaliseArticoli(p.Pneumatici_Nuovi);
-  // New Next.js: Articoli
-  if (Array.isArray(p.Articoli) && p.Articoli.length > 0)
-    return normaliseArticoli(p.Articoli);
-  return [];
+function getServizi(p: PreventivoApi): ServizioDisplay[] {
+  return p.Servizi.map((raw) => {
+    const s = raw as Record<string, unknown>;
+    return {
+      titolo:   (s.Titolo as string) || (s.titolo as string) || "Servizio",
+      prezzo:   Number(s.Prezzo ?? s.prezzoUnitario ?? s.PrezzoUnitario ?? 0),
+      quantita: Number(s.Quantita ?? s.quantita ?? 1),
+    };
+  }).filter((s) => s.prezzo > 0 || s.titolo !== "Servizio");
 }
 
-function getServizi(p: PrevRaw): { titolo: string; prezzo: number; quantita: number }[] {
-  if (!Array.isArray(p.Servizi)) return [];
-  return p.Servizi.map((s: PrevRaw) => ({
-    titolo:   s.Titolo || s.titolo || "Servizio",
-    prezzo:   Number(s.Prezzo ?? s.prezzoUnitario ?? s.PrezzoUnitario ?? 0),
-    quantita: Number(s.Quantita ?? s.quantita ?? 1),
-  })).filter((s) => s.prezzo > 0 || s.titolo !== "Servizio");
-}
-
-function badgeVariant(stato: string): "success" | "warning" | "neutral" | "error" {
-  if (stato === "Accettato") return "success";
-  if (stato === "Bozza")    return "warning";
-  if (stato === "Rifiutato") return "error";
-  return "neutral";
+function badgeVariant(stato: string): "success" | "neutral" {
+  return stato === "Accettato" ? "success" : "neutral";
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-
 
 export default function PreventivoDetailPage() {
   const params    = useParams();
@@ -122,9 +59,7 @@ export default function PreventivoDetailPage() {
   const clienteId = params.clienteId as string;
   const id        = params.id as string;
 
-  const [preventivo,  setPreventivo]  = useState<PrevRaw | null>(null);
-  const [clienteInfo, setClienteInfo] = useState<ClienteInfo | null>(null);
-  const [veicoloInfo, setVeicoloInfo] = useState<VeicoloInfo | null>(null);
+  const [preventivo, setPreventivo] = useState<PreventivoApi | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [saving,      setSaving]      = useState(false);
   const [converting,  setConverting]  = useState(false);
@@ -133,37 +68,10 @@ export default function PreventivoDetailPage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, "Clienti", clienteId, "Preventivo", id));
-        if (!snap.exists()) { toast.error("Preventivo non trovato"); return; }
-        const p = { id: snap.id, ...snap.data() } as PrevRaw;
+        const res = await fetch(`/api/preventivi/${clienteId}/${id}`);
+        if (!res.ok) { toast.error("Preventivo non trovato"); return; }
+        const { preventivo: p } = await res.json();
         setPreventivo(p);
-
-        const cSnap = await getDoc(doc(db, "Clienti", clienteId));
-        if (cSnap.exists()) {
-          const d = cSnap.data();
-          setClienteInfo({
-            nome:           (d.Azienda && d.Ragione_Sociale) ? String(d.Ragione_Sociale) : String(d.Nome ?? "").trim() || "—",
-            codiceFiscale:  d.Codice_Fiscale ? String(d.Codice_Fiscale) : undefined,
-            email:          d.Email ? String(d.Email) : undefined,
-            telefono:       d.Telefono ? String(d.Telefono) : undefined,
-          });
-        }
-
-        const veicoloRef = p.Veicolo;
-        if (veicoloRef && typeof veicoloRef === "object" && "path" in veicoloRef) {
-          const vSnap = await getDoc(veicoloRef);
-          if (vSnap.exists()) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const vd = vSnap.data() as any;
-            setVeicoloInfo({
-              targa:   String(vd.Targa ?? ""),
-              marca:   vd.Marca  ? String(vd.Marca)  : undefined,
-              modello: vd.Modello ? String(vd.Modello) : undefined,
-              anno:    Number(vd.Anno ?? 0) || undefined,
-              km:      Number(vd.Km ?? 0)   || undefined,
-            });
-          }
-        }
       } catch (e) {
         toast.error("Errore nel caricamento preventivo");
         console.error(e);
@@ -178,12 +86,11 @@ export default function PreventivoDetailPage() {
     if (!preventivo || saving) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, "Clienti", clienteId, "Preventivo", id), {
-        Accettato: true,
-        Stato: "Accettato",
-        Data_Accettazione: serverTimestamp(),
+      const res = await fetch(`/api/preventivi/${clienteId}/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accettato: true }),
       });
-      setPreventivo({ ...preventivo, Accettato: true, Stato: "Accettato" });
+      if (!res.ok) throw new Error(String(res.status));
+      setPreventivo({ ...preventivo, Accettato: true });
       toast.success("Preventivo segnato come accettato");
     } catch { toast.error("Errore aggiornamento"); }
     finally { setSaving(false); }
@@ -193,21 +100,22 @@ export default function PreventivoDetailPage() {
     if (!preventivo || saving) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, "Clienti", clienteId, "Preventivo", id), {
-        Accettato: false,
-        Stato: "In attesa",
-        Data_Accettazione: null,
+      const res = await fetch(`/api/preventivi/${clienteId}/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accettato: false }),
       });
-      setPreventivo({ ...preventivo, Accettato: false, Stato: "In attesa" });
+      if (!res.ok) throw new Error(String(res.status));
+      setPreventivo({ ...preventivo, Accettato: false, DataAccettazione: null });
       toast.success("Preventivo rimesso in attesa");
     } catch { toast.error("Errore aggiornamento"); }
     finally { setSaving(false); }
   }
 
+  // "Converti in Ordine" resta VOLUTAMENTE Firestore diretto — crea un
+  // documento in Ordini, dominio esplicitamente escluso da questa
+  // migrazione. Il bridge propaga comunque Convertito/OrdineId verso
+  // fs_extra su Postgres (letti sopra per il guard anti-doppia-conversione).
   async function handleConvertToOrder() {
     if (!preventivo || converting) return;
-    // Guardia anti-doppia-conversione: un preventivo già convertito non deve
-    // generare un secondo ordine (evita duplicati con numeri diversi).
     if (preventivo.OrdineId || preventivo.Convertito) {
       toast.error("Questo preventivo è già stato convertito in ordine");
       return;
@@ -215,31 +123,30 @@ export default function PreventivoDetailPage() {
     const round2 = (x: number) => Math.round(x * 100) / 100;
     setConverting(true);
     try {
-      const arts = getArticoli(preventivo);
+      const arts = preventivo.Articoli;
       const servs = getServizi(preventivo);
 
-      // Coerente con il totale mostrato a schermo: l'imponibile include il PFU.
       const totArticoli = arts.reduce(
-        (s, a) => s + ((a.prezzoUnitario ?? 0) + (a.pfu ?? 0)) * a.quantita,
+        (s, a) => s + ((a.PrezzoUnitario ?? 0) + (a.PFU ?? 0)) * (a.Quantita ?? 0),
         0
       );
-      const totPfu = arts.reduce((s, a) => s + (a.pfu ?? 0) * a.quantita, 0);
+      const totPfu = arts.reduce((s, a) => s + (a.PFU ?? 0) * (a.Quantita ?? 0), 0);
       const totServizi = servs.reduce((s, sv) => s + sv.prezzo * sv.quantita, 0);
       const imponibile = totArticoli + totServizi;
       const iva = imponibile * 0.22;
       const totale = imponibile + iva; // lordo, coerente col modello Ordini B2B
 
       const articoliOrdine = arts.map((a) => ({
-        Prodotto: a.misura ?? "",
-        Titolo: a.modello ?? a.titolo ?? "",
-        Marca: a.marca ?? "",
-        Quantita: a.quantita,
-        PrezzoUnitario: a.prezzoUnitario ?? 0,
-        PFU: a.pfu ?? 0,
+        Prodotto: a.Misura ?? "",
+        Titolo: a.Modello ?? "",
+        Marca: a.Marca ?? "",
+        Quantita: a.Quantita ?? 0,
+        PrezzoUnitario: a.PrezzoUnitario ?? 0,
+        PFU: a.PFU ?? 0,
       }));
 
-      const sedeId = (preventivo.Sede?.id ?? preventivo.Sede) ?? "main";
-      const n = await nextCounter("Ordine", typeof sedeId === "string" ? sedeId : "main");
+      const sedeId = preventivo.SedeId ?? "main";
+      const n = await nextCounter("Ordine", sedeId);
       const year = new Date().getFullYear();
 
       const payload = {
@@ -251,7 +158,7 @@ export default function PreventivoDetailPage() {
         Totale: round2(totale),
         IVA: round2(iva),
         PFU: round2(totPfu),
-        Note: preventivo.Note ?? preventivo.note ?? null,
+        Note: preventivo.Note ?? null,
         DataCreazione: serverTimestamp(),
       };
 
@@ -300,12 +207,12 @@ export default function PreventivoDetailPage() {
 
   const numero   = getNumero(preventivo);
   const stato    = getStato(preventivo);
-  const articoli = getArticoli(preventivo);
+  const articoli = preventivo.Articoli;
   const servizi  = getServizi(preventivo);
-  const note     = preventivo.Note || preventivo.note || "";
+  const note     = preventivo.Note ?? "";
 
   const totaleArticoli = articoli.reduce(
-    (s, a) => s + ((a.prezzoUnitario ?? 0) + (a.pfu ?? 0)) * a.quantita,
+    (s, a) => s + ((a.PrezzoUnitario ?? 0) + (a.PFU ?? 0)) * (a.Quantita ?? 0),
     0
   );
   const totaleServizi = servizi.reduce((s, sv) => s + sv.prezzo * sv.quantita, 0);
@@ -338,16 +245,16 @@ export default function PreventivoDetailPage() {
               <Badge variant={badgeVariant(stato)}>{stato}</Badge>
             </div>
             <div className="flex flex-col gap-0.5 text-sm" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-secondary)" }}>
-              {(preventivo.Data || preventivo.DataScadenza)
-                ? <span>Data: <strong>{preventivo.Data ?? fmtTs(preventivo.DataScadenza)}</strong></span>
-                : <span>Creato il <strong>{fmtTs(preventivo.Data_Creazione ?? preventivo.DataCreazione)}</strong></span>
+              {preventivo.Data
+                ? <span>Data: <strong>{preventivo.Data}</strong></span>
+                : <span>Creato il <strong>{fmtIso(preventivo.DataCreazione)}</strong></span>
               }
-              {preventivo.Data_Accettazione && (
-                <span>Accettato il <strong>{fmtTs(preventivo.Data_Accettazione)}</strong></span>
+              {preventivo.DataAccettazione && (
+                <span>Accettato il <strong>{fmtIso(preventivo.DataAccettazione)}</strong></span>
               )}
               {preventivo.DataScadenza && (
                 <span style={{ color: "#EF4444" }}>
-                  Scadenza: <strong>{fmtTs(preventivo.DataScadenza)}</strong>
+                  Scadenza: <strong>{fmtIso(preventivo.DataScadenza)}</strong>
                 </span>
               )}
             </div>
@@ -363,9 +270,9 @@ export default function PreventivoDetailPage() {
             >
               <Printer size={13} /> Stampa / PDF
             </Link>
-            {preventivo.PDF_URL && (
+            {preventivo.PdfUrl && (
               <a
-                href={preventivo.PDF_URL}
+                href={preventivo.PdfUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl"
@@ -421,25 +328,21 @@ export default function PreventivoDetailPage() {
               Cliente
             </p>
           </div>
-          {clienteInfo ? (
-            <div className="space-y-1 text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
-              <p className="font-bold text-base" style={{ color: "var(--text-primary)" }}>{clienteInfo.nome}</p>
-              {clienteInfo.codiceFiscale && (
-                <p className="font-mono text-xs" style={{ color: "var(--text-secondary)" }}>{clienteInfo.codiceFiscale}</p>
-              )}
-              {clienteInfo.telefono && (
-                <p style={{ color: "var(--text-secondary)" }}>{clienteInfo.telefono}</p>
-              )}
-              {clienteInfo.email && (
-                <p style={{ color: "var(--text-muted)" }}>{clienteInfo.email}</p>
-              )}
-              <Link href={`/clienti/${clienteId}`} className="text-xs font-semibold mt-2 inline-block" style={{ color: "#2563EB" }}>
-                Scheda cliente →
-              </Link>
-            </div>
-          ) : (
-            <p className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>—</p>
-          )}
+          <div className="space-y-1 text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
+            <p className="font-bold text-base" style={{ color: "var(--text-primary)" }}>{preventivo.ClienteNome}</p>
+            {preventivo.ClienteCodiceFiscale && (
+              <p className="font-mono text-xs" style={{ color: "var(--text-secondary)" }}>{preventivo.ClienteCodiceFiscale}</p>
+            )}
+            {preventivo.ClienteTelefono && (
+              <p style={{ color: "var(--text-secondary)" }}>{preventivo.ClienteTelefono}</p>
+            )}
+            {preventivo.ClienteEmail && (
+              <p style={{ color: "var(--text-muted)" }}>{preventivo.ClienteEmail}</p>
+            )}
+            <Link href={`/clienti/${clienteId}`} className="text-xs font-semibold mt-2 inline-block" style={{ color: "#2563EB" }}>
+              Scheda cliente →
+            </Link>
+          </div>
         </Card>
 
         <Card padding="sm">
@@ -449,17 +352,14 @@ export default function PreventivoDetailPage() {
               Veicolo
             </p>
           </div>
-          {veicoloInfo ? (
+          {preventivo.VeicoloId ? (
             <div className="space-y-1 text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
               <p className="text-xl font-bold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)", letterSpacing: "0.05em" }}>
-                {veicoloInfo.targa}
+                {preventivo.VeicoloTarga}
               </p>
               <p style={{ color: "var(--text-secondary)" }}>
-                {[veicoloInfo.marca, veicoloInfo.modello, veicoloInfo.anno].filter(Boolean).join(" ")}
+                {[preventivo.VeicoloMarca, preventivo.VeicoloModello, preventivo.VeicoloAnno].filter(Boolean).join(" ")}
               </p>
-              {veicoloInfo.km && (
-                <p style={{ color: "var(--text-muted)" }}>{veicoloInfo.km.toLocaleString("it-IT")} km</p>
-              )}
             </div>
           ) : (
             <p className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>Nessun veicolo associato</p>
@@ -487,26 +387,26 @@ export default function PreventivoDetailPage() {
               </thead>
               <tbody>
                 {articoli.map((a, i) => {
-                  const riga = (a.prezzoUnitario ?? 0) * a.quantita;
+                  const riga = (a.PrezzoUnitario ?? 0) * (a.Quantita ?? 0);
                   return (
                     <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
                       <td className="px-2 py-3 font-medium" style={{ fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}>
-                        {a.marca ?? "—"}
+                        {a.Marca ?? "—"}
                       </td>
                       <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {a.modello ?? a.titolo ?? "—"}
+                        {a.Modello ?? "—"}
                       </td>
                       <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {a.misura ?? "—"}
+                        {a.Misura ?? "—"}
                       </td>
                       <td className="px-2 py-3 text-center" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {a.quantita}
+                        {a.Quantita}
                       </td>
                       <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {euro(a.prezzoUnitario)}
+                        {euro(a.PrezzoUnitario)}
                       </td>
                       <td className="px-2 py-3 font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                        {a.prezzoUnitario != null ? euro(riga) : "—"}
+                        {a.PrezzoUnitario != null ? euro(riga) : "—"}
                       </td>
                     </tr>
                   );

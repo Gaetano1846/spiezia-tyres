@@ -1,17 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  collectionGroup, getDocs, getDoc, limit, query, doc,
-  type DocumentReference, type Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Search, Plus, Eye, FileText, X, Pencil } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import type { Preventivo } from "@/lib/types";
+import type { PreventivoApi } from "@/lib/preventiviDb";
 
 type StatoLabel = "Accettato" | "In attesa";
 
@@ -20,44 +15,22 @@ const statoVariant: Record<StatoLabel, "success" | "neutral"> = {
   "In attesa": "neutral",
 };
 
-function getStato(p: Preventivo): StatoLabel {
+function getStato(p: PreventivoApi): StatoLabel {
   return p.Accettato ? "Accettato" : "In attesa";
 }
 
-type PrevRow = {
-  prev: Preventivo & { _clienteId: string };
-  clienteNome: string;
-  stato: StatoLabel;
-};
-
-async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Record<string, unknown>>> {
-  if (refs.length === 0) return new Map();
-  const unique = [...new Map(refs.map((r) => [r.path, r])).values()];
-  const snaps = await Promise.all(unique.map((r) => getDoc(r)));
-  const map = new Map<string, Record<string, unknown>>();
-  snaps.forEach((s) => {
-    if (s.exists()) map.set(s.ref.path, { id: s.id, ...s.data() } as Record<string, unknown>);
-  });
-  return map;
+function formatData(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function formatData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-}
-
-function contaPezzi(prev: Preventivo): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw = prev as any;
-  const src = raw.Pneumatici_Nuovi?.length ? raw.Pneumatici_Nuovi : raw.Articoli ?? [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tot = src.reduce((s: number, p: any) => s + (p.Quantita ?? p.quantita ?? p.qta ?? 0), 0);
+function contaPezzi(prev: PreventivoApi): string {
+  const tot = prev.Articoli.reduce((s, p) => s + (p.Quantita ?? 0), 0);
   return tot > 0 ? `${tot} pz` : "—";
 }
 
-
 export default function PreventiviPage() {
-  const [entries, setEntries] = useState<PrevRow[]>([]);
+  const [entries, setEntries] = useState<PreventivoApi[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
   const [stato, setStato]     = useState<StatoLabel | "">("");
@@ -66,33 +39,10 @@ export default function PreventiviPage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const q = query(collectionGroup(db, "Preventivo"), limit(200));
-        const snap = await getDocs(q);
-
-        const prevs = snap.docs
-          .map((d) => ({ id: d.id, _clienteId: d.ref.parent.parent?.id ?? "", ...d.data() } as Preventivo & { _clienteId: string }))
-          .sort((a, b) => {
-            const ta = (a.Data_Creazione as Timestamp)?.seconds ?? 0;
-            const tb = (b.Data_Creazione as Timestamp)?.seconds ?? 0;
-            return tb - ta;
-          });
-
-        // Il cliente è il documento parent — costruiamo il ref dall'ID
-        const clienteRefs = prevs
-          .filter((p) => p._clienteId)
-          .map((p) => doc(db, "Clienti", p._clienteId)) as DocumentReference[];
-        const clientiMap  = await batchGetDocs(clienteRefs);
-
-        const resolved: PrevRow[] = prevs.map((prev) => {
-          const refPath = prev._clienteId ? `Clienti/${prev._clienteId}` : "";
-          const c = refPath ? clientiMap.get(refPath) : undefined;
-          const clienteNome = c
-            ? ((c.Azienda && c.Ragione_Sociale) ? (c.Ragione_Sociale as string) : ((c.Nome as string)?.trim() || "—"))
-            : "—";
-          return { prev, clienteNome, stato: getStato(prev) };
-        });
-
-        setEntries(resolved);
+        const res = await fetch("/api/preventivi");
+        if (!res.ok) throw new Error(String(res.status));
+        const { preventivi } = await res.json();
+        setEntries(preventivi);
       } catch (e) {
         toast.error("Errore nel caricamento preventivi");
         console.error(e);
@@ -103,17 +53,17 @@ export default function PreventiviPage() {
     fetchAll();
   }, []);
 
-  const filtered = entries.filter(({ prev, clienteNome, stato: s }) => {
-    const numero = prev.ID != null ? `#${prev.ID}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
-    const matchSearch = !search || [numero, clienteNome].join(" ").toLowerCase().includes(search.toLowerCase());
-    const matchStato  = !stato  || s === stato;
+  const filtered = entries.filter((prev) => {
+    const numero = prev.Numero != null ? `#${prev.Numero}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
+    const matchSearch = !search || [numero, prev.ClienteNome].join(" ").toLowerCase().includes(search.toLowerCase());
+    const matchStato  = !stato  || getStato(prev) === stato;
     return matchSearch && matchStato;
   });
 
   const counts = {
     totale:    entries.length,
-    accettato: entries.filter((e) => e.stato === "Accettato").length,
-    attesa:    entries.filter((e) => e.stato === "In attesa").length,
+    accettato: entries.filter((e) => e.Accettato).length,
+    attesa:    entries.filter((e) => !e.Accettato).length,
   };
 
   function reset() {
@@ -217,8 +167,9 @@ export default function PreventiviPage() {
           <>
             {/* Mobile: lista a card */}
             <div className="md:hidden space-y-2.5">
-              {filtered.map(({ prev, clienteNome, stato: s }) => {
-                const numero = prev.ID != null ? `#${prev.ID}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
+              {filtered.map((prev) => {
+                const numero = prev.Numero != null ? `#${prev.Numero}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
+                const s = getStato(prev);
                 return (
                   <div
                     key={prev.id}
@@ -232,22 +183,22 @@ export default function PreventiviPage() {
                       <Badge variant={statoVariant[s]}>{s}</Badge>
                     </div>
                     <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                      {clienteNome}
+                      {prev.ClienteNome}
                     </p>
                     <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mt-1.5 text-xs" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                      <span>{prev.Data ?? formatData(prev.Data_Creazione)}</span>
+                      <span>{prev.Data ?? formatData(prev.DataCreazione)}</span>
                       <span style={{ color: "var(--text-muted)" }}>·</span>
                       <span>{contaPezzi(prev)}</span>
-                      {prev.Data_Accettazione && (
+                      {prev.DataAccettazione && (
                         <>
                           <span style={{ color: "var(--text-muted)" }}>·</span>
-                          <span>Acc. {formatData(prev.Data_Accettazione)}</span>
+                          <span>Acc. {formatData(prev.DataAccettazione)}</span>
                         </>
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-3">
                       <Link
-                        href={`/preventivi/${prev._clienteId}/${prev.id}`}
+                        href={`/preventivi/${prev.ClienteId}/${prev.id}`}
                         className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
                         style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
                       >
@@ -255,7 +206,7 @@ export default function PreventiviPage() {
                         Visualizza
                       </Link>
                       <Link
-                        href={`/preventivi/${prev._clienteId}/${prev.id}/modifica`}
+                        href={`/preventivi/${prev.ClienteId}/${prev.id}/modifica`}
                         className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"
                         style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
                       >
@@ -285,8 +236,9 @@ export default function PreventiviPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(({ prev, clienteNome, stato: s }) => {
-                    const numero = prev.ID != null ? `#${prev.ID}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
+                  {filtered.map((prev) => {
+                    const numero = prev.Numero != null ? `#${prev.Numero}` : `#${prev.id.slice(0, 6).toUpperCase()}`;
+                    const s = getStato(prev);
                     return (
                     <tr
                       key={prev.id}
@@ -297,13 +249,13 @@ export default function PreventiviPage() {
                         {numero}
                       </td>
                       <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {clienteNome}
+                        {prev.ClienteNome}
                       </td>
                       <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {prev.Data ?? formatData(prev.Data_Creazione)}
+                        {prev.Data ?? formatData(prev.DataCreazione)}
                       </td>
                       <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                        {prev.Data_Accettazione ? formatData(prev.Data_Accettazione) : "—"}
+                        {prev.DataAccettazione ? formatData(prev.DataAccettazione) : "—"}
                       </td>
                       <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                         {contaPezzi(prev)}
@@ -314,7 +266,7 @@ export default function PreventiviPage() {
                       <td className="px-2 py-3">
                         <div className="flex items-center gap-2">
                           <Link
-                            href={`/preventivi/${prev._clienteId}/${prev.id}`}
+                            href={`/preventivi/${prev.ClienteId}/${prev.id}`}
                             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors hover:bg-[#F1F4F8]"
                             style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", border: "1px solid var(--border)" }}
                           >
@@ -322,7 +274,7 @@ export default function PreventiviPage() {
                             Visualizza
                           </Link>
                           <Link
-                            href={`/preventivi/${prev._clienteId}/${prev.id}/modifica`}
+                            href={`/preventivi/${prev.ClienteId}/${prev.id}/modifica`}
                             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                             style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)" }}
                           >
