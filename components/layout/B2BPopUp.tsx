@@ -1,58 +1,27 @@
 "use client";
 import { useEffect, useState } from "react";
-import {
-  collection, getDocs, query, where, doc, updateDoc, arrayUnion,
-} from "firebase/firestore";
-import type { DocumentReference } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { X } from "lucide-react";
 import Link from "next/link";
+import type { PopupApi } from "@/lib/popupDb";
 
-type PopUpDoc = {
-  id: string;
-  Titolo: string;
-  Descrizione?: string;
-  Immagine?: string;
-  Link?: string;
-  ButtonText?: string;
-};
 
 export default function B2BPopUp() {
   const { user } = useAuth();
-  const [queue,   setQueue]   = useState<PopUpDoc[]>([]);
-  const [current, setCurrent] = useState<PopUpDoc | null>(null);
+  const [queue,   setQueue]   = useState<PopupApi[]>([]);
+  const [current, setCurrent] = useState<PopupApi | null>(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
     if (!user?.uid) return;
-    const uid = user.uid;
 
     async function load() {
-      const snap = await getDocs(
-        query(collection(db, "Pop-Up"), where("Attivo", "==", true))
-      );
-
-      const unseen: PopUpDoc[] = [];
-      for (const d of snap.docs) {
-        const data = d.data();
-        const avvisati = (data.utentiAvvisati ?? []) as DocumentReference[];
-        const alreadySeen = avvisati.some((ref) => ref.id === uid);
-        if (!alreadySeen) {
-          unseen.push({
-            id:          d.id,
-            Titolo:      data.Titolo      ?? "",
-            Descrizione: data.Descrizione,
-            Immagine:    data.Immagine,
-            Link:        data.Link,
-            ButtonText:  data.ButtonText,
-          });
-        }
-      }
-
-      if (unseen.length > 0) {
-        setCurrent(unseen[0]);
-        setQueue(unseen.slice(1));
+      const res = await fetch("/api/popup/active");
+      if (!res.ok) return;
+      const { popups } = await res.json() as { popups: PopupApi[] };
+      if (popups.length > 0) {
+        setCurrent(popups[0]);
+        setQueue(popups.slice(1));
         setVisible(true);
       }
     }
@@ -64,9 +33,7 @@ export default function B2BPopUp() {
     if (!current || !user?.uid) return;
 
     // Mark popup as seen (fire-and-forget)
-    updateDoc(doc(db, "Pop-Up", current.id), {
-      utentiAvvisati: arrayUnion(doc(db, "users", user.uid)),
-    }).catch(() => {});
+    fetch(`/api/popup/${current.id}/dismiss`, { method: "POST" }).catch(() => {});
 
     // Close then advance queue
     setVisible(false);

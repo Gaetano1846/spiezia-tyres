@@ -1,25 +1,20 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  collection, query, orderBy, limit, getDocs, updateDoc, doc, writeBatch,
-  type Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Bell, CheckCheck, ShoppingBag, FileText, Calendar, Settings, X } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import type { Notifica } from "@/lib/types";
+import type { NotificaApi } from "@/lib/notificheDb";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatTs(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  const d = ts.toDate();
+function formatTs(ts: string | null | undefined): string {
+  if (!ts) return "—";
+  const d = new Date(ts);
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   const diffMin = Math.floor(diffMs / 60000);
@@ -65,7 +60,7 @@ function Skeleton() {
 // ---------------------------------------------------------------------------
 
 export default function NotifichePage() {
-  const [notifiche, setNotifiche] = useState<Notifica[]>([]);
+  const [notifiche, setNotifiche] = useState<NotificaApi[]>([]);
   const [loading, setLoading]     = useState(true);
   const [filter, setFilter]       = useState<"tutte" | "non-lette">("non-lette");
   const [markingAll, setMarkingAll] = useState(false);
@@ -74,10 +69,10 @@ export default function NotifichePage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const snap = await getDocs(
-          query(collection(db, "Notifiche"), orderBy("DataCreazione", "desc"), limit(100)),
-        );
-        setNotifiche(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Notifica)));
+        const res = await fetch("/api/notifiche");
+        if (!res.ok) throw new Error(String(res.status));
+        const { notifiche } = await res.json();
+        setNotifiche(notifiche);
       } catch (e) {
         toast.error("Errore nel caricamento notifiche");
         console.error(e);
@@ -97,7 +92,8 @@ export default function NotifichePage() {
   async function markAsRead(id: string) {
     setNotifiche((prev) => prev.map((n) => n.id === id ? { ...n, Visto: true } : n));
     try {
-      await updateDoc(doc(db, "Notifiche", id), { Visto: true });
+      const res = await fetch(`/api/notifiche/${id}`, { method: "PATCH" });
+      if (!res.ok) throw new Error(String(res.status));
     } catch {
       toast.error("Errore aggiornamento notifica");
     }
@@ -108,9 +104,8 @@ export default function NotifichePage() {
     if (unread.length === 0) return;
     setMarkingAll(true);
     try {
-      const batch = writeBatch(db);
-      unread.forEach((n) => batch.update(doc(db, "Notifiche", n.id), { Visto: true }));
-      await batch.commit();
+      const res = await fetch("/api/notifiche/mark-all-read", { method: "POST" });
+      if (!res.ok) throw new Error(String(res.status));
       setNotifiche((prev) => prev.map((n) => ({ ...n, Visto: true })));
       toast.success(`${unread.length} notifiche segnate come lette`);
     } catch {

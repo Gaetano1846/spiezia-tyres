@@ -1,23 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Plus, Pencil, Trash2, X, Check, Loader2, Eye, EyeOff, MessageSquare } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-
-type PopUpDoc = {
-  id: string;
-  Titolo: string;
-  Descrizione?: string;
-  Immagine?: string;
-  Link?: string;
-  ButtonText?: string;
-  Attivo: boolean;
-};
+import type { PopupApi } from "@/lib/popupDb";
 
 type PopUpForm = {
   titolo:      string;
@@ -33,7 +20,7 @@ const emptyForm = (): PopUpForm => ({
 });
 
 export default function PopUpPage() {
-  const [popups,  setPopups]  = useState<PopUpDoc[]>([]);
+  const [popups,  setPopups]  = useState<PopupApi[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editId,    setEditId]    = useState<string | null>(null);
@@ -43,17 +30,10 @@ export default function PopUpPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, "Pop-Up"));
-      setPopups(snap.docs.map((d) => ({
-        id:          d.id,
-        // Campo titolo reale nello schema Pop-Up: "Nome" (Titolo = fallback legacy)
-        Titolo:      d.data().Nome ?? d.data().Titolo ?? "",
-        Descrizione: d.data().Descrizione,
-        Immagine:    d.data().Immagine,
-        Link:        d.data().Link,
-        ButtonText:  d.data().ButtonText,
-        Attivo:      d.data().Attivo      ?? true,
-      })));
+      const res = await fetch("/api/popup");
+      if (!res.ok) throw new Error(String(res.status));
+      const { popups } = await res.json();
+      setPopups(popups);
     } catch {
       toast.error("Errore nel caricamento");
     } finally {
@@ -69,7 +49,7 @@ export default function PopUpPage() {
     setShowModal(true);
   }
 
-  function openEdit(p: PopUpDoc) {
+  function openEdit(p: PopupApi) {
     setEditId(p.id);
     setForm({
       titolo:      p.Titolo,
@@ -86,23 +66,21 @@ export default function PopUpPage() {
     if (!form.titolo.trim()) { toast.error("Inserisci il titolo"); return; }
     setSaving(true);
     try {
-      const payload: Record<string, unknown> = {
-        Nome:        form.titolo.trim(),   // campo titolo dello schema Pop-Up
-        Descrizione: form.descrizione.trim() || null,
-        Immagine:    form.immagine.trim()    || null,
-        Link:        form.link.trim()        || null,
-        ButtonText:  form.buttonText.trim()  || "Scopri di più",
-        Attivo:      form.attivo,
+      const body = {
+        titolo:      form.titolo.trim(),
+        descrizione: form.descrizione.trim() || undefined,
+        immagine:    form.immagine.trim()    || undefined,
+        link:        form.link.trim()        || undefined,
+        buttonText:  form.buttonText.trim()  || "Scopri di più",
+        attivo:      form.attivo,
       };
-      if (editId) {
-        payload.DataAggiornamento = serverTimestamp();
-        await updateDoc(doc(db, "Pop-Up", editId), payload);
-        toast.success("Pop-Up aggiornato");
-      } else {
-        payload.DataCreazione = serverTimestamp();
-        await addDoc(collection(db, "Pop-Up"), payload);
-        toast.success("Pop-Up aggiunto");
-      }
+      const res = await fetch(editId ? `/api/popup/${editId}` : "/api/popup", {
+        method: editId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      toast.success(editId ? "Pop-Up aggiornato" : "Pop-Up aggiunto");
       setShowModal(false);
       await loadAll();
     } catch {
@@ -112,15 +90,21 @@ export default function PopUpPage() {
     }
   }
 
-  async function handleToggleAttivo(p: PopUpDoc) {
-    await updateDoc(doc(db, "Pop-Up", p.id), { Attivo: !p.Attivo });
+  async function handleToggleAttivo(p: PopupApi) {
+    const res = await fetch(`/api/popup/${p.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attivo: !p.Attivo }),
+    });
+    if (!res.ok) { toast.error("Errore nell'aggiornamento"); return; }
     setPopups((prev) => prev.map((x) => x.id === p.id ? { ...x, Attivo: !p.Attivo } : x));
     toast.success(p.Attivo ? "Pop-Up disattivato" : "Pop-Up attivato");
   }
 
-  async function handleDelete(p: PopUpDoc) {
+  async function handleDelete(p: PopupApi) {
     if (!confirm(`Eliminare il pop-up "${p.Titolo}"?`)) return;
-    await deleteDoc(doc(db, "Pop-Up", p.id));
+    const res = await fetch(`/api/popup/${p.id}`, { method: "DELETE" });
+    if (!res.ok) { toast.error("Errore nell'eliminazione"); return; }
     setPopups((prev) => prev.filter((x) => x.id !== p.id));
     toast.success("Pop-Up eliminato");
   }

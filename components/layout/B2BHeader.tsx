@@ -9,8 +9,6 @@ import {
 } from "lucide-react";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import { searchProdotti } from "@/lib/algolia";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
 
@@ -80,13 +78,14 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
       .catch(() => {});
   }, []);
 
-  // Notifiche non viste
+  // Notifiche non viste (conteggio globale, non per-utente — Fase 6: Postgres via /api/notifiche/count)
   const [notifCount, setNotifCount] = useState(0);
   useEffect(() => {
     if (!user?.uid) return;
-    const q = query(collection(db, "Notifiche"), where("Visto", "==", false));
-    const unsub = onSnapshot(q, (snap) => setNotifCount(snap.size), () => setNotifCount(0));
-    return unsub;
+    fetch("/api/notifiche/count")
+      .then((r) => r.json())
+      .then((d) => setNotifCount(d.count ?? 0))
+      .catch(() => setNotifCount(0));
   }, [user?.uid]);
 
   const ruolo   = user?.Ruolo?.toLowerCase() ?? "";

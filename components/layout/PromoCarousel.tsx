@@ -1,58 +1,33 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { X } from "lucide-react";
+import type { BannerApi } from "@/lib/bannerDb";
 
-type PromoImg = {
-  id: string;
-  Url?: string;
-  URL?: string;
-  Immagine?: string;
-  // Può essere un FLAG booleano (gestionale Next: "imposta come copertina") oppure,
-  // sui dati storici Flutter, una URL alternativa. Trattiamo entrambi i casi.
-  Copertina?: string | boolean;
-  Ordine?: number;
-  Attivo?: boolean;
-};
-
-// "Copertina" come URL solo se è davvero una stringa non vuota. Nei dati storici è
-// l'URL del banner "largo"; nei nuovi upload dal pannello Banner è invece un FLAG
-// booleano → in quel caso va ignorata (altrimenti <img src={true}> è rotto) e si
-// ripiega su Url. Così la striscia funziona con entrambi i modelli di dato.
-function coverStr(p: PromoImg): string | undefined {
-  return typeof p.Copertina === "string" && p.Copertina ? p.Copertina : undefined;
-}
-// Immagine mostrata nella striscia (preferisce il banner "largo" Copertina, se URL)
-function bannerSrc(p: PromoImg): string | undefined {
-  return coverStr(p) || p.Url || p.URL || p.Immagine;
+// Immagine mostrata nella striscia (preferisce la variante "larga" CopertinaUrl, se presente)
+function bannerSrc(p: BannerApi): string | undefined {
+  return p.CopertinaUrl || p.Url;
 }
 // Immagine a piena risoluzione mostrata nello zoom
-function fullSrc(p: PromoImg): string | undefined {
-  return p.Url || p.URL || p.Immagine || coverStr(p);
+function fullSrc(p: BannerApi): string | undefined {
+  return p.Url || p.CopertinaUrl;
 }
 
 /**
  * Carosello promozionale sempre presente sotto l'header (replica del banner "vicino all'header"
  * del precedente progetto Flutter / pagina ricerca prodotti).
- * - Sorgente: collezione Firestore `Promo_Immagini` con `Attivo != false`, ordinata per `Ordine`.
+ * - Sorgente: Postgres via /api/banner?active=true (Fase 6, era Firestore Promo_Immagini).
  * - Stile: striscia slim a scorrimento orizzontale di banner arrotondati, cliccabili per lo zoom.
  * - Se non ci sono promo attive, non renderizza nulla (nessun impatto sul layout).
  */
 export default function PromoCarousel() {
-  const [promo, setPromo] = useState<PromoImg[]>([]);
+  const [promo, setPromo] = useState<BannerApi[]>([]);
   const [zoom, setZoom] = useState<string | null>(null);
 
   useEffect(() => {
-    getDocs(collection(db, "Promo_Immagini"))
-      .then((snap) => {
-        const items = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as PromoImg))
-          .filter((p) => p.Attivo !== false) // mostra tutte salvo Attivo==false esplicito
-          .sort((a, b) => (a.Ordine ?? 0) - (b.Ordine ?? 0));
-        setPromo(items);
-      })
+    fetch("/api/banner?active=true")
+      .then((r) => r.json())
+      .then((d) => setPromo(d.banners ?? []))
       .catch(() => {});
   }, []);
 

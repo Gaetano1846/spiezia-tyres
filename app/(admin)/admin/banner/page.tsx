@@ -1,24 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc, doc,
-} from "firebase/firestore";
-import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
 import { Plus, Trash2, Upload, Eye, EyeOff, ImageIcon, Loader2, Star, StarOff } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-
-type BannerDoc = {
-  id: string;
-  Url: string;
-  Attivo: boolean;
-  Copertina: boolean;
-};
+import type { BannerApi } from "@/lib/bannerDb";
 
 export default function BannerPage() {
-  const [banners, setBanners]   = useState<BannerDoc[]>([]);
+  const [banners, setBanners]   = useState<BannerApi[]>([]);
   const [loading, setLoading]   = useState(true);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -26,13 +15,10 @@ export default function BannerPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, "Promo_Immagini"));
-      setBanners(snap.docs.map((d) => ({
-        id: d.id,
-        Url:      d.data().Url      ?? "",
-        Attivo:   d.data().Attivo   ?? true,
-        Copertina: d.data().Copertina ?? false,
-      })));
+      const res = await fetch("/api/banner");
+      if (!res.ok) throw new Error(String(res.status));
+      const { banners } = await res.json();
+      setBanners(banners);
     } catch {
       toast.error("Errore nel caricamento");
     } finally {
@@ -48,15 +34,10 @@ export default function BannerPage() {
     if (!file.type.startsWith("image/")) { toast.error("Seleziona un'immagine"); return; }
     setUploading(true);
     try {
-      const path = `Promo_Immagini/${Date.now()}_${file.name}`;
-      const sref = storageRef(storage, path);
-      await uploadBytes(sref, file);
-      const url = await getDownloadURL(sref);
-      await addDoc(collection(db, "Promo_Immagini"), {
-        Url:      url,
-        Attivo:   true,
-        Copertina: false,
-      });
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/banner", { method: "POST", body: form });
+      if (!res.ok) throw new Error(String(res.status));
       toast.success("Banner aggiunto");
       await loadAll();
     } catch {
@@ -67,30 +48,30 @@ export default function BannerPage() {
     }
   }
 
-  async function toggleAttivo(b: BannerDoc) {
-    await updateDoc(doc(db, "Promo_Immagini", b.id), { Attivo: !b.Attivo });
+  async function toggleAttivo(b: BannerApi) {
+    const res = await fetch(`/api/banner/${b.id}`, { method: "PATCH" });
+    if (!res.ok) { toast.error("Errore nell'aggiornamento"); return; }
     setBanners((prev) => prev.map((x) => x.id === b.id ? { ...x, Attivo: !b.Attivo } : x));
   }
 
-  async function toggleCopertina(b: BannerDoc) {
+  async function toggleCopertina(b: BannerApi) {
     const newVal = !b.Copertina;
-    if (newVal) {
-      // unset copertina on all others first
-      await Promise.all(
-        banners.filter((x) => x.Copertina && x.id !== b.id).map((x) =>
-          updateDoc(doc(db, "Promo_Immagini", x.id), { Copertina: false })
-        )
-      );
-      setBanners((prev) => prev.map((x) => ({ ...x, Copertina: x.id === b.id })));
-    } else {
-      setBanners((prev) => prev.map((x) => x.id === b.id ? { ...x, Copertina: false } : x));
-    }
-    await updateDoc(doc(db, "Promo_Immagini", b.id), { Copertina: newVal });
+    const res = await fetch(`/api/banner/${b.id}/copertina`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: newVal }),
+    });
+    if (!res.ok) { toast.error("Errore nell'aggiornamento"); return; }
+    setBanners((prev) => prev.map((x) => ({
+      ...x,
+      Copertina: newVal ? x.id === b.id : (x.id === b.id ? false : x.Copertina),
+    })));
   }
 
-  async function handleDelete(b: BannerDoc) {
+  async function handleDelete(b: BannerApi) {
     if (!confirm("Eliminare questo banner?")) return;
-    await deleteDoc(doc(db, "Promo_Immagini", b.id));
+    const res = await fetch(`/api/banner/${b.id}`, { method: "DELETE" });
+    if (!res.ok) { toast.error("Errore nell'eliminazione"); return; }
     setBanners((prev) => prev.filter((x) => x.id !== b.id));
     toast.success("Banner eliminato");
   }
