@@ -416,6 +416,8 @@ export default function OrdineAdminDetailPage() {
           { action: "updateStatus", ordineId: id, statusIndex: 5, comment: "We are sorry, but we have run out of stock and therefore had to cancel your order." },
           src,
         );
+      } else if (nuovoStato === "Out of Stock" && src === "eBay") {
+        notifyMarketplace({ action: "outOfStock", ordineId: id }, src);
       } else if (nuovoStato === "Spedito" && isMarketplace) {
         notifyMarketplace({ action: "pushTracking", ordineId: id, corriere: ordine.Corriere }, src);
       }
