@@ -157,17 +157,14 @@ export default function EmailPage() {
     setGenerando(true);
     const emailId = selected.id;
     try {
-      const res = await fetch(
-        "https://us-central1-crm-3iuocs.cloudfunctions.net/generate_ai_reply",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ emailId }),
-        }
-      );
-      if (!res.ok) throw new Error("CF error");
+      const res = await fetch("/api/email-admin/ai-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailId }),
+      });
+      if (!res.ok) throw new Error("Errore generazione AI");
 
-      // La CF aggiorna Risposta_suggerita direttamente su Firestore (come in Flutter).
+      // La route aggiorna Risposta_suggerita direttamente su Firestore.
       // Ri-leggiamo il doc per ottenere il testo generato.
       const snap = await getDoc(doc(db, "Emails", emailId));
       const reply = snap.exists() ? ((snap.data()?.Risposta_suggerita as string) ?? "") : "";
@@ -191,21 +188,18 @@ export default function EmailPage() {
     setSending(true);
     const emailId = selected.id;
     try {
-      // Payload che corrisponde alla CF send_email_reply (come Flutter)
-      await fetch(
-        "https://us-central1-crm-3iuocs.cloudfunctions.net/send_email_reply",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to:               selected.from ?? "",
-            subject:          `RE: ${selected.subject ?? ""}`,
-            htmlBody:         risposta.trim(),
-            replyToMessageId: emailId,
-          }),
-        }
-      );
-      // Aggiorna Firestore dopo invio (come Flutter)
+      const res = await fetch("/api/email-admin/send-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to:               selected.from ?? "",
+          subject:          `RE: ${selected.subject ?? ""}`,
+          htmlBody:         risposta.trim(),
+          replyToMessageId: emailId,
+        }),
+      });
+      if (!res.ok) throw new Error("Errore invio");
+      // Aggiorna Firestore dopo invio
       await updateDoc(doc(db, "Emails", emailId), {
         Risposto:  true,
         letta:     true,
