@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { verifyInternalSecret } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
 import { processOrder } from "@/lib/importers/tyre24Anonimo";
 
 // Recupero manuale ordini T24 Anonimo mancati dal polling standard di
@@ -26,9 +25,8 @@ export async function POST(req: Request) {
   const { searchParams } = new URL(req.url);
   const dryRun = searchParams.get("dryRun") === "true";
 
-  const db = adminDb();
   try {
-    const result = await processOrder(db, order, dryRun);
+    const result = await processOrder(order, dryRun);
     return NextResponse.json({ success: true, dryRun, ...result });
   } catch (err) {
     console.error("[import-ordini/tyre24-anonimo-manual]", err);
