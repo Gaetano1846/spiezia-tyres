@@ -17,6 +17,7 @@ import {
   type CartTotalsConSconto,
   type ScontoApplicato,
 } from "@/lib/promozioni";
+import { useAuth } from "@/components/layout/AuthProvider";
 import type { Promozione } from "@/lib/types";
 
 export type CartItemConSconto = CartItem & {
@@ -62,13 +63,29 @@ export function useCart(): CartContextType {
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [promozioni, setPromozioni] = useState<Promozione[]>([]);
+  const { user } = useAuth();
 
   useEffect(() => {
     setItems(getCart());
   }, []);
 
-  const refreshPromo = useCallback(async (uid: string) => {
-    const promos = await fetchPromozioniUtente(uid);
+  // Carica le promozioni dell'utente NON APPENA la sessione è nota, a livello
+  // globale — così valgono su QUALSIASI percorso verso il checkout (bottone del
+  // CartDrawer, hard-refresh su /checkout, ecc.), non solo dopo aver visitato
+  // /carrello. Senza questo, un ordine con promo attiva veniva creato a prezzo
+  // pieno in silenzio.
+  const uid = user?.uid;
+  useEffect(() => {
+    if (!uid) { setPromozioni([]); return; }
+    let annullato = false;
+    fetchPromozioniUtente(uid)
+      .then((promos) => { if (!annullato) setPromozioni(promos); })
+      .catch(() => { if (!annullato) setPromozioni([]); });
+    return () => { annullato = true; };
+  }, [uid]);
+
+  const refreshPromo = useCallback(async (uidArg: string) => {
+    const promos = await fetchPromozioniUtente(uidArg);
     setPromozioni(promos);
   }, []);
 

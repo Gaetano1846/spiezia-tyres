@@ -192,6 +192,7 @@ export default function OrdinePage() {
   // Compute subtotale from line items (Totale on the order already includes IVA)
   const subtotale = articoli.reduce((acc, a) => acc + a.PrezzoUnitario * a.Quantita, 0);
   const totalePfu = ordine.PFU ?? articoli.reduce((acc, a) => acc + a.PFU * a.Quantita, 0);
+  const contributo = ordine.ContributoLogistico ?? 0;
   const iva = ordine.IVA ?? 0;
   const totale = ordine.Totale ?? 0;
 
@@ -326,6 +327,12 @@ export default function OrdinePage() {
                 <span style={{ color: "var(--text-secondary)" }}>PFU</span>
                 <span style={{ color: "var(--text-primary)" }}>{formatEuro(totalePfu)}</span>
               </div>
+              {contributo > 0 && (
+                <div className="flex justify-between">
+                  <span style={{ color: "var(--text-secondary)" }}>Contributo logistico</span>
+                  <span style={{ color: "var(--text-primary)" }}>{formatEuro(contributo)}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span style={{ color: "var(--text-secondary)" }}>IVA 22%</span>
                 <span style={{ color: "var(--text-primary)" }}>{formatEuro(iva)}</span>

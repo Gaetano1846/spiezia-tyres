@@ -18,6 +18,7 @@ import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
+import { trackGlsJob } from "@/lib/gls/jobTracking";
 import type { Ordine, OrdineStato } from "@/lib/types";
 
 type CronologiaEntry = {
@@ -59,7 +60,7 @@ const fonteColors: Record<string, { bg: string; text: string }> = {
   eBay:           { bg: "#92C821", text: "#fff" },
   Amazon:         { bg: "#2196F3", text: "#fff" },
   WooCommerce:    { bg: "#7F54B3", text: "#fff" },
-  T24:            { bg: "#EC7522", text: "#fff" },
+  Tyre24:         { bg: "#EC7522", text: "#fff" },
   "Prezzo-Gomme": { bg: "#1565C0", text: "#fff" },
   AdTyres:        { bg: "#E8E8E8", text: "#374151" },
   Anonimo:        { bg: "#E8E8E8", text: "#374151" },
@@ -379,24 +380,35 @@ export default function OrdineAdminDetailPage() {
       return;
     }
     // Spedito richiede il codice tracking (come FF: senza tracking → errore, niente cambio stato)
-    const trackingPresente = !!(ordine.GLS_TrackingNumber || tracking).trim();
-    if (nuovoStato === "Spedito" && !trackingPresente) {
+    const trackingTyped = (tracking || "").trim();
+    const trackingSaved = (ordine.GLS_TrackingNumber || "").trim();
+    const trackingEffettivo = trackingSaved || trackingTyped;
+    if (nuovoStato === "Spedito" && !trackingEffettivo) {
       toast.error("Codice tracking assente: inserisci e salva il tracking prima di segnare 'Spedito'.");
       return;
     }
     setSavingStato(true);
     try {
-      await updateDoc(doc(db, "Ordini", id), {
+      const updatePayload: Record<string, unknown> = {
         Stato: nuovoStato,
         DataAggiornamento: serverTimestamp(),
-      });
+      };
+      // Se il tracking è stato digitato ma non ancora salvato, persistilo qui:
+      // il push marketplace (pushTracking) rilegge GLS_TrackingNumber da
+      // Firestore e altrimenti invierebbe un parcel number vuoto.
+      if (nuovoStato === "Spedito" && trackingTyped && trackingTyped !== trackingSaved) {
+        updatePayload.GLS_TrackingNumber = trackingTyped;
+      }
+      await updateDoc(doc(db, "Ordini", id), updatePayload);
       await addDoc(collection(db, "Ordini", id, "Cronologia"), {
         DataOra:   serverTimestamp(),
         Operatore: user?.displayName || user?.email || "Operatore",
         Azione:    `Stato → ${nuovoStato}`,
         Nota:      "",
       });
-      setOrdine({ ...ordine, Stato: nuovoStato });
+      const persistedTracking = updatePayload.GLS_TrackingNumber as string | undefined;
+      setOrdine({ ...ordine, Stato: nuovoStato, ...(persistedTracking ? { GLS_TrackingNumber: persistedTracking } : {}) });
+      if (persistedTracking) setTracking(persistedTracking);
       const newCron = await getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc")));
       setCronologia(newCron.docs.map((d) => ({ id: d.id, ...d.data() } as CronologiaEntry)));
       toast.success(`Stato: ${nuovoStato}`);
@@ -511,21 +523,19 @@ export default function OrdineAdminDetailPage() {
           }),
         }
       );
-      const data = await res.json().catch(() => null) as { tracking?: string; pdfUrl?: string; error?: string } | null;
-      if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
+      // La route ora avvia un job in background e risponde 202 { jobId }
+      // (stesso contratto usato dalla lista ordini). Seguiamo il job col
+      // widget globale invece di dichiarare successo prematuramente e
+      // rileggere l'ordine prima che il job abbia scritto GLS_TrackingNumber/
+      // GLS_PdfUrl.
+      const data = await res.json().catch(() => null) as { jobId?: string; error?: string } | null;
+      if (!res.ok || !data?.jobId) throw new Error(data?.error || `Errore ${res.status}`);
+      trackGlsJob(data.jobId);
       toast.dismiss(toastId);
-      toast.success(`Spedizione GLS ${sedeName} creata`);
-      // La CF aggiorna direttamente Firestore (GLS_TrackingNumber, GLS_PdfUrl).
-      // Rileggo l'ordine per riflettere immediatamente i nuovi valori in UI.
-      const fresh = await getDoc(doc(db, "Ordini", id));
-      if (fresh.exists()) {
-        const o = { id: fresh.id, ...fresh.data() } as Ordine;
-        setOrdine(o);
-        setTracking(o.GLS_TrackingNumber ?? "");
-      }
+      toast.success(`Spedizione GLS ${sedeName} avviata — segui il progresso in basso a destra`);
     } catch {
       toast.dismiss(toastId);
-      toast.error(`Errore nella creazione della spedizione GLS (${sedeName})`);
+      toast.error(`Errore nell'avvio della spedizione GLS (${sedeName})`);
     } finally {
       setCreatingGLS(false);
     }

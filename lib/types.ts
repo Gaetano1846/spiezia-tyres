@@ -178,6 +178,7 @@ export type Ordine = {
   IVA: number;
   PFU: number;
   SpeseExtra?: SpeseExtra[];
+  ContributoLogistico?: number; // contributo logistico totale (0,95€/pneumatico), incluso in Totale
   Pagamento?: Pagamento;
   IndirizzoFatturazione?: Indirizzo;
   IndirizzoSpedizione?: Indirizzo;

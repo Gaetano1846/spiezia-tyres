@@ -190,6 +190,7 @@ export type SearchProdottiParams = {
   diametro?: number | string;
   stagioni?: string[];
   marche?: string[];
+  indiceVelocita?: string;
   categoria?: string;
   soloDisponibili?: boolean;
   page?: number;

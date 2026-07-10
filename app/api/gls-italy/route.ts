@@ -134,6 +134,15 @@ async function runBulkShipmentJob(jobId: string, contractIndex: number, ordiniId
         Stato: "In Preparazione",
         DataAggiornamento: Timestamp.now(),
       });
+      // Voce Cronologia per il cambio stato, come per ogni cambio manuale —
+      // altrimenti gli ordini spediti in bulk avrebbero una transizione di
+      // stato senza traccia nello storico.
+      statoBatch.set(db.collection("Ordini").doc(ordineId).collection("Cronologia").doc(), {
+        DataOra: Timestamp.now(),
+        Operatore: "Sistema (spedizione GLS)",
+        Azione: "Stato → In Preparazione",
+        Nota: "",
+      });
     }
     await statoBatch.commit();
   }

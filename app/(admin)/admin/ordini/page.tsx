@@ -341,6 +341,16 @@ export default function OrdiniAdminPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const { user } = useAuth();
 
+  // I job GLS bulk girano in background: quando uno termina (il widget
+  // SpedizioniJobs lo de-traccia emettendo "gls-job-removed") ri-fetchiamo la
+  // lista così gli ordini appena passati a "In Preparazione" si aggiornano
+  // senza che l'admin debba cambiare intervallo date a mano.
+  useEffect(() => {
+    const onJobDone = () => setReloadKey((k) => k + 1);
+    window.addEventListener("gls-job-removed", onJobDone);
+    return () => window.removeEventListener("gls-job-removed", onJobDone);
+  }, []);
+
   // ── Fetch ──────────────────────────────────────────────────────────────────
   // Re-fetch whenever the date range changes — server-side date filter for accuracy
   useEffect(() => {
@@ -693,9 +703,9 @@ export default function OrdiniAdminPage() {
   // (route /api/gls-italy crea il job Firestore e processa gli ordini uno a uno,
   // marketplace incluso). L'utente non aspetta il batch: riceve subito il jobId,
   // lo traccia (SpedizioniJobsWidget nel layout admin segue il progresso live
-  // su qualunque pagina) e può continuare a lavorare. La lista ordini è già
-  // realtime (onSnapshot sopra), quindi riflette gli stati non appena il job li
-  // aggiorna, senza bisogno di un reload esplicito.
+  // su qualunque pagina) e può continuare a lavorare. La lista ordini NON è
+  // realtime (fetch one-shot via getDocs), quindi ri-fetchiamo quando il job
+  // termina, via l'evento "gls-job-removed" ascoltato nell'effect sopra.
   async function handleSpedisci(sede: "Roma" | "Nola") {
     if (spedendo || aggiornandoTracking) return;
     const ids = [...selectedIds];

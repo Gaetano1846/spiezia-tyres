@@ -133,6 +133,7 @@ export default function ProdottiPage() {
   const [largezza, setLargezza] = useState("");
   const [altezza, setAltezza] = useState("");
   const [diametro, setDiametro] = useState("");
+  const [indiceVel, setIndiceVel] = useState("");
   const [stagioni, setStagioni] = useState<Stagione[]>(() => {
     const s = searchParams.get("stagione");
     return s ? (s.split(",") as Stagione[]) : [];
@@ -236,6 +237,7 @@ export default function ProdottiPage() {
         diametro: diametro || undefined,
         stagioni,
         marche,
+        indiceVelocita: indiceVel.trim() || undefined,
         categoria: categoria || undefined,
         soloDisponibili: true,
         page: pg,
@@ -258,6 +260,11 @@ export default function ProdottiPage() {
         const fsData = fsDoc.data() as Record<string, unknown>;
         const merged: Record<string, unknown> = { ...hit };
         for (const [k, v] of Object.entries(fsData)) {
+          // I prezzi (tutti i tier + Prezzo_Acquisto) arrivano SOLO dall'hit già
+          // strippato per ruolo lato server: NON reintrodurli dal doc Firestore
+          // grezzo, altrimenti il browser vedrebbe Prezzo_Acquisto e tutti i
+          // tier non pertinenti al ruolo (vanifica lo stripPrices della route).
+          if (k.startsWith("Prezzo")) continue;
           if (v !== null && v !== undefined) merged[k] = v;
         }
         return merged as ProdottoHit;
@@ -269,14 +276,14 @@ export default function ProdottiPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, largezza, altezza, diametro, stagioni, marche, categoria, sortBy]);
+  }, [search, largezza, altezza, diametro, stagioni, marche, indiceVel, categoria, sortBy]);
 
   useEffect(() => {
     if (debRef.current) clearTimeout(debRef.current);
     debRef.current = setTimeout(() => doSearch(0), 300);
     return () => { if (debRef.current) clearTimeout(debRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, largezza, altezza, diametro, stagioni, marche, categoria, sortBy]);
+  }, [search, largezza, altezza, diametro, stagioni, marche, indiceVel, categoria, sortBy]);
 
   function handleMisuraRapida(v: string) {
     setMisuraRapida(v);
@@ -284,7 +291,10 @@ export default function ProdottiPage() {
     if (m) { setLargezza(m[1]); setAltezza(m[2]); setDiametro(m[3]); }
   }
 
-  function getQty(id: string) { return quantities[id] ?? 4; }
+  // Default 4, ma mai oltre lo stock disponibile (il prodotto potrebbe averne
+  // 1-3): così lo stepper mostra il valore reale e il toast non annuncia una
+  // quantità superiore a quella effettivamente aggiunta al carrello.
+  function getQty(id: string, max: number) { return Math.min(quantities[id] ?? 4, Math.max(1, max)); }
   function changeQty(id: string, delta: number, max: number) {
     setQuantities((p) => ({ ...p, [id]: Math.max(1, Math.min((p[id] ?? 4) + delta, max)) }));
   }
@@ -293,7 +303,7 @@ export default function ProdottiPage() {
     const prezzo = prezzoPerRuolo(hit, user?.Ruolo);
     const pfu = pfuEffettivo(hit);
     const stock = stockTotale(hit);
-    const qty = getQty(hit.objectID);
+    const qty = getQty(hit.objectID, stock);
     add({ id: hit.objectID, marca: hit.Marca, modello: hit.Modello,
           misura: formatMisura(hit), stagione: hit.Stagione,
           prezzo, pfu, stockMax: stock, quantita: qty, immagine: hit.Immagine });
@@ -303,7 +313,7 @@ export default function ProdottiPage() {
 
   function azzera() {
     setSearch(""); setMisuraRapida(""); setLargezza(""); setAltezza("");
-    setDiametro(""); setStagioni([]); setMarche([]); setMarcaSearch(""); setCategoria("");
+    setDiametro(""); setIndiceVel(""); setStagioni([]); setMarche([]); setMarcaSearch(""); setCategoria("");
   }
 
   // Ordinamento per prezzo: fatto lato server (Meili) su TUTTE le pagine, quindi
@@ -459,6 +469,15 @@ export default function ProdottiPage() {
                   </select>
                 </div>
                 <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Cod. velocità</label>
+                  <select value={indiceVel} onChange={(e) => setIndiceVel(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-sm outline-none"
+                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}>
+                    <option value="">Tutti</option>
+                    {["J","K","L","M","N","P","Q","R","S","T","H","V","W","Y"].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Stagione</label>
                   <div className="flex flex-col gap-1">
                     {(["Estive","Invernali","4 Stagioni"] as Stagione[]).map((s) => {
@@ -605,7 +624,7 @@ export default function ProdottiPage() {
               const stockRoma   = hit.Stock_Roma ?? 0;
               const stockT24    = hit.Stock_T24 ?? 0;
               const stock = stockTotale(hit);
-              const qty = getQty(hit.objectID);
+              const qty = getQty(hit.objectID, stock);
               const esaurito = stock === 0;
               const senzaPrezzo = prezzo === 0;
               const detailsOpen = expandedDetails.has(hit.objectID);

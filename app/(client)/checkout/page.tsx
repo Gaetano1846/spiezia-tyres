@@ -125,7 +125,7 @@ function AddressFormSection({ title, data, onChange }: {
           <InputField label="Città" value={data.citta} onChange={set("citta")} required />
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <InputField label="Provincia" value={data.provincia} onChange={set("provincia")} placeholder="es. NA" required />
+          <InputField label="Provincia" value={data.provincia} onChange={set("provincia")} placeholder="es. NA" />
           <InputField label="Partita IVA" value={data.partitaIva} onChange={set("partitaIva")} placeholder="IT..." />
         </div>
       </div>
