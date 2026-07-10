@@ -267,57 +267,37 @@ export default function SpedizioniPage() {
     setSelected(new Set());
   }
 
-  // Trasmetti Spedizioni — mirror FlutterFlow (due gambe in parallelo):
-  //  • GLS → CloseMultipleOrdersGLSCall: action "closeMultipleOrders" con gli ID
-  //    ordine delle spedizioni GLS. La CF raggruppa per contratto, chiude i colli
-  //    e porta gli ordini a "Spedito".
-  //  • SDA → CloseShippingSDACall: action "closeSda" con gli ID doc spedizione SDA
-  //    (LDV). Chiude il manifesto su reshark e marca le spedizioni "closed".
+  // Trasmetti Spedizioni — mirror FlutterFlow: GLS → CloseMultipleOrdersGLSCall,
+  // action "closeMultipleOrders" con gli ID ordine delle spedizioni GLS. La CF
+  // raggruppa per contratto, chiude i colli e porta gli ordini a "Spedito".
+  // SDA (corriere dismesso) è escluso dal filtro — eventuali righe storiche con
+  // Corriere==="SDA" restano visibili in lista ma non vengono processate qui.
   async function handleChiudiManifesto() {
     const glsSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere !== "SDA" && r.OrdineId);
-    const sdaSelected = filtered.filter((r) => selected.has(r.id) && r.Corriere === "SDA");
-    if (glsSelected.length === 0 && sdaSelected.length === 0) {
-      toast.error("Nessuna spedizione GLS o SDA selezionata");
+    if (glsSelected.length === 0) {
+      toast.error("Nessuna spedizione GLS selezionata");
       return;
     }
     const ordiniIds = [...new Set(glsSelected.map((r) => r.OrdineId!))];
-    const sdaLdvs   = [...new Set(sdaSelected.map((r) => r.id))];
 
     setBusy("trasmetti");
-    const toastId = toast.loading(
-      `Trasmissione spedizioni…${ordiniIds.length ? ` GLS: ${ordiniIds.length} ordini` : ""}${sdaLdvs.length ? ` · SDA: ${sdaLdvs.length}` : ""}`
-    );
+    const toastId = toast.loading(`Trasmissione spedizioni… GLS: ${ordiniIds.length} ordini`);
     try {
       const msgs: string[] = [];
       let hadError = false;
 
-      // ── GLS (chiusura manifesto via closeMultipleOrders) ──
-      if (ordiniIds.length > 0) {
-        const res = await fetch("/api/gls-italy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "closeMultipleOrders", ordiniIds }),
-        });
-        const data = await res.json().catch(() => null) as { error?: string; data?: { totalParcelsClosed?: number; totalParcelsFailed?: number } } | null;
-        if (!res.ok) { hadError = true; msgs.push(`GLS: errore (${data?.error || res.status})`); }
-        else {
-          const failed = data?.data?.totalParcelsFailed ?? 0;
-          const closed = data?.data?.totalParcelsClosed ?? 0;
-          if (failed > 0) hadError = true;
-          msgs.push(`GLS: ${closed} ok${failed ? `, ${failed} falliti` : ""}`);
-        }
-      }
-
-      // ── SDA (chiusura manifesto reshark) ──
-      if (sdaLdvs.length > 0) {
-        const res = await fetch("/api/marketplace", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "closeSda", ldvs: sdaLdvs }),
-        });
-        const data = await res.json().catch(() => null) as { error?: string; data?: { closed?: number } } | null;
-        if (!res.ok) { hadError = true; msgs.push(`SDA: errore (${data?.error || res.status})`); }
-        else msgs.push(`SDA: ${data?.data?.closed ?? sdaLdvs.length} chiuse`);
+      const res = await fetch("/api/gls-italy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "closeMultipleOrders", ordiniIds }),
+      });
+      const data = await res.json().catch(() => null) as { error?: string; data?: { totalParcelsClosed?: number; totalParcelsFailed?: number } } | null;
+      if (!res.ok) { hadError = true; msgs.push(`GLS: errore (${data?.error || res.status})`); }
+      else {
+        const failed = data?.data?.totalParcelsFailed ?? 0;
+        const closed = data?.data?.totalParcelsClosed ?? 0;
+        if (failed > 0) hadError = true;
+        msgs.push(`GLS: ${closed} ok${failed ? `, ${failed} falliti` : ""}`);
       }
 
       toast.dismiss(toastId);
@@ -500,24 +480,10 @@ export default function SpedizioniPage() {
   }
 
   async function handlePrintLabel(r: SpedizioneApi) {
-    const isSDA = r.Corriere === "SDA";
-
-    if (isSDA) {
-      // SDA: parcelId richiesto per reshark-shipping CF
-      if (!r.ParcelId) { toast.error("Nessun ID spedizione SDA disponibile"); return; }
-      const toastId = toast.loading("Recupero etichetta SDA…");
-      try {
-        const res = await fetch(
-          `https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=label&parcelId=${r.ParcelId}`
-        );
-        if (!res.ok) throw new Error(`CF error ${res.status}`);
-        const blob = await res.blob();
-        window.open(URL.createObjectURL(blob), "_blank");
-        toast.dismiss(toastId);
-      } catch {
-        toast.dismiss(toastId);
-        toast.error("Impossibile recuperare l'etichetta SDA");
-      }
+    // SDA (corriere dismesso, reshark-shipping non più chiamata): righe storiche
+    // restano visibili in lista ma la stampa etichetta non è più disponibile.
+    if (r.Corriere === "SDA") {
+      toast.error("Corriere SDA dismesso — etichetta non più disponibile");
       return;
     }
 

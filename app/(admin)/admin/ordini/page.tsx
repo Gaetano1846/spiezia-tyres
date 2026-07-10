@@ -336,9 +336,8 @@ export default function OrdiniAdminPage() {
   const [annullaModal, setAnnullaModal] = useState<{ docId: string; orderId: string } | null>(null);
   const [motivoAnnulla, setMotivoAnnulla] = useState("");
   const [annullando, setAnnullando] = useState(false);
-  const [spedendo, setSpedendo] = useState<"Roma" | "Nola" | "SDA" | null>(null);
+  const [spedendo, setSpedendo] = useState<"Roma" | "Nola" | null>(null);
   const [aggiornandoTracking, setAggiornandoTracking] = useState(false);
-  const [nolaCorriereOpen, setNolaCorriereOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const { user } = useAuth();
 
@@ -496,9 +495,33 @@ export default function OrdiniAdminPage() {
     setSelectedIds(allSelected ? new Set() : new Set(filtered.map((e) => e.docId)));
   }
 
+  // Notifica il marketplace di origine (Tyre24/Anonimo/eBay/Amazon/AdTyres) via
+  // /api/marketplace. Automatico al cambio stato — stesso mirror FF stato_ordine
+  // già in produzione nella pagina di dettaglio ordine.
+  async function notifyMarketplace(body: Record<string, unknown>, label: string) {
+    const t = toast.loading(`Sincronizzazione ${label}…`);
+    try {
+      const res = await fetch("/api/marketplace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null) as { success?: boolean; error?: string; data?: { ok?: boolean; skipped?: boolean; detail?: string } } | null;
+      toast.dismiss(t);
+      const d = data?.data;
+      if (d?.skipped) return;                       // fonte senza marketplace: nessun avviso
+      if (res.ok && data?.success && d?.ok) toast.success(d?.detail || `${label}: sincronizzato`);
+      else toast.error(d?.detail || data?.error || `Errore sincronizzazione ${label}`);
+    } catch {
+      toast.dismiss(t);
+      toast.error(`Errore sincronizzazione ${label}`);
+    }
+  }
+
   // ── Cambio stato inline (per riga) ─────────────────────────────────────────
-  async function handleRowStatoChange(docId: string, nuovoStato: OrdineStato, prevStato: OrdineStato, orderId: string) {
+  async function handleRowStatoChange(docId: string, nuovoStato: OrdineStato, prevStato: OrdineStato, ordine: Ordine) {
     if (savingStato || nuovoStato === prevStato) return;
+    const orderId = ordine.id ?? docId;
 
     // Stati impostabili solo dal sistema: blocco con avviso
     if (STATI_READONLY.has(nuovoStato)) {
@@ -510,6 +533,13 @@ export default function OrdiniAdminPage() {
     if (nuovoStato === "Annullato") {
       setAnnullaModal({ docId, orderId });
       setMotivoAnnulla("");
+      return;
+    }
+
+    // Spedito richiede il codice tracking (come FF e come il dettaglio ordine:
+    // senza tracking → errore, niente cambio stato né push marketplace)
+    if (nuovoStato === "Spedito" && !(ordine.GLS_TrackingNumber ?? "").trim()) {
+      toast.error("Codice tracking assente: inseriscilo dal dettaglio ordine prima di segnare 'Spedito'.");
       return;
     }
 
@@ -530,6 +560,27 @@ export default function OrdiniAdminPage() {
         prev.map((e) => e.docId === docId ? { ...e, ordine: { ...e.ordine, Stato: nuovoStato } } : e)
       );
       toast.success(`Stato: ${nuovoStato}`);
+
+      // ── Side-effect marketplace automatico (mirror FF stato_ordine, identico
+      // al ramo già in produzione nel dettaglio ordine) ──
+      const src = ordine.Source as string;
+      const isT24like     = src === "Tyre24" || src === "Anonimo";
+      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres"].includes(src);
+      if (nuovoStato === "In Preparazione" && isT24like) {
+        notifyMarketplace(
+          { action: "updateStatus", ordineId: docId, statusIndex: 2, comment: "We’ve received your order and are now processing it." },
+          src,
+        );
+      } else if (nuovoStato === "Out of Stock" && isT24like) {
+        notifyMarketplace(
+          { action: "updateStatus", ordineId: docId, statusIndex: 5, comment: "We are sorry, but we have run out of stock and therefore had to cancel your order." },
+          src,
+        );
+      } else if (nuovoStato === "Out of Stock" && src === "eBay") {
+        notifyMarketplace({ action: "outOfStock", ordineId: docId }, src);
+      } else if (nuovoStato === "Spedito" && isMarketplace) {
+        notifyMarketplace({ action: "pushTracking", ordineId: docId, corriere: ordine.Corriere }, src);
+      }
     } catch {
       toast.error("Errore aggiornamento stato");
     } finally {
@@ -673,57 +724,6 @@ export default function OrdiniAdminPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Errore sconosciuto";
       toast.error(`Errore avvio spedizione GLS (${sede}): ${msg}`);
-    } finally {
-      setSpedendo(null);
-    }
-  }
-
-  // Spedisci Roma · SDA — crea le spedizioni SDA (Reshark) per gli ordini
-  // selezionati. Stessa CF del dettaglio ordine (handleCreaSDA):
-  // reshark-shipping?action=create_order con CourierConfigurationId 197.
-  // La CF NON aggiorna Firestore per SDA, quindi (come nel dettaglio) scriviamo
-  // noi il tracking sull'ordine. Iteriamo per ordine così possiamo mappare
-  // il tracking restituito al singolo ordine.
-  async function handleSpedisciSDA() {
-    if (spedendo || aggiornandoTracking) return;
-    const ids = [...selectedIds];
-    if (ids.length === 0) { toast.error("Nessun ordine selezionato"); return; }
-
-    setSpedendo("SDA");
-    const toastId = toast.loading(`Creazione spedizioni SDA — ${ids.length} ordini…`);
-    try {
-      const results = await Promise.allSettled(
-        ids.map(async (orderId) => {
-          const res = await fetch(
-            "https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=create_order",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ orderIds: [orderId], CourierConfigurationId: 197 }),
-            }
-          );
-          const data = await res.json().catch(() => null) as { tracking?: string; error?: string } | null;
-          if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
-          if (data?.tracking) {
-            await updateDoc(doc(db, "Ordini", orderId), { GLS_TrackingNumber: data.tracking, Corriere: "SDA" });
-          }
-        })
-      );
-      const okIds = ids.filter((_, i) => results[i].status === "fulfilled");
-      const ok = okIds.length;
-      const ko = results.length - ok;
-      // Mirror FF: dopo la creazione SDA, comunica il tracking ai marketplace.
-      const mk = okIds.length
-        ? await pushMarketplaceEntries(okIds.map((id) => [id, "SDA"] as [string, string]))
-        : { ok: 0, ko: 0, skipped: 0 };
-      toast.dismiss(toastId);
-      if (ko === 0) toast.success(`Spedizioni SDA create (${ok} ordini)${mkLabel(mk)}`);
-      else toast.error(`SDA: ${ok} ok, ${ko} falliti${mkLabel(mk)}`);
-      setSelectedIds(new Set());
-      setReloadKey((k) => k + 1);
-    } catch {
-      toast.dismiss(toastId);
-      toast.error("Errore nella creazione delle spedizioni SDA");
     } finally {
       setSpedendo(null);
     }
@@ -1014,12 +1014,12 @@ export default function OrdiniAdminPage() {
               <MapPin size={12} /> {spedendo === "Roma" ? "Spedizione Roma…" : "Spedisci Roma"}
             </button>
             <button
-              onClick={() => setNolaCorriereOpen(true)}
+              onClick={() => handleSpedisci("Nola")}
               disabled={spedendo !== null || aggiornandoTracking}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors hover:bg-[#f9fafb] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontFamily: "var(--font-montserrat)" }}
             >
-              <MapPin size={12} /> {spedendo === "Nola" ? "Spedizione Nola…" : spedendo === "SDA" ? "Spedizione SDA…" : "Spedisci Nola"}
+              <MapPin size={12} /> {spedendo === "Nola" ? "Spedizione Nola…" : "Spedisci Nola"}
             </button>
             <button
               onClick={handleAggiornaTracking}
@@ -1176,7 +1176,7 @@ export default function OrdiniAdminPage() {
                                 <select
                                   value={cur}
                                   disabled={isSaving || isReadOnly}
-                                  onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine.id ?? docId)}
+                                  onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine)}
                                   className="appearance-none pl-2.5 pr-7 py-1 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                                   style={{
                                     background: style.bg,
@@ -1286,7 +1286,7 @@ export default function OrdiniAdminPage() {
                         <select
                           value={cur}
                           disabled={isSaving || isReadOnly}
-                          onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine.id ?? docId)}
+                          onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine)}
                           className="appearance-none w-full pl-2.5 pr-7 py-1.5 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                           style={{ background: pill.bg, color: pill.text, border: `1px solid ${pill.border}`, fontFamily: "var(--font-montserrat)", outline: "none" }}
                         >
@@ -1355,45 +1355,6 @@ export default function OrdiniAdminPage() {
           orderId={spedizioneModal.orderId}
           onClose={() => setSpedizioneModal(null)}
         />
-      )}
-
-      {/* Scelta corriere per Spedisci Nola — mirror FF (dialog "Corriere? SDA/GLS") */}
-      {nolaCorriereOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "rgba(0,0,0,0.45)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setNolaCorriereOpen(false); }}
-        >
-          <div className="w-full max-w-sm rounded-2xl p-6" style={{ background: "#fff", border: "1px solid var(--border)" }}>
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="font-bold text-base" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
-                Spedisci Nola — Corriere
-              </h3>
-              <button onClick={() => setNolaCorriereOpen(false)} className="p-1 rounded-lg hover:bg-[#F1F4F8]">
-                <X size={18} style={{ color: "#6b7280" }} />
-              </button>
-            </div>
-            <p className="text-xs mb-4" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-              Scegli il corriere per {selectedIds.size} ordin{selectedIds.size === 1 ? "e" : "i"} selezionat{selectedIds.size === 1 ? "o" : "i"}.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setNolaCorriereOpen(false); handleSpedisci("Nola"); }}
-                className="flex-1 flex flex-col items-center gap-1 px-4 py-4 rounded-xl text-sm font-bold transition-transform hover:scale-[1.02]"
-                style={{ background: "#003DA5", color: "#fff", fontFamily: "var(--font-montserrat)" }}
-              >
-                <Truck size={20} /> GLS
-              </button>
-              <button
-                onClick={() => { setNolaCorriereOpen(false); handleSpedisciSDA(); }}
-                className="flex-1 flex flex-col items-center gap-1 px-4 py-4 rounded-xl text-sm font-bold transition-transform hover:scale-[1.02]"
-                style={{ background: "#E8001C", color: "#fff", fontFamily: "var(--font-montserrat)" }}
-              >
-                <Truck size={20} /> SDA
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Modal annulla ordine — mirror FF MotivoAnnullamentoWidget */}

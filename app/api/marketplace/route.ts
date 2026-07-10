@@ -5,7 +5,6 @@ import { getSession, isAdmin } from "@/lib/auth";
 // Port interno delle integrazioni marketplace della vecchia CF ExternalApiIntegrations.
 // POST body JSON:
 //   { action: "pushTracking", ordineId, corriere }  → push tracking al marketplace di origine
-//   { action: "closeSda", ldvs: [spedizioneDocId,...] } → chiusura manifesto SDA (reshark)
 // Protetta da sessione admin (come /api/gls-italy): esegue chiamate reali ai marketplace.
 
 export const runtime = "nodejs";

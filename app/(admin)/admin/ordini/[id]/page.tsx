@@ -11,7 +11,7 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import {
   ChevronRight, ArrowLeft, Printer, Mail, XCircle, ExternalLink,
-  Plus, Send, CheckCircle2, Package, Truck, Clock, RotateCcw, Box,
+  Plus, Send, CheckCircle2, Package, Truck, Clock, RotateCcw,
   Pencil, X, Tag,
 } from "lucide-react";
 import Link from "next/link";
@@ -239,7 +239,6 @@ export default function OrdineAdminDetailPage() {
   const [savingStato,    setSavingStato]    = useState(false);
   const [savingNota,     setSavingNota]     = useState(false);
   const [savingTracking, setSavingTracking] = useState(false);
-  const [creatingSDA,    setCreatingSDA]    = useState(false);
   const [creatingGLS,    setCreatingGLS]    = useState(false);
   const [sendingEmail,   setSendingEmail]   = useState(false);
   const [aggiornandoGLS, setAggiornandoGLS] = useState(false);
@@ -454,12 +453,13 @@ export default function OrdineAdminDetailPage() {
       await updateDoc(doc(db, "Ordini", id), { GLS_TrackingNumber: tracking });
       setOrdine({ ...ordine, GLS_TrackingNumber: tracking });
 
-      // AdTyres sync — la CF accetta {orderDocId, tracking} (vedi sendADTyresTracking)
+      // AdTyres sync — push il tracking appena salvato (lib/marketplace/sdk.js
+      // rilegge GLS_TrackingNumber dall'ordine e carica il CSV via FTP)
       if (tracking && (ordine.Source as string) === "AdTyres") {
-        fetch("https://europe-west1-crm-3iuocs.cloudfunctions.net/sendADTyresTracking", {
+        fetch("/api/marketplace", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ orderDocId: id, tracking }),
+          body: JSON.stringify({ action: "pushTracking", ordineId: id }),
         }).catch(() => {});
       }
 
@@ -489,40 +489,6 @@ export default function OrdineAdminDetailPage() {
       toast.error("Errore aggiornamento colli/peso");
     } finally {
       setSavingColli(false);
-    }
-  }
-
-  async function handleCreaSDA() {
-    if (!ordine || creatingSDA) return;
-    setCreatingSDA(true);
-    const toastId = toast.loading("Creazione spedizione SDA…");
-    try {
-      // Payload identico al FF (api_manager._createShippingSDACall)
-      const res = await fetch(
-        "https://europe-west1-crm-3iuocs.cloudfunctions.net/reshark-shipping?action=create_order",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            orderIds:                [id],
-            CourierConfigurationId:  197,
-          }),
-        }
-      );
-      const data = await res.json().catch(() => null) as { tracking?: string; ldv?: string; parcelId?: string; error?: string } | null;
-      if (!res.ok) throw new Error(data?.error || `CF ${res.status}`);
-      toast.dismiss(toastId);
-      toast.success(`Spedizione SDA creata${data?.ldv ? ` · LDV ${data.ldv}` : data?.parcelId ? ` · ID ${data.parcelId}` : ""}`);
-      if (data?.tracking) {
-        setTracking(data.tracking);
-        await updateDoc(doc(db, "Ordini", id), { GLS_TrackingNumber: data.tracking, Corriere: "SDA" });
-        setOrdine((o) => o ? { ...o, GLS_TrackingNumber: data.tracking, Corriere: "SDA" } : o);
-      }
-    } catch {
-      toast.dismiss(toastId);
-      toast.error("Errore nella creazione della spedizione SDA");
-    } finally {
-      setCreatingSDA(false);
     }
   }
 
@@ -1234,15 +1200,6 @@ export default function OrdineAdminDetailPage() {
                 style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
               >
                 <Truck size={15} /> {aggiornandoGLS ? "Aggiornamento…" : "Aggiorna etichette GLS"}
-              </button>
-
-              <button
-                onClick={handleCreaSDA}
-                disabled={creatingSDA}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors hover:bg-[#F1F4F8] disabled:opacity-40"
-                style={{ border: "1px solid var(--border)", color: "var(--text-primary)", fontFamily: "var(--font-montserrat)", background: "#fff" }}
-              >
-                <Box size={15} /> {creatingSDA ? "Creazione SDA…" : "Crea spedizione SDA"}
               </button>
 
               {/* GLS — sede selector */}
