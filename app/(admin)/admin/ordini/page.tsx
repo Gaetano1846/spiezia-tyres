@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
-  collection, query, orderBy, getDocs, getDoc, getCountFromServer,
+  collection, query, orderBy, getDocs, getDoc,
   where, limit, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, Timestamp,
   type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
-import { ShoppingBag, Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown, SlidersHorizontal } from "lucide-react";
+import { Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
@@ -72,7 +72,6 @@ const STATO_PILL: Record<string, { bg: string; text: string; border: string }> =
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type OrdineEntry = { ordine: Ordine; clienteNome: string; docId: string };
-type KPIs = { totale: number; daEvadere: number; inTransito: number; annullati: number };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -299,7 +298,6 @@ function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: 
 
 export default function OrdiniAdminPage() {
   const [entries, setEntries] = useState<OrdineEntry[]>([]);
-  const [kpis, setKpis]       = useState<KPIs | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");
@@ -362,26 +360,13 @@ export default function OrdiniAdminPage() {
         const daTsamp = Timestamp.fromDate(daDate);
         const aTsamp  = Timestamp.fromDate(aDate);
 
-        const [ordiniSnap, kpiTotale, kpiDaEvadere, kpiTransito, kpiAnnullati] = await Promise.all([
-          getDocs(query(
-            collection(db, "Ordini"),
-            where("DataOra", ">=", daTsamp),
-            where("DataOra", "<=", aTsamp),
-            orderBy("DataOra", "desc"),
-            limit(2000),
-          )),
-          getCountFromServer(collection(db, "Ordini")),
-          getCountFromServer(query(collection(db, "Ordini"), where("Stato", "in", ["In Lavorazione", "In Preparazione"]))),
-          getCountFromServer(query(collection(db, "Ordini"), where("Stato", "==", "Spedito"))),
-          getCountFromServer(query(collection(db, "Ordini"), where("Stato", "==", "Annullato"))),
-        ]);
-
-        setKpis({
-          totale:     kpiTotale.data().count,
-          daEvadere:  kpiDaEvadere.data().count,
-          inTransito: kpiTransito.data().count,
-          annullati:  kpiAnnullati.data().count,
-        });
+        const ordiniSnap = await getDocs(query(
+          collection(db, "Ordini"),
+          where("DataOra", ">=", daTsamp),
+          where("DataOra", "<=", aTsamp),
+          orderBy("DataOra", "desc"),
+          limit(2000),
+        ));
 
         const ordini = ordiniSnap.docs
           .map((d) => {
@@ -776,13 +761,26 @@ export default function OrdiniAdminPage() {
     ? formatISOToDisplay(dataDa)
     : `${formatISOToDisplay(dataDa)} - ${formatISOToDisplay(dataA)}`;
 
-  // ── KPI cards ──────────────────────────────────────────────────────────────
-  const kpiCards = [
-    { label: "Totale ordini",  value: kpis?.totale    ?? 0, accent: "#FFC803" },
-    { label: "Da evadere",     value: kpis?.daEvadere  ?? 0, accent: "#EE8B60" },
-    { label: "In transito",    value: kpis?.inTransito ?? 0, accent: "#249689" },
-    { label: "Annullati",      value: kpis?.annullati  ?? 0, accent: "#FF5963" },
-  ];
+  // ── Riepilogo per fonte (ordini + fatturato) sul range di date selezionato ──
+  // Aggregato dagli ordini realmente caricati (stesso set filtrato per data).
+  const fonteStats = (() => {
+    const m = new Map<string, { count: number; fatturato: number }>();
+    let totCount = 0, totFatt = 0;
+    for (const { ordine } of entries) {
+      const src = (ordine.Source as string)?.trim() || "Altro";
+      const tot = Number(ordine.Totale ?? 0);
+      const cur = m.get(src) ?? { count: 0, fatturato: 0 };
+      cur.count += 1;
+      cur.fatturato += tot;
+      m.set(src, cur);
+      totCount += 1;
+      totFatt += tot;
+    }
+    const rows = [...m.entries()]
+      .map(([source, s]) => ({ source, ...s }))
+      .sort((a, b) => b.fatturato - a.fatturato);
+    return { rows, totCount, totFatt };
+  })();
 
   return (
     <div className="px-0 md:px-5 py-3 md:py-5 space-y-2.5 md:space-y-6">
@@ -807,31 +805,48 @@ export default function OrdiniAdminPage() {
         </a>
       </div>
 
-      {/* KPI cards — nascoste su mobile (occupano troppo spazio), visibili da md in su */}
-      <div className="hidden md:grid grid-cols-2 xl:grid-cols-4 gap-2.5 md:gap-4">
-        {kpiCards.map(({ label, value, accent }) => (
-          <div
-            key={label}
-            className="rounded-xl md:rounded-2xl p-2.5 md:p-5 overflow-hidden"
-            style={{ background: "#fff", border: "1px solid #e5e7eb" }}
-          >
-            <div className="flex items-center justify-between gap-1.5 mb-0.5 md:mb-2">
-              <span className="min-w-0 text-[9px] md:text-[10px] font-bold uppercase tracking-wider leading-tight break-words" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
-                {label}
-              </span>
-              <div className="w-5 h-5 md:w-7 md:h-7 rounded-md md:rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${accent}22` }}>
-                <ShoppingBag className="w-3 h-3 md:w-3.5 md:h-3.5" style={{ color: accent }} />
-              </div>
-            </div>
-            {loading ? (
-              <div className="h-6 md:h-8 w-12 md:w-14 rounded animate-pulse" style={{ background: "#f3f4f6" }} />
-            ) : (
-              <p className="text-lg md:text-3xl font-black leading-none truncate" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
-                {value}
-              </p>
-            )}
+      {/* Riepilogo per fonte — ordini + fatturato nel range di date selezionato.
+          Sostituisce i vecchi KPI di stato: quello che serve è "per ogni canale,
+          quanti ordini e quanto fatturato nelle date scelte". */}
+      <div className="rounded-xl md:rounded-2xl overflow-hidden" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
+        <div className="flex items-center justify-between px-3 md:px-5 py-2.5 md:py-3" style={{ borderBottom: "1px solid #f3f4f6" }}>
+          <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+            Ordini &amp; fatturato per canale — {dataDa === dataA ? dataDa : `${dataDa} → ${dataA}`}
+          </span>
+          {!loading && (
+            <span className="text-xs md:text-sm font-bold" style={{ color: "#111", fontFamily: "var(--font-montserrat)" }}>
+              {fonteStats.totCount} ordini · {formatEuro(fonteStats.totFatt)}
+            </span>
+          )}
+        </div>
+        {loading ? (
+          <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-2.5">
+            {[1,2,3,4].map((i) => <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: "#f3f4f6" }} />)}
           </div>
-        ))}
+        ) : fonteStats.rows.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-center" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
+            Nessun ordine nel periodo selezionato.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5 p-3 md:p-4">
+            {fonteStats.rows.map(({ source, count, fatturato }) => {
+              const c = FONTE_COLORS[source] ?? { bg: "#E8E8E8", text: "#374151" };
+              return (
+                <div key={source} className="rounded-xl p-2.5 md:p-3.5" style={{ background: "#f9fafb", border: "1px solid #f3f4f6" }}>
+                  <span className="inline-block px-2 py-0.5 rounded-full text-[10px] md:text-xs font-bold mb-2" style={{ background: c.bg, color: c.text, fontFamily: "var(--font-montserrat)" }}>
+                    {source}
+                  </span>
+                  <p className="text-base md:text-xl font-black leading-none" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
+                    {formatEuro(fatturato)}
+                  </p>
+                  <p className="text-[10px] md:text-xs mt-1" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                    {count} ordin{count === 1 ? "e" : "i"}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Filter bar — ricerca + reset. Su desktop Fonte/Stato sono nell'intestazione tabella

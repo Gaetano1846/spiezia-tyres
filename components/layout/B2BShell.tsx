@@ -12,10 +12,9 @@ export default function B2BShell({ children }: { children: React.ReactNode }) {
   const [cartOpen, setCartOpen] = useState(false);
   const pathname = usePathname();
 
-  // La striscia carosello promozionale è mostrata all'inizio di ogni pagina (client
-  // e admin), dentro l'area scrollabile. La homepage ha già il suo carosello grande
-  // (evita il doppione), quindi lì non la ripetiamo.
-  const showPromo = pathname !== "/";
+  // La striscia carosello promozionale va mostrata SOLO nella ricerca pneumatici
+  // (catalogo client `/prodotti`), non nel backend admin né nelle altre pagine.
+  const showPromo = pathname === "/prodotti";
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ background: "#f9fafb" }}>
