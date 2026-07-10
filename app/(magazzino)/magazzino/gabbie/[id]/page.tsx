@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Package, ChevronRight, Plus, Trash2, QrCode, Search, X, Loader2 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
@@ -145,31 +143,22 @@ export default function GabbiaPage() {
     setGeneratingQR(true);
     const toastId = toast.loading("Generazione QR…");
     try {
-      // Payload identico al vecchio GeneraQRCall: la Cloud Function vuole
-      // ESATTAMENTE { link, id }. Il link è la pagina della gabbia da aprire
-      // scansionando il QR; la CF genera l'immagine e scrive l'URL nel campo
-      // Magazzino/<id>.QR_code direttamente su Firestore (NON restituisce un
-      // PNG nel body) — resta l'unica lettura Firestore diretta di questa
-      // pagina: legge un valore appena scritto da un sistema esterno alla
-      // nostra API, il bridge lo sincronizzerà su Postgres in autonomia.
+      // Genera QR + ZPL server-side (/api/magazzino/:id/qr, port di GenerateQR)
+      // e scrive `qr_code` direttamente su Postgres — l'URL torna nella
+      // risposta, nessuna lettura Firestore.
       const link = `https://newb2b.spieziatyres.it/Gabbia?gabbiaRef=${id}`;
-      const res = await fetch("https://europe-west3-crm-3iuocs.cloudfunctions.net/GenerateQR", {
+      const res = await fetch(`/api/magazzino/${id}/qr`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ link, id }),
+        body: JSON.stringify({ link }),
       });
-      if (!res.ok) throw new Error(`CF ${res.status}`);
+      const data = await res.json().catch(() => null) as { QR_code_url?: string; error?: string } | null;
+      if (!res.ok || !data?.QR_code_url) throw new Error(data?.error || `Errore ${res.status}`);
 
-      const snap = await getDoc(doc(db, "Magazzino", id));
-      const qrUrl = (snap.data()?.QR_code as string | undefined) ?? "";
       toast.dismiss(toastId);
-      if (qrUrl) {
-        setGabbia((g) => (g ? { ...g, QrCode: qrUrl } : g));
-        window.open(qrUrl, "_blank", "noopener");
-        toast.success("QR generato");
-      } else {
-        toast.success("QR generato");
-      }
+      setGabbia((g) => (g ? { ...g, QrCode: data.QR_code_url! } : g));
+      window.open(data.QR_code_url, "_blank", "noopener");
+      toast.success("QR generato");
     } catch {
       toast.dismiss(toastId);
       toast.error("Errore nella generazione del QR");

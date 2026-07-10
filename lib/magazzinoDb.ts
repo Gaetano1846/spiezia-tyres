@@ -12,6 +12,9 @@
 // della pagina Firestore originale.
 
 import { getDb, newId } from "@/lib/db";
+import QRCode from "qrcode";
+import { writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 
 export interface LottoApi {
   ProdottoId: string;
@@ -241,4 +244,89 @@ export async function cercaGabbiePerProdotto(prodottoId: string): Promise<Gabbia
     SedeNome: (r.sede_nome as string) ?? "—",
     Quantita: Number(r.quantita ?? 0),
   }));
+}
+
+// ─── QR code — port 1:1 della Cloud Function `GenerateQR` (entry point reale
+// `generateQrCodeZPL`, sorgente riscaricato da GCP; `generateZPLWithGraphic`/
+// `extractGfFromFullLabel` nel sorgente originale sono dead code, mai
+// chiamati dall'handler HTTP — non portati). Genera un PNG QR (libreria
+// `qrcode`), lo converte in ZPL tramite l'API pubblica Labelary (terze parti,
+// nessuna credenziale), lo centra in un'etichetta 10x10cm.
+//
+// Differenze dal sorgente CF originale:
+//  - X/Y/Z letti da Postgres (b2b.magazzino) invece che da Firestore — il
+//    dominio Magazzino è già Postgres-first dalla Fase 6e, questo era l'unica
+//    lettura Firestore diretta rimasta in questa pagina.
+//  - Il file .zpl va su disco locale VPS (/app/storage/public, servito da
+//    nginx) invece che su GCS — stesso pattern di lib/bannerDb.ts.
+//  - Scrive solo la colonna `qr_code` (le colonne di metadati dell'originale,
+//    QR_code_generated_at/QR_target_link/QR_method/QR_image_info, non esistono
+//    in b2b.magazzino e non sono lette da nessuna pagina).
+const CM_PER_IN = 2.54;
+function cmToDots(cm: number, dpi: number): number {
+  return Math.round((cm / CM_PER_IN) * dpi);
+}
+
+async function labelaryGraphicsRawZpl(pngBuffer: Buffer): Promise<string> {
+  const form = new FormData();
+  const blob = new Blob([new Uint8Array(pngBuffer)], { type: "image/png" });
+  form.append("file", blob, "qr.png");
+
+  const res = await fetch("http://api.labelary.com/v1/graphics", {
+    method: "POST",
+    headers: { Accept: "application/zpl" },
+    body: form,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Labelary error ${res.status}: ${text.slice(0, 200)}`);
+  if (!text.includes("^GF")) throw new Error("Labelary response did not contain ^GF data.");
+  return text;
+}
+
+function centerQRCodeInLabel(rawZpl: string, dpi = 203): string {
+  const labelWidthDots = cmToDots(10, dpi);
+  const labelHeightDots = cmToDots(10, dpi);
+  const qrSizeDots = cmToDots(6, dpi);
+  const centerX = Math.floor((labelWidthDots - qrSizeDots) / 2);
+  const centerY = Math.floor((labelHeightDots - qrSizeDots) / 2);
+
+  let graphicData = rawZpl;
+  if (rawZpl.includes("^XA")) {
+    const gfMatch = rawZpl.match(/\^GF[^]*?\^FS/);
+    if (gfMatch) graphicData = gfMatch[0];
+  }
+
+  return `^XA\n^PW${labelWidthDots}\n^LS0\n^FO${centerX},${centerY}${graphicData}\n^XZ\n`;
+}
+
+/** Genera il QR ZPL per una gabbia, lo salva su disco, aggiorna `qr_code`. Ritorna la URL pubblica. */
+export async function generateGabbiaQr(gabbiaId: string, link: string): Promise<string> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+
+  const { rows } = await db.query(`SELECT x, y, z FROM b2b.magazzino WHERE id = $1`, [gabbiaId]);
+  if (!rows[0]) throw new Error(`No Magazzino row found for id=${gabbiaId}`);
+  const { x: X, y: Y, z: Z } = rows[0] as { x: number | null; y: number | null; z: number | null };
+  if (typeof X !== "number" || typeof Y !== "number" || typeof Z !== "number") {
+    throw new Error("Colonne x, y, z devono essere numeriche");
+  }
+
+  const dpi = 203;
+  const desiredQrDots = cmToDots(5, dpi);
+  const qrBuffer = await QRCode.toBuffer(link, { type: "png", width: desiredQrDots, margin: 4, errorCorrectionLevel: "M" });
+  const rawZpl = await labelaryGraphicsRawZpl(qrBuffer);
+  const zplCode = centerQRCodeInLabel(rawZpl, dpi);
+  if (!zplCode.includes("^XA") || !zplCode.includes("^XZ")) throw new Error("Generated ZPL is invalid");
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = `X${X}_Y${Y}_Z${Z}_QR_${timestamp}.zpl`;
+  const destDir = path.join("/app/storage", "public", "qrcodes");
+  await mkdir(destDir, { recursive: true });
+  await writeFile(path.join(destDir, fileName), zplCode, "utf8");
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://b2b2.spieziatyres.it";
+  const publicUrl = `${baseUrl}/files/public/qrcodes/${fileName}`;
+
+  await db.query(`UPDATE b2b.magazzino SET qr_code = $2 WHERE id = $1`, [gabbiaId, publicUrl]);
+  return publicUrl;
 }
