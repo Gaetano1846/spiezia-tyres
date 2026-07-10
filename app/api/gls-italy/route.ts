@@ -120,9 +120,26 @@ async function runBulkShipmentJob(jobId: string, contractIndex: number, ordiniId
   });
   if (toCreate.length) await createSpedizioniEntries(toCreate);
 
+  const successIds = results.filter((r) => r.status === "success").map((r) => r.orderId);
+
+  // Mirror FF: dopo la creazione GLS ogni ordine spedito passa a
+  // "In Preparazione" (nel FF: reference.update(stato) subito dopo
+  // ProcessMultipleOrdersGLS, PRIMA del push marketplace). Solo gli ordini
+  // riusciti — il FF li marcava tutti se la bulk call rispondeva ok, qui
+  // abbiamo l'esito per-ordine e lo usiamo.
+  if (successIds.length) {
+    const statoBatch = db.batch();
+    for (const ordineId of successIds) {
+      statoBatch.update(db.collection("Ordini").doc(ordineId), {
+        Stato: "In Preparazione",
+        DataAggiornamento: Timestamp.now(),
+      });
+    }
+    await statoBatch.commit();
+  }
+
   // Mirror FF: dopo la creazione GLS, comunica il tracking ai marketplace
   // (stesso step che prima girava client-side dopo l'attesa del batch).
-  const successIds = results.filter((r) => r.status === "success").map((r) => r.orderId);
   const marketplace = { ok: 0, ko: 0, skipped: 0 };
   if (successIds.length) {
     const settled = await Promise.allSettled(
