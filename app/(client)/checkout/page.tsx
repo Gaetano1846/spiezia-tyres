@@ -375,8 +375,9 @@ export default function CheckoutPage() {
   const [fidoBlocked, setFidoBlocked] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
 
-  // Admin mode state
+  // Ordine per conto di un cliente: riservato ad Admin e Rappresentanti — mai ai clienti normali.
   const isAdmin = user?.Ruolo === "Admin";
+  const canOrderForClient = isAdmin || user?.Ruolo === "Rappresentante";
   const [ordinaPerCliente, setOrdinaPerCliente] = useState(false);
   const [clienteSelezionato, setClienteSelezionato] = useState<(Cliente & { id: string }) | null>(null);
   // Indirizzi fatturazione del cliente selezionato (admin mode)
@@ -536,8 +537,8 @@ export default function CheckoutPage() {
         DataCreazione: serverTimestamp(),
       };
 
-      // Admin mode: attach cliente reference and track creator
-      if (isAdmin && ordinaPerCliente && clienteSelezionato) {
+      // Admin/Rappresentante mode: attach cliente reference and track creator
+      if (canOrderForClient && ordinaPerCliente && clienteSelezionato) {
         orderData.Cliente = doc(db, "Clienti", clienteSelezionato.id);
         orderData.createdBy = user.uid;
       }
@@ -589,8 +590,8 @@ export default function CheckoutPage() {
         <h3 className="text-base font-bold mb-4" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
           Riepilogo ordine
         </h3>
-        {/* Admin: cliente selezionato badge */}
-        {isAdmin && ordinaPerCliente && clienteSelezionato && (
+        {/* Admin/Rappresentante: cliente selezionato badge */}
+        {canOrderForClient && ordinaPerCliente && clienteSelezionato && (
           <div
             className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg"
             style={{ background: "rgba(255,200,3,0.10)", border: "1px solid rgba(255,200,3,0.3)" }}
@@ -686,8 +687,8 @@ export default function CheckoutPage() {
               )}
             </div>
 
-            {/* Admin-only: ordine per conto di un cliente */}
-            {isAdmin && (
+            {/* Admin/Rappresentante: ordine per conto di un cliente — mai per clienti normali */}
+            {canOrderForClient && (
               <div className="rounded-xl" style={{ border: "2px solid #FFC803", background: "rgba(255,200,3,0.04)" }}>
                 {/* Toggle row */}
                 <label
@@ -708,7 +709,7 @@ export default function CheckoutPage() {
                       Ordine per conto di un cliente
                     </p>
                     <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                      Solo amministratori
+                      Solo amministratori e rappresentanti
                     </p>
                   </div>
                   {ordinaPerCliente && clienteSelezionato && (
@@ -764,8 +765,8 @@ export default function CheckoutPage() {
             Indirizzo
           </h2>
           <div className="space-y-5">
-            {/* Admin mode: indirizzi fatturazione del cliente selezionato */}
-            {isAdmin && ordinaPerCliente && clienteAddresses.length > 0 && (
+            {/* Admin/Rappresentante mode: indirizzi fatturazione del cliente selezionato */}
+            {canOrderForClient && ordinaPerCliente && clienteAddresses.length > 0 && (
               <div>
                 <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                   Indirizzo fatturazione del cliente
@@ -789,7 +790,7 @@ export default function CheckoutPage() {
               </div>
             )}
             {/* Indirizzi utente salvati (modalità normale) */}
-            {(!isAdmin || !ordinaPerCliente) && savedAddresses.length > 0 && (
+            {(!canOrderForClient || !ordinaPerCliente) && savedAddresses.length > 0 && (
               <div>
                 <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                   Usa un indirizzo salvato
@@ -841,8 +842,8 @@ export default function CheckoutPage() {
             Conferma ordine
           </h2>
           <div className="space-y-5">
-            {/* Admin: riepilogo cliente selezionato */}
-            {isAdmin && ordinaPerCliente && clienteSelezionato && (
+            {/* Admin/Rappresentante: riepilogo cliente selezionato */}
+            {canOrderForClient && ordinaPerCliente && clienteSelezionato && (
               <div>
                 <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
                   Ordine per cliente
@@ -923,7 +924,7 @@ export default function CheckoutPage() {
 
   // Navigation: step 0 advance requires cliente selected if admin mode is active
   function handleNext() {
-    if (step === 0 && isAdmin && ordinaPerCliente && !clienteSelezionato) {
+    if (step === 0 && canOrderForClient && ordinaPerCliente && !clienteSelezionato) {
       toast.error("Seleziona un cliente prima di procedere");
       return;
     }
