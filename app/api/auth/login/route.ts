@@ -109,6 +109,40 @@ export async function POST(req: NextRequest) {
   try {
     const { adminAuth, adminDb } = await import("@/lib/firebase-admin");
     const decoded = await adminAuth().verifyIdToken(idToken);
+
+    // ── Bridge PG da idToken verificato ────────────────────────────────────
+    // Se l'utente Firebase-verificato esiste in core.utenti, emetti una sessione
+    // PG (sp1_) invece del cookie Firebase. L'idToken è già una prova d'identità
+    // forte (l'Admin SDK l'ha verificato: Firebase ha accettato la password), quindi
+    // non serve la password per emettere la sessione. Questo:
+    //  1. elimina la RACE con AuthProvider.syncSessionCookie, che posta solo
+    //     {idToken} (senza password) e prima sovrascriveva la sessione PG del
+    //     login con un cookie Firebase (arrivando ultimo);
+    //  2. porta OGNI login B2B su una sessione Postgres (obiettivo del cutover),
+    //     non solo quelli che passano dal path password.
+    if (process.env.DATABASE_URL && (email || decoded.email)) {
+      try {
+        const pgUser = await findUserByEmail(email || decoded.email || "");
+        if (pgUser && !pgUser.disabled) {
+          const token = await createPgSession(
+            pgUser.id,
+            { Ruolo: pgUser.Ruolo, CRM: pgUser.CRM },
+            { ip: req.headers.get("x-forwarded-for") ?? undefined, userAgent: req.headers.get("user-agent") ?? undefined },
+          );
+          if (token) {
+            const res = NextResponse.json({ ok: true, Ruolo: pgUser.Ruolo, CRM: pgUser.CRM, backend: "pg" });
+            res.headers.append("Set-Cookie", buildSessionCookie(token));
+            res.headers.append("Set-Cookie", buildRoleCookie(pgUser.Ruolo, pgUser.CRM));
+            return res;
+          }
+        }
+      } catch (err) {
+        console.error("[auth] bridge PG da idToken fallito, uso cookie Firebase:", err instanceof Error ? err.message : err);
+      }
+    }
+
+    // ── Firebase puro (legacy) ─────────────────────────────────────────────
+    // Solo per utenti NON presenti in core.utenti: cookie di sessione Firebase.
     const userDoc = await adminDb().collection("users").doc(decoded.uid).get();
     if (!userDoc.exists) return NextResponse.json({ error: "Utente non trovato" }, { status: 403 });
     const data = userDoc.data()!;
@@ -116,7 +150,7 @@ export async function POST(req: NextRequest) {
     const CRM = Boolean(data.CRM);
 
     const sessionCookie = await adminAuth().createSessionCookie(idToken, { expiresIn: TTL_MS });
-    console.warn(`[auth] login via FALLBACK Firebase per ${email || decoded.email} — credenziale PG non disponibile`);
+    console.warn(`[auth] login via FALLBACK Firebase per ${email || decoded.email} — utente non in core.utenti`);
 
     const res = NextResponse.json({ ok: true, Ruolo, CRM, backend: "firebase" });
     res.headers.append("Set-Cookie", buildSessionCookie(sessionCookie));
