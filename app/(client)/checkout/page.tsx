@@ -138,9 +138,14 @@ function clienteDisplayName(c: ClienteSearchResult): string {
 function SearchableClienteDropdown({
   value,
   onChange,
+  scopeToOwnClients,
 }: {
   value: ClienteSearchResult | null;
   onChange: (c: ClienteSearchResult | null) => void;
+  // Rappresentante: cerca solo tra i propri clienti assegnati, non l'intera
+  // collezione Clienti (che prima era visibile a chiunque avesse accesso a
+  // questa modalità, incluso un Rappresentante — bug corretto qui).
+  scopeToOwnClients: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -152,7 +157,35 @@ function SearchableClienteDropdown({
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Rappresentante: lista dei propri clienti caricata UNA VOLTA (tipicamente
+  // poche decine) — il filtro testuale è poi puramente client-side, nessuna
+  // query Firestore paginata necessaria per un set così piccolo.
+  const [repClienti, setRepClienti] = useState<ClienteSearchResult[] | null>(null);
+  useEffect(() => {
+    if (!scopeToOwnClients) return;
+    fetch("/api/rappresentante/clienti")
+      .then((r) => r.json())
+      .then((d: { clienti?: ClienteSearchResult[] }) => setRepClienti(d.clienti ?? []))
+      .catch(() => setRepClienti([]));
+  }, [scopeToOwnClients]);
+
   const fetchClienti = useCallback(async (text: string, after: QueryDocumentSnapshot | null = null) => {
+    if (scopeToOwnClients) {
+      const all = repClienti ?? [];
+      const t = text.trim().toLowerCase();
+      const docs = t
+        ? all.filter((c) =>
+            (c.Ragione_Sociale || "").toLowerCase().includes(t) ||
+            (c.Nome || "").toLowerCase().includes(t) ||
+            (c.Telefono || "").toLowerCase().includes(t) ||
+            (c.Email || "").toLowerCase().includes(t)
+          )
+        : all;
+      setResults(docs);
+      setHasMore(false);
+      setLoading(repClienti === null);
+      return;
+    }
     setLoading(true);
     try {
       const col = collection(db, "Clienti");
@@ -190,7 +223,7 @@ function SearchableClienteDropdown({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scopeToOwnClients, repClienti]);
 
   // Debounce search
   useEffect(() => {
@@ -731,6 +764,7 @@ export default function CheckoutPage() {
                       <SearchableClienteDropdown
                         value={clienteSelezionato}
                         onChange={setClienteSelezionato}
+                        scopeToOwnClients={!isAdmin}
                       />
                     </div>
                     {clienteSelezionato && (
