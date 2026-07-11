@@ -2,9 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { doc, addDoc, updateDoc, collection, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { nextCounter } from "@/lib/counters";
 import {
   ArrowLeft, Download, CheckCircle2, XCircle, Car, User, FileText, Wrench,
   ShoppingCart, Loader2, Printer,
@@ -112,68 +109,29 @@ export default function PreventivoDetailPage() {
 
   // "Converti in Ordine" resta VOLUTAMENTE Firestore diretto — crea un
   // documento in Ordini, dominio esplicitamente escluso da questa
-  // migrazione. Il bridge propaga comunque Convertito/OrdineId verso
-  // fs_extra su Postgres (letti sopra per il guard anti-doppia-conversione).
+  // migrazione. Contatore + scrittura Ordini + flag di conversione avvengono
+  // ora SERVER-SIDE (app/api/.../converti, Admin SDK): le Firestore Security
+  // Rules richiedono un token Firebase Auth live che un operatore autenticato
+  // solo via Postgres (auth VPS-native) non ha — la scrittura client-side
+  // falliva sempre con permission-denied.
   async function handleConvertToOrder() {
     if (!preventivo || converting) return;
     if (preventivo.OrdineId || preventivo.Convertito) {
       toast.error("Questo preventivo è già stato convertito in ordine");
       return;
     }
-    const round2 = (x: number) => Math.round(x * 100) / 100;
     setConverting(true);
     try {
-      const arts = preventivo.Articoli;
-      const servs = getServizi(preventivo);
+      const res = await fetch(`/api/preventivi/${clienteId}/${id}/converti`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+      if (!res.ok || !data.id) throw new Error(data.error ?? "Errore nella creazione dell'ordine");
 
-      const totArticoli = arts.reduce(
-        (s, a) => s + ((a.PrezzoUnitario ?? 0) + (a.PFU ?? 0)) * (a.Quantita ?? 0),
-        0
-      );
-      const totPfu = arts.reduce((s, a) => s + (a.PFU ?? 0) * (a.Quantita ?? 0), 0);
-      const totServizi = servs.reduce((s, sv) => s + sv.prezzo * sv.quantita, 0);
-      const imponibile = totArticoli + totServizi;
-      const iva = imponibile * 0.22;
-      const totale = imponibile + iva; // lordo, coerente col modello Ordini B2B
-
-      const articoliOrdine = arts.map((a) => ({
-        Prodotto: a.Misura ?? "",
-        Titolo: a.Modello ?? "",
-        Marca: a.Marca ?? "",
-        Quantita: a.Quantita ?? 0,
-        PrezzoUnitario: a.PrezzoUnitario ?? 0,
-        PFU: a.PFU ?? 0,
-      }));
-
-      const sedeId = preventivo.SedeId ?? "main";
-      const n = await nextCounter("Ordine", sedeId);
-      const year = new Date().getFullYear();
-
-      const payload = {
-        Numero: `ORD-${year}-${String(n).padStart(5, "0")}`,
-        Cliente: doc(db, "Clienti", clienteId),
-        Source: "B2B",
-        Stato: "In Lavorazione",
-        Articoli: articoliOrdine,
-        Totale: round2(totale),
-        IVA: round2(iva),
-        PFU: round2(totPfu),
-        Note: preventivo.Note ?? null,
-        DataCreazione: serverTimestamp(),
-      };
-
-      const ordineRef = await addDoc(collection(db, "Ordini"), payload);
-      // Marca il preventivo come convertito per impedire una seconda conversione.
-      await updateDoc(doc(db, "Clienti", clienteId, "Preventivo", id), {
-        Convertito: true,
-        OrdineId: ordineRef.id,
-      });
-      setPreventivo({ ...preventivo, Convertito: true, OrdineId: ordineRef.id });
+      setPreventivo({ ...preventivo, Convertito: true, OrdineId: data.id });
       toast.success("Ordine creato con successo");
       router.push("/ordini");
     } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Errore nella creazione dell'ordine");
       console.error(e);
-      toast.error("Errore nella creazione dell'ordine");
     } finally {
       setConverting(false);
     }
