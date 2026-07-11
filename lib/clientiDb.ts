@@ -296,3 +296,64 @@ export async function searchVeicoloByTarga(targa: string): Promise<VeicoloConCli
     ClienteNome: r.cliente_nome as string,
   }));
 }
+
+// ─── Fido (Fase 2 migrazione Ordini) ───────────────────────────────────────
+//
+// Consolidato da Firestore (checkFidoLimit + decrementFidoResiduoIfConfigured
+// a due letture separate, finestra TOCTOU reale) a Postgres: un solo UPDATE
+// atomico che decrementa SOLO se il plafond è sufficiente — il lock di riga
+// implicito chiude la finestra. Rappresentante (per il messaggio di blocco)
+// non è una colonna dedicata su core.clienti/core.utenti: preservato in
+// fs_extra dal bridge se il doc Firestore originale lo aveva.
+
+export interface FidoCheckResult {
+  ok: boolean;
+  /** false = nessun plafond configurato (via libera, mai un blocco). */
+  hasFido: boolean;
+  rappresentante: string | null;
+}
+
+/** @param table "clienti" per l'anagrafica Clienti, "utenti" per l'account di login. */
+export async function checkAndDecrementFido(
+  table: "clienti" | "utenti",
+  id: string,
+  importo: number
+): Promise<FidoCheckResult> {
+  const db = getDb();
+  if (!db) return { ok: true, hasFido: false, rappresentante: null };
+
+  const tableName = table === "clienti" ? "core.clienti" : "core.utenti";
+  const upd = await db.query(
+    `UPDATE ${tableName}
+        SET fido_residuo = coalesce(fido_residuo, fido) - $1
+      WHERE id = $2 AND fido IS NOT NULL AND coalesce(fido_residuo, fido) >= $1
+      RETURNING fido_residuo`,
+    [importo, id]
+  );
+  if (upd.rows.length > 0) return { ok: true, hasFido: true, rappresentante: null };
+
+  // Non decrementato: o nessun plafond configurato (via libera) o insufficiente.
+  // Lettura separata, ma solo per scegliere il messaggio — non per la decisione
+  // di blocco, già presa atomicamente sopra.
+  const { rows } = await db.query(
+    `SELECT fido, fs_extra->>'Rappresentante' AS rappresentante FROM ${tableName} WHERE id = $1`,
+    [id]
+  );
+  if (rows.length === 0 || rows[0].fido == null) return { ok: true, hasFido: false, rappresentante: null };
+  return { ok: false, hasFido: true, rappresentante: (rows[0].rappresentante as string) ?? null };
+}
+
+/**
+ * Compensazione: riaccredita un importo scalato da checkAndDecrementFido()
+ * quando l'operazione che lo giustificava (es. creazione ordine) fallisce
+ * dopo il decremento. Va chiamata solo se hasFido era true.
+ */
+export async function refundFido(table: "clienti" | "utenti", id: string, importo: number): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  const tableName = table === "clienti" ? "core.clienti" : "core.utenti";
+  await db.query(
+    `UPDATE ${tableName} SET fido_residuo = coalesce(fido_residuo, fido) + $1 WHERE id = $2`,
+    [importo, id]
+  );
+}

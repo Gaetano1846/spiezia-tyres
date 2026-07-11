@@ -1,16 +1,26 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { createOrdine } from "@/lib/ordiniDb";
+import { checkAndDecrementFido, refundFido } from "@/lib/clientiDb";
 
-// Creazione ordine — SERVER-SIDE via Admin SDK (bypassa le Firestore Security
-// Rules, che richiedono `request.auth != null`). Il checkout NON deve più
-// scrivere Ordini/Counters direttamente dal browser: con l'auth VPS-native
-// (Postgres-primaria, Firebase solo best-effort) un cliente creato con sola
-// password Postgres non ha un token Firebase Auth valido — qualunque
-// scrittura client-side su queste collezioni fallirebbe sempre con
-// permission-denied. Il server usa `getSession()` (affidabile per entrambi i
-// backend) e scrive su Firestore con privilegi Admin.
+// Creazione ordine — SERVER-SIDE (bypassa le Firestore Security Rules, che
+// richiedono `request.auth != null`; con l'auth VPS-native un cliente con
+// sola password Postgres non ha un token Firebase Auth valido). Il server
+// usa `getSession()` (affidabile per entrambi i backend).
+//
+// Fase 2 migrazione Ordini: l'ordine viene scritto DIRETTAMENTE su Postgres
+// (core.ordini via lib/ordiniDb.ts::createOrdine) — il bridge esistente lo
+// propaga verso Firestore per il CRM Flutter, stesso pattern già in
+// produzione per Tyre24 (lib/importers/tyre24PgWrite.js). Scrittura e
+// lettura (app/(client)/ordini/[id], già Postgres dalla Fase 1) sono ora
+// sullo STESSO sistema — chiude la finestra di lag lettura-dopo-scrittura
+// che si sarebbe aperta lasciando la scrittura su Firestore.
+//
+// Il numero ordine RESTA allocato da Firestore Counters/{sedeId} (invariato):
+// il CRM Flutter legacy crea ancora ordini con numerazione propria e
+// Counters è l'unico punto di serializzazione condiviso — vedi
+// lib/counters.ts. Solo la RIGA fisica dell'ordine si sposta su Postgres.
 
 interface AddressPayload {
   nome: string; via: string; cap: string; citta: string; provincia: string; partitaIva: string;
@@ -63,7 +73,8 @@ function normalizeAddr(a: { Via?: unknown; CAP?: unknown; Citta?: unknown }): st
 // ordine può riusarlo dal menu "Usa un indirizzo salvato". SERVER-SIDE per lo
 // stesso motivo del resto della route (nessun token Firebase Auth lato client
 // garantito). Best-effort: un fallimento qui non deve far fallire l'ordine,
-// già creato con successo a questo punto.
+// già creato con successo a questo punto. Resta su Firestore (fuori scope
+// Fase 2 — solo la riga ordine si sposta su Postgres).
 async function saveAddressIfNew(
   colRef: FirebaseFirestore.CollectionReference,
   doc: Record<string, unknown>
@@ -79,64 +90,16 @@ async function saveAddressIfNew(
   }
 }
 
-// Scalo PROVVISORIO del fido residuo: il Fido reale arriva dal gestionale via
-// CSV (vedi lib/clientSync/fido.js, sync ogni 3h) — non è mai stato scalato
-// in tempo reale alla creazione ordine, né in Flutter né qui. Su richiesta
-// esplicita, un ordine ora decrementa SUBITO Fido_Residuo come stima
-// immediata: il prossimo sync CSV lo sovrascrive col valore reale
-// (autoritativo), quindi eventuali disallineamenti si correggono da soli
-// entro poche ore. Decrementa solo se il doc ha un Fido configurato (altrimenti
-// creerebbe un residuo negativo fittizio per chi non ha un plafond credito).
-async function decrementFidoResiduoIfConfigured(
-  docRef: FirebaseFirestore.DocumentReference,
-  importo: number
-): Promise<void> {
-  try {
-    const snap = await docRef.get();
-    if (!snap.exists) return;
-    const d = snap.data() as Record<string, unknown>;
-    if (typeof d.Fido !== "number") return;
-    await docRef.update({ Fido_Residuo: FieldValue.increment(-importo) });
-  } catch (err) {
-    console.error("[api/checkout/ordine] scalo provvisorio fido fallito (non bloccante):", err);
-  }
-}
-
-// Blocco (non solo scalo): se il totale dell'ordine supera il fido residuo
-// disponibile, l'ordine va rifiutato — invece di passare e andare in
-// negativo (comportamento precedente). Nessun blocco se il cliente non ha un
-// plafond credito configurato (campo Fido assente). Il messaggio verso il
-// cliente resta volutamente generico (non menziona il fido) — solo "non è
-// possibile, contattaci/contatta il rappresentante".
-async function checkFidoLimit(
-  docRef: FirebaseFirestore.DocumentReference,
-  importo: number,
-  isForClient: boolean
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const snap = await docRef.get();
-  if (!snap.exists) return { ok: true };
-  const d = snap.data() as Record<string, unknown>;
-  if (typeof d.Fido !== "number") return { ok: true };
-
-  const residuo = typeof d.Fido_Residuo === "number" ? d.Fido_Residuo : d.Fido;
-  if (importo <= residuo) return { ok: true };
-
+function fidoBlockedError(isForClient: boolean, rappresentante: string | null): string {
   if (isForClient) {
     // A differenza del messaggio verso il cliente finale (sotto), qui il
     // lettore è staff (Admin/Rappresentante) — menzionare il fido è corretto.
-    return { ok: false, error: "Fido insufficiente per coprire il totale dell'ordine. Contatta l'amministrazione." };
+    return "Fido insufficiente per coprire il totale dell'ordine. Contatta l'amministrazione.";
   }
-  const rappresentante = typeof d.Rappresentante === "string" ? d.Rappresentante.trim() : "";
   if (rappresentante) {
-    return {
-      ok: false,
-      error: `Non è possibile completare l'ordine in questo momento. Contatta il tuo rappresentante (${rappresentante}) per procedere.`,
-    };
+    return `Non è possibile completare l'ordine in questo momento. Contatta il tuo rappresentante (${rappresentante}) per procedere.`;
   }
-  return {
-    ok: false,
-    error: "Non è possibile completare l'ordine in questo momento. Contattaci al +39 081 511 5011 per procedere.",
-  };
+  return "Non è possibile completare l'ordine in questo momento. Contattaci al +39 081 511 5011 per procedere.";
 }
 
 export async function POST(req: Request) {
@@ -165,21 +128,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Non autorizzato a ordinare per conto di un cliente" }, { status: 403 });
   }
 
+  const db = adminDb();
+  const sedeId = body.sedeId || "main";
+  const forClient = canOrderForClient && !!body.clienteId;
+  const fidoTable = forClient ? "clienti" : "utenti";
+  const fidoId = forClient ? (body.clienteId as string) : session.uid;
+
+  // Check+scalo atomico del fido (chiude la finestra TOCTOU del vecchio
+  // check-poi-decrementa in due passaggi separati). Va PRIMA della creazione
+  // ordine: se l'ordine fallisce dopo, il fido va riaccreditato (vedi catch).
+  const fidoResult = await checkAndDecrementFido(fidoTable, fidoId, body.totale);
+  if (!fidoResult.ok) {
+    return NextResponse.json(
+      { error: fidoBlockedError(forClient, fidoResult.rappresentante), code: "ORDER_BLOCKED" },
+      { status: 403 }
+    );
+  }
+
   try {
-    const db = adminDb();
-    const sedeId = body.sedeId || "main";
-
-    const forClient = canOrderForClient && !!body.clienteId;
-    const fidoDocRef = forClient
-      ? db.doc(`Clienti/${body.clienteId}`)
-      : db.doc(`users/${session.uid}`);
-    const fidoCheck = await checkFidoLimit(fidoDocRef, body.totale, forClient);
-    if (!fidoCheck.ok) {
-      return NextResponse.json({ error: fidoCheck.error, code: "ORDER_BLOCKED" }, { status: 403 });
-    }
-
+    // Il numero ordine resta allocato dalla transazione Firestore Counters —
+    // il CRM Flutter legacy crea ancora ordini con numerazione propria e
+    // questo è l'unico punto di serializzazione condiviso (vedi commento in
+    // testa al file).
     const counterRef = db.doc(`Counters/${sedeId}`);
-
     const numero = await db.runTransaction(async (tx) => {
       const snap = await tx.get(counterRef);
       const current = snap.exists ? ((snap.data() as Record<string, number>).Ordine ?? 0) : 0;
@@ -187,38 +158,37 @@ export async function POST(req: Request) {
       tx.set(counterRef, { Ordine: next }, { merge: true });
       return next;
     });
+    const numeroDisplay = formatNumeroOrdine(numero);
 
-    const orderData: Record<string, unknown> = {
-      Utente: db.doc(`users/${session.uid}`),
-      Source: "B2B",
-      Stato: "In Preparazione",
-      Numero: formatNumeroOrdine(numero),
-      Articoli: body.articoli.map((i) => ({
-        Prodotto: i.id,
-        Titolo: `${i.marca} ${i.modello}`,
-        Marca: i.marca,
-        Quantita: i.quantita,
-        PrezzoUnitario: i.prezzoScontato,
-        PFU: i.pfu,
-        ...(i.sconto ? { ScontoApplicato: i.sconto } : {}),
+    const { id } = await createOrdine({
+      numero,
+      numeroDisplay,
+      source: "B2B",
+      stato: "In Preparazione",
+      sedeId,
+      utenteId: session.uid,
+      clienteId: forClient ? body.clienteId : null,
+      createdBy: forClient ? session.uid : null,
+      totale: body.totale,
+      iva: body.iva,
+      pfu: body.pfu,
+      scontoTotale: body.scontoTotale,
+      contributoLogistico: body.contributoLogistico,
+      pagamento: { Metodo: "Da definire", Stato: "In attesa" },
+      indirizzoFatturazione: addr(body.fatturazione),
+      indirizzoSpedizione: addr(body.spedizione ?? body.fatturazione),
+      articoli: body.articoli.map((i) => ({
+        titolo: `${i.marca} ${i.modello}`,
+        marca: i.marca,
+        quantita: i.quantita,
+        prezzoUnitario: i.prezzoScontato,
+        pfu: i.pfu,
+        // Prodotti resta su Firestore — Prodotto è l'id doc originale, qui
+        // ricostruito come path completo per lo stock-lookup lato dettaglio.
+        refPath: `Prodotti/${i.id}`,
+        ...(i.sconto ? { fsExtra: { ScontoApplicato: i.sconto } } : {}),
       })),
-      Totale: body.totale,
-      IVA: body.iva,
-      PFU: body.pfu,
-      ScontoTotale: body.scontoTotale,
-      Pagamento: { Metodo: "Da definire", Stato: "In attesa" },
-      ContributoLogistico: body.contributoLogistico,
-      IndirizzoFatturazione: addr(body.fatturazione),
-      IndirizzoSpedizione: addr(body.spedizione ?? body.fatturazione),
-      DataCreazione: FieldValue.serverTimestamp(),
-    };
-
-    if (forClient) {
-      orderData.Cliente = db.doc(`Clienti/${body.clienteId}`);
-      orderData.createdBy = session.uid;
-    }
-
-    const ref = await db.collection("Ordini").add(orderData);
+    });
 
     // Salva l'indirizzo di fatturazione (e quello di spedizione, se diverso)
     // nella rubrica per il riuso futuro — del cliente selezionato in modalità
@@ -245,11 +215,17 @@ export async function POST(req: Request) {
       }
     }
 
-    // Scalo provvisorio del fido — vedi commento su decrementFidoResiduoIfConfigured.
-    await decrementFidoResiduoIfConfigured(fidoDocRef, body.totale);
-
-    return NextResponse.json({ id: ref.id, numero: orderData.Numero as string });
+    return NextResponse.json({ id, numero: numeroDisplay });
   } catch (err) {
+    if (fidoResult.hasFido) {
+      // L'ordine non è stato creato ma il fido è già stato scalato —
+      // compensazione per non lasciare un plafond eroso senza ordine
+      // corrispondente (il prossimo sync CSV lo correggerebbe comunque, ma
+      // non va lasciato errato nel frattempo).
+      await refundFido(fidoTable, fidoId, body.totale).catch((refundErr) => {
+        console.error("[api/checkout/ordine] refund fido fallito dopo errore ordine — richiede verifica manuale:", fidoTable, fidoId, body.totale, refundErr);
+      });
+    }
     console.error("[api/checkout/ordine]", err);
     return NextResponse.json({ error: "Errore nella creazione dell'ordine" }, { status: 500 });
   }

@@ -15,7 +15,7 @@
 //    parte numerica di "ORD-YYYY-NNNNN"). Il formato display originale, se
 //    presente, è preservato in fs_extra.Numero.
 
-import { getDb } from "@/lib/db";
+import { getDb, newId } from "@/lib/db";
 import type { Pagamento, Indirizzo } from "@/lib/types";
 
 export interface ArticoloOrdineApi {
@@ -425,4 +425,116 @@ export async function listOrdiniDocumenti(utenteId: string, limitN = 100): Promi
     }
   }
   return out;
+}
+
+// ─── Scrittura (Fase 2 migrazione Ordini) ──────────────────────────────────
+//
+// Generalizza lib/importers/tyre24PgWrite.js::insertOrderPg() — stesso
+// pattern (BEGIN/INSERT core.ordini/INSERT core.ordine_articoli/COMMIT,
+// idempotenza via ON CONFLICT(id) DO NOTHING) per i writer con id
+// auto-generato (checkout B2B, converti-preventivo) invece di id
+// deterministico esterno. Il bridge esistente propaga automaticamente ogni
+// riga scritta qui verso Firestore, per il CRM Flutter legacy.
+
+export interface CreateOrdineArticoloInput {
+  sku?: string | null;
+  titolo?: string | null;
+  marca?: string | null;
+  quantita: number;
+  prezzoUnitario?: number | null;
+  pfu?: number | null;
+  contributoLogistico?: number | null;
+  refPath?: string | null;
+  totRiga?: number | null;
+  fsExtra?: Record<string, unknown>;
+}
+
+export interface CreateOrdineInput {
+  /** Se assente, generato con newId() (ULID-like, valido come id Firestore). */
+  id?: string;
+  /** Contatore grezzo (int) — Numero (stringa display "ORD-YYYY-NNNNN") va in
+   *  numeroDisplay, preservato in fs_extra.Numero (mai una colonna dedicata). */
+  numero?: number | null;
+  numeroDisplay?: string | null;
+  source: string;
+  externalOrderId?: string | null;
+  stato: string;
+  sedeId?: string | null;
+  clienteId?: string | null;
+  utenteId?: string | null;
+  createdBy?: string | null;
+  totale: number;
+  iva?: number | null;
+  pfu?: number | null;
+  scontoTotale?: number | null;
+  contributoLogistico?: number | null;
+  pagamento?: Record<string, unknown> | null;
+  indirizzoFatturazione?: Record<string, unknown> | null;
+  indirizzoSpedizione?: Record<string, unknown> | null;
+  note?: string | null;
+  fsExtra?: Record<string, unknown>;
+  articoli: CreateOrdineArticoloInput[];
+}
+
+/** Crea un ordine + articoli in una singola transazione. `skipped: true` se
+ *  l'id esiste già (idempotenza via PRIMARY KEY, equivalente a .create()). */
+export async function createOrdine(input: CreateOrdineInput): Promise<{ id: string; skipped: boolean }> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+
+  const id = input.id ?? newId();
+  const fsExtra = { ...(input.fsExtra ?? {}) };
+  if (input.numeroDisplay) fsExtra.Numero = input.numeroDisplay;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const inserted = await client.query(
+      `INSERT INTO core.ordini (
+         id, numero, source, external_order_id, stato, sede_id, cliente_id, utente_id, created_by,
+         totale, iva, pfu, sconto_totale, contributo_logistico, pagamento,
+         indirizzo_fatturazione, indirizzo_spedizione, note, data_ora, created_at, fs_extra
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now(),now(),$19)
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id`,
+      [
+        id, input.numero ?? null, input.source, input.externalOrderId ?? null, input.stato,
+        input.sedeId ?? null, input.clienteId ?? null, input.utenteId ?? null, input.createdBy ?? null,
+        input.totale, input.iva ?? null, input.pfu ?? null, input.scontoTotale ?? null, input.contributoLogistico ?? null,
+        input.pagamento ? JSON.stringify(input.pagamento) : null,
+        input.indirizzoFatturazione ? JSON.stringify(input.indirizzoFatturazione) : null,
+        input.indirizzoSpedizione ? JSON.stringify(input.indirizzoSpedizione) : null,
+        input.note ?? null,
+        JSON.stringify(fsExtra),
+      ]
+    );
+
+    if (inserted.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return { id, skipped: true };
+    }
+
+    for (let riga = 0; riga < input.articoli.length; riga++) {
+      const a = input.articoli[riga];
+      await client.query(
+        `INSERT INTO core.ordine_articoli
+           (ordine_id, riga, sku, titolo, marca, quantita, prezzo_unitario, pfu, contributo_logistico, ref_path, tot_riga, fs_extra)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          id, riga, a.sku ?? null, a.titolo ?? null, a.marca ?? null, a.quantita,
+          a.prezzoUnitario ?? null, a.pfu ?? null, a.contributoLogistico ?? null,
+          a.refPath ?? null, a.totRiga ?? null, JSON.stringify(a.fsExtra ?? {}),
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+    return { id, skipped: false };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }

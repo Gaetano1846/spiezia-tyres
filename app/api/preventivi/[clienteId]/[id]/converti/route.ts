@@ -1,20 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession, isCRM } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
 import { getPreventivo } from "@/lib/preventiviDb";
+import { createOrdine } from "@/lib/ordiniDb";
 
 export const runtime = "nodejs";
 
 // POST /api/preventivi/{clienteId}/{id}/converti → { id, numero }
 //
-// "Converti in Ordine" resta VOLUTAMENTE Firestore diretto (dominio Ordini
-// escluso da questa migrazione — vedi commento originale nella pagina). Qui
-// cambia solo il MECCANISMO: contatore + scrittura Ordini + flag di
-// conversione sul Preventivo, tutto SERVER-SIDE via Admin SDK invece che dal
-// browser — le Firestore Security Rules richiedono un token Firebase Auth
-// live che un operatore autenticato solo via Postgres (auth VPS-native) non
-// ha, quindi la scrittura client-side falliva sempre con permission-denied.
+// Fase 2 migrazione Ordini: l'ordine convertito viene scritto direttamente su
+// Postgres (core.ordini via lib/ordiniDb.ts::createOrdine), stesso motivo e
+// stesso pattern del checkout (vedi app/api/checkout/ordine/route.ts) — la
+// lettura del dettaglio ordine (CRM, già Postgres dalla Fase 1) deve stare
+// sullo stesso sistema della scrittura per evitare un gap di lag cross-bridge
+// subito dopo la conversione. Il flag Convertito/OrdineId sul Preventivo
+// resta su Firestore (dominio Preventivi non in scope di questa migrazione),
+// scritto SERVER-SIDE via Admin SDK per lo stesso motivo di sempre: un
+// operatore autenticato solo via Postgres (auth VPS-native) non ha un token
+// Firebase Auth valido, quindi la scrittura client-side fallirebbe sempre con
+// permission-denied.
 
 type ServizioDisplay = { titolo: string; prezzo: number; quantita: number };
 
@@ -63,15 +67,6 @@ export async function POST(
     const iva = imponibile * 0.22;
     const totale = imponibile + iva;
 
-    const articoliOrdine = arts.map((a) => ({
-      Prodotto: a.Misura ?? "",
-      Titolo: a.Modello ?? "",
-      Marca: a.Marca ?? "",
-      Quantita: a.Quantita ?? 0,
-      PrezzoUnitario: a.PrezzoUnitario ?? 0,
-      PFU: a.PFU ?? 0,
-    }));
-
     const db = adminDb();
     const sedeId = preventivo.SedeId ?? "main";
     const counterRef = db.doc(`Counters/${sedeId}`);
@@ -85,26 +80,36 @@ export async function POST(
     const year = new Date().getFullYear();
     const numeroOrdine = `ORD-${year}-${String(numero).padStart(5, "0")}`;
 
-    const payload = {
-      Numero: numeroOrdine,
-      Cliente: db.doc(`Clienti/${clienteId}`),
-      Source: "B2B",
-      Stato: "In Lavorazione",
-      Articoli: articoliOrdine,
-      Totale: round2(totale),
-      IVA: round2(iva),
-      PFU: round2(totPfu),
-      Note: preventivo.Note ?? null,
-      DataCreazione: FieldValue.serverTimestamp(),
-    };
-
-    const ordineRef = await db.collection("Ordini").add(payload);
-    await db.doc(`Clienti/${clienteId}/Preventivo/${id}`).update({
-      Convertito: true,
-      OrdineId: ordineRef.id,
+    const { id: ordineId } = await createOrdine({
+      numero,
+      numeroDisplay: numeroOrdine,
+      source: "B2B",
+      stato: "In Lavorazione",
+      sedeId,
+      clienteId,
+      totale: round2(totale),
+      iva: round2(iva),
+      pfu: round2(totPfu),
+      note: preventivo.Note ?? null,
+      articoli: arts.map((a) => ({
+        titolo: a.Modello ?? "",
+        marca: a.Marca ?? "",
+        quantita: a.Quantita ?? 0,
+        prezzoUnitario: a.PrezzoUnitario ?? 0,
+        pfu: a.PFU ?? 0,
+        // "Misura" non è un riferimento a un doc Prodotti reale (a differenza
+        // del checkout) — stesso campo Prodotto del payload Firestore
+        // originale, preservato in fs_extra invece che come RefPath.
+        fsExtra: { Prodotto: a.Misura ?? "" },
+      })),
     });
 
-    return NextResponse.json({ id: ordineRef.id, numero: numeroOrdine });
+    await db.doc(`Clienti/${clienteId}/Preventivo/${id}`).update({
+      Convertito: true,
+      OrdineId: ordineId,
+    });
+
+    return NextResponse.json({ id: ordineId, numero: numeroOrdine });
   } catch (err) {
     console.error("[api/preventivi/converti]", err);
     return NextResponse.json({ error: "Errore nella creazione dell'ordine" }, { status: 500 });
