@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSession, isCRM } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
 import { getPreventivo } from "@/lib/preventiviDb";
-import { createOrdine } from "@/lib/ordiniDb";
+import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
 
 export const runtime = "nodejs";
 
@@ -79,18 +79,26 @@ export async function POST(
     });
     const year = new Date().getFullYear();
     const numeroOrdine = `ORD-${year}-${String(numero).padStart(5, "0")}`;
+    // Stessa cautela FK del checkout (vedi commento in
+    // app/api/checkout/ordine/route.ts) — "main" non è mai un id sede reale,
+    // e il clienteId va verificato contro core.clienti prima dell'insert.
+    const [pgSedeId, pgClienteId] = await Promise.all([
+      resolveSedeId(sedeId),
+      resolvePersonaId("clienti", clienteId),
+    ]);
 
     const { id: ordineId } = await createOrdine({
       numero,
       numeroDisplay: numeroOrdine,
       source: "B2B",
       stato: "In Lavorazione",
-      sedeId,
-      clienteId,
+      sedeId: pgSedeId,
+      clienteId: pgClienteId,
       totale: round2(totale),
       iva: round2(iva),
       pfu: round2(totPfu),
       note: preventivo.Note ?? null,
+      fsExtra: pgClienteId ? {} : { ClienteUid: clienteId },
       articoli: arts.map((a) => ({
         titolo: a.Modello ?? "",
         marca: a.Marca ?? "",

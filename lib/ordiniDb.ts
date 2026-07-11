@@ -427,6 +427,46 @@ export async function listOrdiniDocumenti(utenteId: string, limitN = 100): Promi
   return out;
 }
 
+async function rowExists(table: "sedi" | "clienti" | "utenti", id: string): Promise<boolean> {
+  const pool = getDb();
+  if (!pool) return false;
+  const { rows } = await pool.query(`SELECT 1 FROM core.${table} WHERE id = $1`, [id]);
+  return rows.length > 0;
+}
+
+/**
+ * Verifica che l'id sede esista davvero in core.sedi prima di usarlo come
+ * sede_id su core.ordini (FK ordini_sede_fk, NOT VALID sulle righe storiche
+ * ma applicata su ogni nuovo insert). I chiamanti (checkout,
+ * converti-preventivo) risolvono la sede con un fallback storico a "main"
+ * per il contatore Firestore Counters/{sedeId} — "main" non è mai un id
+ * sede reale (i doc Sedi hanno id Firestore casuali), quindi passato as-is
+ * romperebbe l'insert con una violazione di FK. Ritorna null (sede
+ * sconosciuta, mai un id inventato) invece di far fallire l'intero ordine.
+ */
+export async function resolveSedeId(candidate: string | null | undefined): Promise<string | null> {
+  if (!candidate) return null;
+  return (await rowExists("sedi", candidate)) ? candidate : null;
+}
+
+/**
+ * Stessa logica di resolveSedeId per cliente_id/utente_id (FK
+ * ordini_cliente_fk/ordini_utente_fk). Rilevante soprattutto per utente_id:
+ * il fallback Firebase legacy in lib/auth.ts::getSession() verifica solo
+ * l'esistenza del doc Firestore, non della riga Postgres sincronizzata dal
+ * bridge — un gap di sync (raro ma possibile) altrimenti farebbe fallire
+ * l'intero checkout con una violazione di FK invece di limitarsi a perdere
+ * il collegamento "chi ha ordinato" (da preservare comunque in fs_extra dal
+ * chiamante, se rilevante).
+ */
+export async function resolvePersonaId(
+  table: "clienti" | "utenti",
+  candidate: string | null | undefined
+): Promise<string | null> {
+  if (!candidate) return null;
+  return (await rowExists(table, candidate)) ? candidate : null;
+}
+
 // ─── Scrittura (Fase 2 migrazione Ordini) ──────────────────────────────────
 //
 // Generalizza lib/importers/tyre24PgWrite.js::insertOrderPg() — stesso

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
-import { createOrdine } from "@/lib/ordiniDb";
+import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
 import { checkAndDecrementFido, refundFido } from "@/lib/clientiDb";
 
 // Creazione ordine — SERVER-SIDE (bypassa le Firestore Security Rules, che
@@ -159,15 +159,27 @@ export async function POST(req: Request) {
       return next;
     });
     const numeroDisplay = formatNumeroOrdine(numero);
+    // core.ordini ha FK (NOT VALID sulle righe storiche, ma applicate su ogni
+    // nuovo insert) verso sedi/utenti/clienti — "main" (fallback lato client
+    // per il solo Counters Firestore) non è mai un id sede reale, e una
+    // sessione legacy via fallback Firebase può referenziare un utente non
+    // ancora sincronizzato su Postgres dal bridge. Risolti prima dell'insert
+    // per non far fallire l'intero checkout; l'uid originale resta comunque
+    // in fs_extra se non risolvibile.
+    const [pgSedeId, pgUtenteId, pgClienteId] = await Promise.all([
+      resolveSedeId(sedeId),
+      resolvePersonaId("utenti", session.uid),
+      forClient ? resolvePersonaId("clienti", body.clienteId) : Promise.resolve(null),
+    ]);
 
     const { id } = await createOrdine({
       numero,
       numeroDisplay,
       source: "B2B",
       stato: "In Preparazione",
-      sedeId,
-      utenteId: session.uid,
-      clienteId: forClient ? body.clienteId : null,
+      sedeId: pgSedeId,
+      utenteId: pgUtenteId,
+      clienteId: forClient ? pgClienteId : null,
       createdBy: forClient ? session.uid : null,
       totale: body.totale,
       iva: body.iva,
@@ -177,6 +189,10 @@ export async function POST(req: Request) {
       pagamento: { Metodo: "Da definire", Stato: "In attesa" },
       indirizzoFatturazione: addr(body.fatturazione),
       indirizzoSpedizione: addr(body.spedizione ?? body.fatturazione),
+      fsExtra: {
+        ...(pgUtenteId ? {} : { UtenteUid: session.uid }),
+        ...(forClient && !pgClienteId ? { ClienteUid: body.clienteId } : {}),
+      },
       articoli: body.articoli.map((i) => ({
         titolo: `${i.marca} ${i.modello}`,
         marca: i.marca,
