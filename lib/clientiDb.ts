@@ -178,6 +178,13 @@ export async function createCliente(input: CreateClienteInput): Promise<ClienteA
          VALUES ($1, 'argon2id', $2)
          ON CONFLICT (user_id) DO UPDATE SET algo = 'argon2id', hash = EXCLUDED.hash, updated_at = now()`,
         [userId, passwordHash]);
+      // Collega l'anagrafica Clienti all'identità di login appena creata: il
+      // bridge Postgres→Firestore legge questa colonna per scrivere
+      // Cliente_Ref sul doc users/{userId} (usato da tutto ciò che risolve
+      // "l'anagrafica di questo account", es. il picker cliente dei
+      // rappresentanti). Senza questo UPDATE l'account resta orfano — ha un
+      // login funzionante ma nessun collegamento alla propria anagrafica.
+      await client.query(`UPDATE core.clienti SET utente_id = $1 WHERE id = $2`, [userId, id]);
       await client.query("COMMIT");
     }
 
