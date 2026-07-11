@@ -8,14 +8,12 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import {
-  ShoppingBag, Download, MapPin, User, LogOut, Package,
+  Download, MapPin, User, LogOut,
   Plus, Pencil, ArrowRight, CheckCircle, X, Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-import type { Ordine, OrdineStato } from "@/lib/types";
 
 type DocumentoOrdine = { Tipo: string; Link: string; Reference_Number?: string };
 
@@ -52,10 +50,6 @@ const EMPTY_FORM: IndirizzoForm = {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatEuro(n: number | undefined | null) {
-  return (n ?? 0).toLocaleString("it-IT", { style: "currency", currency: "EUR" });
-}
-
 function formatData(ts: Timestamp | null | undefined): string {
   if (!ts?.toDate) return "—";
   return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
@@ -67,19 +61,7 @@ function initials(name?: string | null, email?: string | null): string {
   return "U";
 }
 
-const statoVariant: Record<string, "success" | "brand" | "warning" | "error" | "neutral"> = {
-  "In Lavorazione":     "warning",
-  "In Preparazione":    "warning",
-  "Spedito":            "brand",
-  "Consegnato":         "success",
-  "Annullato":          "error",
-  "Out of Stock":       "neutral",
-  "Cancellato Tyre24":  "neutral",
-  "Cancellato Cliente": "neutral",
-};
-
 const TABS = [
-  { id: "ordini",    label: "Ordini",          icon: <ShoppingBag size={15} /> },
   { id: "download",  label: "Download",         icon: <Download size={15} /> },
   { id: "indirizzi", label: "Indirizzi",        icon: <MapPin size={15} /> },
   { id: "dettagli",  label: "Dettagli account", icon: <User size={15} /> },
@@ -90,15 +72,11 @@ const TABS = [
 
 export default function AccountPage() {
   const router = useRouter();
-  const [tab, setTab] = useState("ordini");
+  const [tab, setTab] = useState("dettagli");
 
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-
-  const [ordini, setOrdini] = useState<Ordine[]>([]);
-  const [loadingOrdini, setLoadingOrdini] = useState(false);
 
   const [downloadItems, setDownloadItems] = useState<DownloadItem[]>([]);
   const [loadingDownload, setLoadingDownload] = useState(false);
@@ -132,26 +110,9 @@ export default function AccountPage() {
       } else {
         setUid(null);
       }
-      setAuthReady(true);
     });
     return unsub;
   }, []);
-
-  useEffect(() => {
-    if (!uid || tab !== "ordini") return;
-    setLoadingOrdini(true);
-    const uRef = doc(db, "users", uid);
-    getDocs(
-      query(
-        collection(db, "Ordini"),
-        where("Utente", "==", uRef),
-        orderBy("DataOra", "desc"),
-        limit(50),
-      ),
-    ).then((snap) => setOrdini(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Ordine)))
-      .catch(() => toast.error("Errore nel caricamento degli ordini"))
-      .finally(() => setLoadingOrdini(false));
-  }, [uid, tab]);
 
   useEffect(() => {
     if (!uid || tab !== "download") return;
@@ -358,101 +319,6 @@ export default function AccountPage() {
 
       {/* ── Tab content ── */}
       <div className="px-4 md:px-6 py-6">
-
-        {/* ── Ordini ── */}
-        {tab === "ordini" && (
-          <div
-            className="rounded-2xl overflow-hidden"
-            style={{ border: "1px solid var(--border)", background: "#fff", boxShadow: "var(--shadow-sm)" }}
-          >
-            <div className="overflow-x-auto">
-            <div
-              className="grid px-5 py-3 text-xs font-bold uppercase tracking-widest"
-              style={{
-                gridTemplateColumns: "1fr 130px 160px 140px 110px",
-                minWidth: 560,
-                color: "#9ca3af",
-                fontFamily: "var(--font-montserrat)",
-                borderBottom: "1px solid #e5e7eb",
-              }}
-            >
-              <span>Ordine</span>
-              <span>Data</span>
-              <span>Stato</span>
-              <span>Totale</span>
-              <span />
-            </div>
-
-            {!authReady || loadingOrdini ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="grid px-5 py-4 gap-4 animate-pulse"
-                  style={{ gridTemplateColumns: "1fr 130px 160px 140px 110px", minWidth: 560, borderBottom: "1px solid #f3f4f6" }}
-                >
-                  <div className="h-5 w-28 rounded-lg" style={{ background: "#f3f4f6" }} />
-                  <div className="h-4 w-20 rounded" style={{ background: "#f3f4f6" }} />
-                  <div className="h-5 w-24 rounded-full" style={{ background: "#f3f4f6" }} />
-                  <div className="h-4 w-16 rounded" style={{ background: "#f3f4f6" }} />
-                  <div className="h-7 w-20 rounded-full" style={{ background: "#f3f4f6" }} />
-                </div>
-              ))
-            ) : ordini.length === 0 ? (
-              <div className="flex flex-col items-center py-16 gap-3">
-                <Package size={44} style={{ color: "#d1d5db" }} />
-                <div className="text-center">
-                  <p className="font-bold text-sm mb-1" style={{ fontFamily: "var(--font-poppins)", color: "#374151" }}>
-                    Nessun ordine trovato
-                  </p>
-                  <p className="text-xs" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
-                    I tuoi ordini appariranno qui.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              ordini.map((o) => (
-                <div
-                  key={o.id}
-                  className="grid items-center px-5 py-4 hover:bg-[#FFFDF0] transition-colors"
-                  style={{
-                    gridTemplateColumns: "1fr 130px 160px 140px 110px",
-                    minWidth: 560,
-                    borderBottom: "1px solid #f3f4f6",
-                  }}
-                >
-                  <span
-                    className="text-sm font-bold px-2.5 py-1 rounded-lg inline-block"
-                    style={{ background: "#f9fafb", fontFamily: "var(--font-poppins)", color: "#111", width: "fit-content" }}
-                  >
-                    {o.Numero ?? `#${o.id.slice(0, 8).toUpperCase()}`}
-                  </span>
-                  <span className="text-sm" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-                    {formatData((o as unknown as Record<string, Timestamp>).DataOra ?? o.DataCreazione)}
-                  </span>
-                  <div>
-                    <Badge variant={statoVariant[o.Stato] ?? "neutral"}>{o.Stato}</Badge>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold" style={{ fontFamily: "var(--font-poppins)", color: "#111" }}>
-                      {formatEuro(o.Totale)}
-                    </p>
-                    <p className="text-xs mt-0.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
-                      {o.Articoli?.length ?? 0} articol{o.Articoli?.length === 1 ? "o" : "i"}
-                    </p>
-                  </div>
-                  <Link
-                    href={`/ordini/${o.id}`}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold"
-                    style={{ background: "#FFC803", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
-                  >
-                    Visualizza
-                  </Link>
-                </div>
-              ))
-            )}
-            </div>
-          </div>
-        )}
 
         {/* ── Download ── */}
         {tab === "download" && (
