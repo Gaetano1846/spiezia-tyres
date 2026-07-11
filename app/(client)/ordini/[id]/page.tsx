@@ -6,6 +6,7 @@ import {
   Timestamp, type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useAuth } from "@/components/layout/AuthProvider";
 import { ShoppingBag, MapPin, CreditCard, Package, Truck, ChevronRight, CheckCircle2, Circle } from "lucide-react";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
@@ -18,7 +19,7 @@ import type { Ordine, ArticoloOrdine, Indirizzo } from "@/lib/types";
 type CronologiaEntry = {
   id: string;
   Evento: string;
-  Data: Timestamp;
+  Data: Timestamp | number;
   Operatore?: string;
 };
 
@@ -29,15 +30,21 @@ function formatEuro(n: number | undefined | null) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function formatData(ts: Timestamp | null | undefined): string {
-  if (!ts) return "—";
-  const d = ts instanceof Timestamp ? ts.toDate() : new Date((ts as { seconds: number }).seconds * 1000);
+function tsToDate(ts: Timestamp | number | null | undefined): Date | null {
+  if (!ts) return null;
+  if (typeof ts === "number") return new Date(ts);
+  return ts instanceof Timestamp ? ts.toDate() : new Date((ts as { seconds: number }).seconds * 1000);
+}
+
+function formatData(ts: Timestamp | number | null | undefined): string {
+  const d = tsToDate(ts);
+  if (!d) return "—";
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function formatDataOra(ts: Timestamp | null | undefined): string {
-  if (!ts) return "—";
-  const d = ts instanceof Timestamp ? ts.toDate() : new Date((ts as { seconds: number }).seconds * 1000);
+function formatDataOra(ts: Timestamp | number | null | undefined): string {
+  const d = tsToDate(ts);
+  if (!d) return "—";
   return d.toLocaleString("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
@@ -122,6 +129,8 @@ function IndirizzoDisplay({ ind, title }: { ind: Indirizzo; title: string }) {
 export default function OrdinePage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : Array.isArray(params.id) ? params.id[0] : "";
+  const { user, loading: authLoading } = useAuth();
+  const isRappresentante = user?.Ruolo === "Rappresentante";
 
   const [ordine, setOrdine] = useState<Ordine | null>(null);
   const [cronologia, setCronologia] = useState<CronologiaEntry[]>([]);
@@ -129,11 +138,26 @@ export default function OrdinePage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || authLoading) return;
 
     async function load() {
       setLoading(true);
       try {
+        // Un rappresentante può visualizzare ordini piazzati DAI SUOI CLIENTI
+        // (non solo i propri) — le Firestore Security Rules non riconoscono
+        // quel legame, serve la route server-side (Admin SDK) dedicata.
+        if (isRappresentante) {
+          const res = await fetch(`/api/rappresentante/ordini/${id}`);
+          const data = (await res.json().catch(() => ({}))) as { ordine?: Ordine; cronologia?: CronologiaEntry[]; error?: string };
+          if (!res.ok || !data.ordine) {
+            setNotFound(true);
+            return;
+          }
+          setOrdine(data.ordine);
+          setCronologia(data.cronologia ?? []);
+          return;
+        }
+
         const snap = await getDoc(doc(db, "Ordini", id));
         if (!snap.exists()) {
           setNotFound(true);
@@ -159,7 +183,7 @@ export default function OrdinePage() {
     }
 
     load();
-  }, [id]);
+  }, [id, authLoading, isRappresentante]);
 
   if (loading) return <SkeletonPage />;
 

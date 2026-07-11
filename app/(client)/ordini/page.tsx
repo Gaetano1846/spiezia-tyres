@@ -5,11 +5,20 @@ import type { Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import Link from "next/link";
-import { Eye, RotateCcw, Search, ShoppingBag } from "lucide-react";
+import { Eye, RotateCcw, Search, ShoppingBag, Users } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 import type { Ordine, OrdineStato } from "@/lib/types";
+
+// Un Rappresentante vede gli ordini di TUTTI i suoi clienti assegnati (non
+// solo i propri) — arricchiti server-side con l'identità del cliente a cui
+// appartengono, per il filtro dedicato sotto.
+type OrdineRappresentante = Omit<Ordine, "DataCreazione"> & {
+  _repClienteUid?: string | null;
+  _repClienteNome?: string | null;
+  DataCreazione?: Timestamp | number | null;
+};
 
 const statoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
   "In Lavorazione":     "brand",
@@ -26,18 +35,27 @@ function formatEuro(n: number) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function formatData(ts: Timestamp | null | undefined): string {
+function formatData(ts: Timestamp | number | null | undefined): string {
   if (!ts) return "—";
-  const toDate = typeof ts.toDate === "function" ? ts.toDate() : new Date((ts as { seconds: number }).seconds * 1000);
+  const toDate =
+    typeof ts === "number"
+      ? new Date(ts)
+      : typeof ts.toDate === "function"
+      ? ts.toDate()
+      : new Date((ts as { seconds: number }).seconds * 1000);
   return toDate.toLocaleDateString("it-IT");
 }
 
 export default function OrdiniPage() {
   const { user, loading: authLoading } = useAuth();
-  const [ordini, setOrdini] = useState<Ordine[]>([]);
+  const isRappresentante = user?.Ruolo === "Rappresentante";
+  const [ordini, setOrdini] = useState<OrdineRappresentante[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statoFiltro, setStatoFiltro] = useState<OrdineStato | "">("");
+  // Solo per Rappresentanti: elenco dei propri clienti (per il filtro) + selezione corrente.
+  const [miClienti, setMiClienti] = useState<Array<{ uid: string; nome: string }>>([]);
+  const [clienteFiltro, setClienteFiltro] = useState("");
 
   useEffect(() => {
     if (authLoading) return;
@@ -46,6 +64,21 @@ export default function OrdiniPage() {
     const fetchOrdini = async () => {
       setLoading(true);
       try {
+        if (isRappresentante) {
+          // Ordini di TUTTI i propri clienti (non solo quelli piazzati in
+          // prima persona) — vedi commento nella route sul modello dati.
+          const res = await fetch("/api/rappresentante/ordini");
+          const data = (await res.json().catch(() => ({}))) as {
+            ordini?: OrdineRappresentante[];
+            clienti?: Array<{ uid: string; nome: string }>;
+            error?: string;
+          };
+          if (!res.ok) throw new Error(data.error ?? "Errore nel caricamento");
+          setOrdini(data.ordini ?? []);
+          setMiClienti(data.clienti ?? []);
+          return;
+        }
+
         const utenteRef = doc(db, "users", user.uid);
         const q = query(collection(db, "Ordini"), where("Utente", "==", utenteRef));
         const snap = await getDocs(q);
@@ -69,12 +102,13 @@ export default function OrdiniPage() {
     };
 
     fetchOrdini();
-  }, [user?.uid, authLoading]);
+  }, [user?.uid, authLoading, isRappresentante]);
 
   const filtered = ordini.filter((o) => {
     const matchSearch = !search || (o.Numero ?? "").toLowerCase().includes(search.toLowerCase());
     const matchStato = !statoFiltro || o.Stato === statoFiltro;
-    return matchSearch && matchStato;
+    const matchCliente = !clienteFiltro || o._repClienteUid === clienteFiltro;
+    return matchSearch && matchStato && matchCliente;
   });
 
   const totaleFiltered = filtered.reduce((s, o) => s + (o.Totale ?? 0), 0);
@@ -84,7 +118,7 @@ export default function OrdiniPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>
-          I miei ordini
+          {isRappresentante ? "Ordini dei miei clienti" : "I miei ordini"}
         </h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
           {loading ? "Caricamento…" : `${filtered.length} ordini · Totale ${formatEuro(totaleFiltered)}`}
@@ -104,6 +138,22 @@ export default function OrdiniPage() {
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
             />
           </div>
+          {isRappresentante && (
+            <div className="relative">
+              <Users size={15} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+              <select
+                value={clienteFiltro}
+                onChange={(e) => setClienteFiltro(e.target.value)}
+                className="pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none appearance-none"
+                style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", fontFamily: "var(--font-montserrat)", color: "var(--text-primary)" }}
+              >
+                <option value="">Tutti i clienti</option>
+                {miClienti.map((c) => (
+                  <option key={c.uid} value={c.uid}>{c.nome}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <select
             value={statoFiltro}
             onChange={(e) => setStatoFiltro(e.target.value as OrdineStato | "")}
@@ -119,7 +169,7 @@ export default function OrdiniPage() {
             <option value="Out of Stock">Out of Stock</option>
           </select>
           <button
-            onClick={() => { setSearch(""); setStatoFiltro(""); }}
+            onClick={() => { setSearch(""); setStatoFiltro(""); setClienteFiltro(""); }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium"
             style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}
           >
@@ -158,10 +208,11 @@ export default function OrdiniPage() {
       ) : (
         <Card padding="none">
           <div
-            className="hidden sm:grid grid-cols-[1fr_1fr_1fr_1.5fr_auto] gap-4 px-5 py-3 text-xs font-bold uppercase tracking-widest"
+            className={`hidden sm:grid gap-4 px-5 py-3 text-xs font-bold uppercase tracking-widest ${isRappresentante ? "grid-cols-[1fr_1.3fr_1fr_1fr_1.5fr_auto]" : "grid-cols-[1fr_1fr_1fr_1.5fr_auto]"}`}
             style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)", borderBottom: "1px solid var(--border)" }}
           >
             <span>Ordine</span>
+            {isRappresentante && <span>Cliente</span>}
             <span>Data</span>
             <span>Stato</span>
             <span>Totale</span>
@@ -171,7 +222,7 @@ export default function OrdiniPage() {
             {filtered.map((o) => (
               <div
                 key={o.id}
-                className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_1.5fr_auto] gap-3 sm:gap-4 items-start sm:items-center px-5 py-4 hover:bg-[#F1F4F8] transition-colors"
+                className={`grid grid-cols-1 gap-3 sm:gap-4 items-start sm:items-center px-5 py-4 hover:bg-[#F1F4F8] transition-colors ${isRappresentante ? "sm:grid-cols-[1fr_1.3fr_1fr_1fr_1.5fr_auto]" : "sm:grid-cols-[1fr_1fr_1fr_1.5fr_auto]"}`}
               >
                 <div>
                   <span
@@ -181,6 +232,11 @@ export default function OrdiniPage() {
                     {o.Numero ?? `#${o.id.slice(0, 8).toUpperCase()}`}
                   </span>
                 </div>
+                {isRappresentante && (
+                  <span className="text-sm truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
+                    {o._repClienteNome ?? "—"}
+                  </span>
+                )}
                 <span className="text-sm" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                   {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                   {formatData(((o as any).DataCreazione ?? (o as any).DataOra) as Timestamp)}
