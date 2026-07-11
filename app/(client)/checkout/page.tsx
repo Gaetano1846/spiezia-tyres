@@ -413,27 +413,29 @@ export default function CheckoutPage() {
   // Indirizzi fatturazione del cliente selezionato (admin mode)
   const [clienteAddresses, setClienteAddresses] = useState<SavedAddress[]>([]);
 
-  // Quando admin seleziona un cliente, carica gli indirizzi di fatturazione del cliente
+  // Quando admin/rappresentante seleziona un cliente, carica i suoi indirizzi
+  // di fatturazione salvati. SERVER-SIDE: le Firestore Security Rules su
+  // Clienti/{id}/Indirizzo_FatturazioneC richiedono isAdmin() || isCRM() — un
+  // Rappresentante puro (senza flag CRM) falliva sempre con permission-denied
+  // qui, silenziosamente (il dropdown "indirizzo salvato" non appariva mai).
   useEffect(() => {
     if (!clienteSelezionato) {
       setClienteAddresses([]);
       return;
     }
-    getDocs(collection(db, "Clienti", clienteSelezionato.id, "Indirizzo_FatturazioneC"))
-      .then((snap) => {
-        const addrs: SavedAddress[] = snap.docs.map((d) => {
-          const a = d.data() as Record<string, string>;
-          return {
-            id: d.id,
-            label: a.Ragione_Sociale ?? a.Azienda ?? a.Nome ?? a.Via ?? "",
-            nome: a.Ragione_Sociale ?? a.Azienda ?? a.Nome ?? "",
-            via: a.Via ?? "",
-            cap: a.CAP ?? "",
-            citta: a.Citta ?? "",
-            provincia: a.Provincia ?? "",
-            partitaIva: a.PartitaIVA ?? a.Partita_IVA ?? "",
-          };
-        });
+    fetch(`/api/checkout/cliente/${clienteSelezionato.id}/indirizzi`)
+      .then((r) => r.json())
+      .then((data: { indirizzi?: Array<Record<string, string>> }) => {
+        const addrs: SavedAddress[] = (data.indirizzi ?? []).map((a) => ({
+          id: a.id,
+          label: a.Ragione_Sociale ?? a.Azienda ?? a.Nome ?? a.Via ?? "",
+          nome: a.Ragione_Sociale ?? a.Azienda ?? a.Nome ?? "",
+          via: a.Via ?? "",
+          cap: a.CAP ?? "",
+          citta: a.Citta ?? "",
+          provincia: a.Provincia ?? "",
+          partitaIva: a.PartitaIVA ?? a.Partita_IVA ?? "",
+        }));
         setClienteAddresses(addrs);
         // Pre-popola il form fatturazione con il primo indirizzo del cliente
         if (addrs.length > 0) {
@@ -441,7 +443,7 @@ export default function CheckoutPage() {
           setFatturazione({ nome: first.nome, via: first.via, cap: first.cap, citta: first.citta, provincia: first.provincia, partitaIva: first.partitaIva });
         }
       })
-      .catch(() => {});
+      .catch(() => setClienteAddresses([]));
   }, [clienteSelezionato]);
 
   useEffect(() => {
