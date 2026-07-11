@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc, doc,
+  collection, addDoc, updateDoc, deleteDoc, doc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Plus, Pencil, Trash2, Check, Loader2, Tag, Settings, Layers } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
+import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
 
 type SimpleDoc = { id: string; Nome: string };
 type SimpleForm = { nome: string };
@@ -134,22 +135,40 @@ function CrudSection({
 
 export default function CatalogoPage() {
   const [servizi,    setServizi]    = useState<SimpleDoc[]>([]);
-  const [modelli,    setModelli]    = useState<SimpleDoc[]>([]);
   const [categorie,  setCategorie]  = useState<SimpleDoc[]>([]);
   const [loading,    setLoading]    = useState(true);
 
-  async function loadAll() {
+  // Modelli: stessa collezione Firestore "Modello" usata da /admin/disegni.
+  // Nessun ordinamento speciale qui (solo Nome) — cursor-pagination con drain
+  // automatico in background, stesso pattern usato altrove per evitare di
+  // bloccare il render su migliaia di documenti caricati in un colpo solo.
+  const {
+    items: modelli,
+    loading: modelliLoading,
+    hasMore: modelliHasMore,
+    loadAll: drainModelli,
+    reload: reloadModelli,
+    mutate: mutateModelli,
+  } = useFirestoreInfiniteList<SimpleDoc>({
+    collectionPath: "Modello",
+    orderByField: "Nome",
+    pageSize: 100,
+    mapDoc: useCallback((id, data) => ({ id, ...data }) as SimpleDoc, []),
+  });
+  useEffect(() => {
+    if (!modelliLoading && modelliHasMore) drainModelli();
+  }, [modelliLoading, modelliHasMore, drainModelli]);
+
+  async function loadLookups() {
     setLoading(true);
     try {
-      const [servRes, modSnap, catRes] = await Promise.all([
+      const [servRes, catRes] = await Promise.all([
         fetch("/api/lookup/servizio"),
-        getDocs(collection(db, "Modello")),
         fetch("/api/lookup/categoria"),
       ]);
       const [servJson, catJson] = await Promise.all([servRes.json(), catRes.json()]);
       if (!servRes.ok || !catRes.ok) throw new Error("Errore nel caricamento");
       setServizi(servJson.items);
-      setModelli(modSnap.docs.map((d)  => ({ id: d.id, ...(d.data() as Omit<SimpleDoc, "id">) })));
       setCategorie(catJson.items);
     } catch {
       toast.error("Errore nel caricamento");
@@ -158,7 +177,7 @@ export default function CatalogoPage() {
     }
   }
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadLookups(); }, []);
 
   async function createOrUpdate(kind: "servizio" | "categoria", id: string | null, f: SimpleForm) {
     const res = await fetch(id ? `/api/lookup/${kind}/${encodeURIComponent(id)}` : `/api/lookup/${kind}`, {
@@ -178,11 +197,11 @@ export default function CatalogoPage() {
 
   async function addServizio(f: SimpleForm) {
     await createOrUpdate("servizio", null, f);
-    toast.success("Servizio aggiunto"); await loadAll();
+    toast.success("Servizio aggiunto"); await loadLookups();
   }
   async function editServizio(id: string, f: SimpleForm) {
     await createOrUpdate("servizio", id, f);
-    toast.success("Servizio aggiornato"); await loadAll();
+    toast.success("Servizio aggiornato"); await loadLookups();
   }
   async function deleteServizio(id: string, nome: string) {
     if (!confirm(`Eliminare il servizio "${nome}"?`)) return;
@@ -195,28 +214,29 @@ export default function CatalogoPage() {
 
   async function addModello(f: SimpleForm) {
     await addDoc(collection(db, "Modello"), { Nome: f.nome.trim() });
-    toast.success("Modello aggiunto"); await loadAll();
+    toast.success("Modello aggiunto"); reloadModelli();
   }
   async function editModello(id: string, f: SimpleForm) {
     await updateDoc(doc(db, "Modello", id), { Nome: f.nome.trim() });
-    toast.success("Modello aggiornato"); await loadAll();
+    toast.success("Modello aggiornato");
+    mutateModelli((prev) => prev.map((m) => (m.id === id ? { ...m, Nome: f.nome.trim() } : m)));
   }
   async function deleteModello(id: string, nome: string) {
     if (!confirm(`Eliminare il modello "${nome}"?`)) return;
     await deleteDoc(doc(db, "Modello", id));
     toast.success("Modello eliminato");
-    setModelli((p) => p.filter((m) => m.id !== id));
+    mutateModelli((p) => p.filter((m) => m.id !== id));
   }
 
   // ── CATEGORIE ────────────────────────────────────────────────────────────────
 
   async function addCategoria(f: SimpleForm) {
     await createOrUpdate("categoria", null, f);
-    toast.success("Categoria aggiunta"); await loadAll();
+    toast.success("Categoria aggiunta"); await loadLookups();
   }
   async function editCategoria(id: string, f: SimpleForm) {
     await createOrUpdate("categoria", id, f);
-    toast.success("Categoria aggiornata"); await loadAll();
+    toast.success("Categoria aggiornata"); await loadLookups();
   }
   async function deleteCategoria(id: string, nome: string) {
     if (!confirm(`Eliminare la categoria "${nome}"?`)) return;
@@ -248,7 +268,7 @@ export default function CatalogoPage() {
           title="Modelli"
           icon={Tag}
           items={modelli}
-          loading={loading}
+          loading={modelliLoading}
           onAdd={addModello}
           onEdit={editModello}
           onDelete={deleteModello}

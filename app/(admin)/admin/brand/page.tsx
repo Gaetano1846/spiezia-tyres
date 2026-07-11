@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  collection, query, orderBy, getDocs,
-  addDoc, updateDoc, deleteDoc, doc,
+  collection, addDoc, updateDoc, deleteDoc, doc,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "@/lib/firebase";
 import { Search, Pencil, Trash2, Plus, X, Check, Loader2, Upload, ImageIcon } from "lucide-react";
 import Card from "@/components/ui/Card";
+import InfiniteScrollSentinel from "@/components/ui/InfiniteScrollSentinel";
 import toast from "react-hot-toast";
+import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
 
 interface Brand {
   id: string;
@@ -49,8 +50,22 @@ type FormState = { nome: string; logoFile: File | null; logoPreview: string | nu
 const FORM_DEFAULT: FormState = { nome: "", logoFile: null, logoPreview: null };
 
 export default function BrandPage() {
-  const [brands, setBrands] = useState<Brand[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    items: brands,
+    loading,
+    loadingMore,
+    hasMore,
+    loadMore,
+    loadAll,
+    reload: reloadBrands,
+    mutate: mutateBrands,
+    epoch: brandsEpoch,
+  } = useFirestoreInfiniteList<Brand>({
+    collectionPath: "Marca_Prodotto",
+    orderByField: "Nome",
+    pageSize: 100,
+    mapDoc: useCallback((id, data) => ({ id, ...data }) as Brand, []),
+  });
   const [search, setSearch] = useState("");
 
   const [showModal, setShowModal] = useState(false);
@@ -60,18 +75,10 @@ export default function BrandPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function loadBrands() {
-    try {
-      const snap = await getDocs(query(collection(db, "Marca_Prodotto"), orderBy("Nome")));
-      setBrands(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Brand, "id">) })));
-    } catch {
-      toast.error("Errore nel caricamento dei brand");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { loadBrands(); }, []);
+  // Ricerca attiva → serve l'intera collezione, non solo la pagina già caricata.
+  useEffect(() => {
+    if (search.trim()) loadAll();
+  }, [search, loadAll, brandsEpoch]);
 
   function openModal(brand?: Brand) {
     setEditBrand(brand ?? null);
@@ -116,15 +123,15 @@ export default function BrandPage() {
 
       if (editBrand) {
         await updateDoc(doc(db, "Marca_Prodotto", editBrand.id), payload);
+        mutateBrands((prev) => prev.map((b) => (b.id === editBrand.id ? { ...b, ...payload } as Brand : b)));
         toast.success("Brand aggiornato");
       } else {
         await addDoc(collection(db, "Marca_Prodotto"), { ...payload, conteggio: 0 });
         toast.success("Brand aggiunto");
+        reloadBrands();
       }
 
       closeModal();
-      setLoading(true);
-      await loadBrands();
     } catch (err) {
       console.error(err);
       toast.error("Errore nel salvataggio");
@@ -137,7 +144,7 @@ export default function BrandPage() {
     if (!confirm(`Eliminare il brand "${brand.Nome}"?`)) return;
     try {
       await deleteDoc(doc(db, "Marca_Prodotto", brand.id));
-      setBrands((prev) => prev.filter((b) => b.id !== brand.id));
+      mutateBrands((prev) => prev.filter((b) => b.id !== brand.id));
       closeModal();
       toast.success("Brand eliminato");
     } catch {
@@ -156,7 +163,7 @@ export default function BrandPage() {
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Brand</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-            {loading ? "Caricamento…" : `${brands.length} marche in catalogo`}
+            {loading ? "Caricamento…" : `${brands.length}${hasMore ? "+" : ""} marche in catalogo`}
           </p>
         </div>
         <button
@@ -223,6 +230,10 @@ export default function BrandPage() {
             style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
             Nessun brand trovato per &ldquo;{search}&rdquo;
           </p>
+        )}
+
+        {!loading && (
+          <InfiniteScrollSentinel onVisible={loadMore} hasMore={hasMore} loading={loadingMore} />
         )}
       </Card>
 

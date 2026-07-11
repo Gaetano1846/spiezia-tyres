@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
-  collection, query, orderBy, getDocs, doc,
+  collection, query, getDocs, doc,
   addDoc, updateDoc, writeBatch, where, arrayUnion,
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -10,6 +10,7 @@ import { db, storage } from "@/lib/firebase";
 import { Search, Pencil, Plus, X, Check, Loader2, ChevronLeft, ChevronRight, Upload, ImageIcon } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
+import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
 
 interface Disegno {
   id: string;
@@ -53,8 +54,31 @@ function DisegnoSkeleton() {
 }
 
 export default function DisegniPage() {
-  const [disegni, setDisegni] = useState<Disegno[]>([]);
-  const [loading, setLoading] = useState(true);
+  // L'ordine di default (conteggio d'uso desc) non è un campo Firestore
+  // affidabile su cui fare cursor-pagination (doc legacy con "conteggio" vs
+  // "Conteggio" — vedi conteggioOf). Il fetch pagina su "Nome" (sempre
+  // presente) e drena l'INTERA collezione in background subito dopo il primo
+  // batch: il rendering diventa immediato (primi ~100 disegni), il resto
+  // arriva progressivamente senza bloccare — a differenza di prima non c'è
+  // più uno spinner unico per tutti i 3500+ documenti.
+  const {
+    items: disegni,
+    loading,
+    loadingMore,
+    hasMore,
+    loadAll,
+    reload: reloadDisegni,
+    mutate: mutateDisegni,
+  } = useFirestoreInfiniteList<Disegno>({
+    collectionPath: "Modello",
+    orderByField: "Nome",
+    pageSize: 100,
+    mapDoc: useCallback((id, data) => ({ id, ...data }) as Disegno, []),
+  });
+  useEffect(() => {
+    if (!loading && hasMore) loadAll();
+  }, [loading, hasMore, loadAll]);
+
   const [search, setSearch] = useState("");
   const [soloSenzaFoto, setSoloSenzaFoto] = useState(false);
   const [page, setPage] = useState(0);
@@ -67,19 +91,6 @@ export default function DisegniPage() {
   const [immaginePreview, setImmaginePreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  async function loadDisegni() {
-    try {
-      const snap = await getDocs(query(collection(db, "Modello"), orderBy("Nome")));
-      setDisegni(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Disegno, "id">) })));
-    } catch {
-      toast.error("Errore nel caricamento dei disegni");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { loadDisegni(); }, []);
 
   function openModal(disegno?: Disegno) {
     setEditDisegno(disegno ?? null);
@@ -152,7 +163,7 @@ export default function DisegniPage() {
           toast.success("Disegno aggiornato");
         }
 
-        setDisegni((prev) => prev.map((d) =>
+        mutateDisegni((prev) => prev.map((d) =>
           d.id === editDisegno.id ? { ...d, Nome: nome, Immagine: immagineUrl } : d
         ));
       } else {
@@ -160,8 +171,7 @@ export default function DisegniPage() {
         if (immagineUrl) payload.Immagine = immagineUrl;
         await addDoc(collection(db, "Modello"), payload);
         toast.success("Disegno aggiunto");
-        setLoading(true);
-        await loadDisegni();
+        reloadDisegni();
       }
       closeModal();
     } catch (err) {
@@ -199,8 +209,13 @@ export default function DisegniPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>Disegni</h1>
-          <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-            {loading ? "Caricamento…" : `${disegni.length} disegni/pattern in catalogo`}
+          <p className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
+            {loading
+              ? "Caricamento…"
+              : `${disegni.length}${hasMore ? "+" : ""} disegni/pattern in catalogo`}
+            {!loading && loadingMore && (
+              <Loader2 size={11} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            )}
           </p>
         </div>
         <button

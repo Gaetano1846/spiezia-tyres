@@ -1,11 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
   updateDoc,
   getDoc,
   doc,
@@ -30,7 +26,9 @@ import {
 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
+import InfiniteScrollSentinel from "@/components/ui/InfiniteScrollSentinel";
 import toast from "react-hot-toast";
+import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
 
 type UserDoc = {
   docId: string;  // always the Firestore document ID — used as React key
@@ -280,8 +278,22 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 export default function ClientiPage() {
-  const [users, setUsers] = useState<UserDoc[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    items: users,
+    loading,
+    loadingMore,
+    hasMore,
+    loadMore,
+    loadAll,
+    reload: reloadUsers,
+    mutate: mutateUsers,
+    epoch: usersEpoch,
+  } = useFirestoreInfiniteList<UserDoc>({
+    collectionPath: "users",
+    orderByField: "email",
+    pageSize: 100,
+    mapDoc: useCallback((id, data) => ({ ...data, docId: id }) as UserDoc, []),
+  });
   const [search, setSearch] = useState("");
   const [filtroRuolo, setFiltroRuolo] = useState("Tutti");
   const [aggiornandoFido, setAggiornandoFido] = useState(false);
@@ -317,29 +329,12 @@ export default function ClientiPage() {
     return u.Fido ?? 0;
   }
 
+  // La lista di default è paginata (infinite-scroll); una ricerca attiva deve
+  // però vedere TUTTI gli utenti, non solo quelli già caricati — drena la
+  // collezione intera quando l'utente digita un filtro testuale.
   useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, "users"), orderBy("email")),
-      (snap) => {
-        const seen = new Set<string>();
-        const deduped: UserDoc[] = [];
-        for (const d of snap.docs) {
-          if (!seen.has(d.id)) {
-            seen.add(d.id);
-            deduped.push({ ...d.data(), docId: d.id } as UserDoc);
-          }
-        }
-        setUsers(deduped);
-        setLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        toast.error("Errore nel caricamento degli utenti");
-        setLoading(false);
-      }
-    );
-    return () => unsub();
-  }, []);
+    if (search.trim()) loadAll();
+  }, [search, loadAll, usersEpoch]);
 
   // Risolve i doc Clienti referenziati (Cliente_Ref) per recuperare il fido reale
   useEffect(() => {
@@ -405,6 +400,7 @@ export default function ClientiPage() {
     const nuovoStato = !isBloccato(u);
     try {
       await updateDoc(doc(db, "users", id), { Blocco: nuovoStato });
+      mutateUsers((prev) => prev.map((x) => (x.docId === id ? { ...x, Blocco: nuovoStato } : x)));
     } catch {
       toast.error("Errore nell'aggiornamento");
     }
@@ -507,6 +503,15 @@ export default function ClientiPage() {
         // Utente non collegato a un Cliente: fido salvato come fallback su users
         await updateDoc(doc(db, "users", editUser.docId), { Fido: fidoVal });
       }
+      mutateUsers((prev) => prev.map((x) => (x.docId === editUser.docId ? {
+        ...x,
+        Ruolo: editUser.Ruolo,
+        display_name: editUser.Nome.trim(),
+        Rappresentante: editUser.Rappresentante,
+        Metodo_di_Pagamento: editUser.MetodoPagamento.trim(),
+        Blocco: editUser.Bloccato,
+        ...(editUser.clienteRef ? {} : { Fido: fidoVal }),
+      } : x)));
       toast.success("Utente aggiornato");
       setEditUser(null);
     } catch {
@@ -587,6 +592,10 @@ export default function ClientiPage() {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Errore nella creazione del cliente");
       toast.success("Cliente creato nell'anagrafica");
+      // Se è stata impostata una password, il bridge scrive un nuovo doc "users"
+      // su Firestore in modo asincrono — un reload subito dopo potrebbe non
+      // vederlo ancora, ma è comunque meglio del nulla (best-effort).
+      if (nc.Password.trim()) reloadUsers();
       setNewCliente(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Errore nella creazione del cliente");
@@ -630,7 +639,7 @@ export default function ClientiPage() {
               fontFamily: "var(--font-montserrat)",
             }}
           >
-            {loading ? "Caricamento…" : `${filtered.length} utenti`}
+            {loading ? "Caricamento…" : `${filtered.length}${hasMore ? "+" : ""} utenti`}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -913,6 +922,9 @@ export default function ClientiPage() {
               )}
             </tbody>
           </table>
+          {!loading && (
+            <InfiniteScrollSentinel onVisible={loadMore} hasMore={hasMore} loading={loadingMore} />
+          )}
         </div>
 
         {/* Lista a card — solo mobile */}
@@ -1037,6 +1049,9 @@ export default function ClientiPage() {
                 );
               })}
             </div>
+          )}
+          {!loading && (
+            <InfiniteScrollSentinel onVisible={loadMore} hasMore={hasMore} loading={loadingMore} />
           )}
         </div>
       </Card>
