@@ -152,13 +152,19 @@ export async function GET(req: NextRequest) {
     // conoscere in anticipo l'elenco fonti.
     const sources = bySource.map((s) => s.source);
 
-    const timeSeries = [...byDaySourceMap.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, daySources]) => {
-        const row: Record<string, string | number> = { date };
-        for (const source of sources) row[source] = daySources.get(source) ?? 0;
-        return row;
-      });
+    // Un punto per OGNI giorno del periodo, non solo i giorni con almeno un
+    // ordine — altrimenti un tratto senza vendite sparisce dall'array e il
+    // grafico (spaziatura categorica, non una vera scala temporale) disegna
+    // i due punti adiacenti come se il tempo tra loro non fosse mai passato,
+    // un salto che sembra un dato continuo ma non lo è.
+    const timeSeries: Record<string, string | number>[] = [];
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      const dayKey = d.toISOString().slice(0, 10);
+      const daySources = byDaySourceMap.get(dayKey);
+      const row: Record<string, string | number> = { date: dayKey };
+      for (const source of sources) row[source] = daySources?.get(source) ?? 0;
+      timeSeries.push(row);
+    }
 
     const topProdotti = [...prodMap.values()]
       .sort((a, b) => b.quantita - a.quantita)
