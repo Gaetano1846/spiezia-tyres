@@ -108,7 +108,10 @@ export async function GET(req: NextRequest) {
 
     let totRevenue = 0;
     const bySourceMap = new Map<string, { count: number; revenue: number }>();
-    const byDayMap = new Map<string, { count: number; revenue: number }>();
+    // Andamento nel tempo: fatturato per FONTE per giorno (non un totale
+    // globale) — una riga = un giorno, una colonna = una fonte. Il frontend
+    // disegna una linea per fonte da questa forma "larga".
+    const byDaySourceMap = new Map<string, Map<string, number>>();
     const prodMap = new Map<string, { label: string; quantita: number; fatturato: number }>();
 
     for (const d of validi) {
@@ -123,10 +126,9 @@ export async function GET(req: NextRequest) {
 
       const ts = (d.DataOra ?? d.DataCreazione) as FirebaseFirestore.Timestamp | undefined;
       const day = ts?.toDate ? ts.toDate().toISOString().slice(0, 10) : "sconosciuto";
-      const bd = byDayMap.get(day) ?? { count: 0, revenue: 0 };
-      bd.count += 1;
-      bd.revenue += totale;
-      byDayMap.set(day, bd);
+      const daySources = byDaySourceMap.get(day) ?? new Map<string, number>();
+      daySources.set(source, (daySources.get(source) ?? 0) + totale);
+      byDaySourceMap.set(day, daySources);
 
       const articoli = (d.Articoli as RawArticolo[] | undefined) ?? [];
       for (const a of articoli) {
@@ -145,9 +147,18 @@ export async function GET(req: NextRequest) {
       .map(([source, s]) => ({ source, count: s.count, revenue: s.revenue, avgOrderValue: s.count > 0 ? s.revenue / s.count : 0 }))
       .sort((a, b) => b.revenue - a.revenue);
 
-    const timeSeries = [...byDayMap.entries()]
-      .map(([date, s]) => ({ date, count: s.count, revenue: s.revenue }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    // Sorgenti presenti nel periodo (già ordinate per fatturato desc) — il
+    // frontend le usa per sapere quante <Line> disegnare, senza dover
+    // conoscere in anticipo l'elenco fonti.
+    const sources = bySource.map((s) => s.source);
+
+    const timeSeries = [...byDaySourceMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, daySources]) => {
+        const row: Record<string, string | number> = { date };
+        for (const source of sources) row[source] = daySources.get(source) ?? 0;
+        return row;
+      });
 
     const topProdotti = [...prodMap.values()]
       .sort((a, b) => b.quantita - a.quantita)
@@ -159,6 +170,7 @@ export async function GET(req: NextRequest) {
       avgOrderValue,
       cancelledCount: cancellati.length,
       bySource,
+      sources,
       timeSeries,
       topProdotti,
       truncated,

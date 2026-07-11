@@ -24,7 +24,9 @@ const FONTE_COLORS: Record<string, string> = {
 };
 
 type BySource = { source: string; count: number; revenue: number; avgOrderValue: number };
-type TimePoint = { date: string; count: number; revenue: number };
+// Una riga per giorno, una chiave dinamica per fonte (fatturato di quella
+// fonte in quel giorno) — vedi commento nella route su "forma larga".
+type TimePoint = { date: string } & Record<string, number | string>;
 type TopProdotto = { label: string; quantita: number; fatturato: number };
 type ReportData = {
   count: number;
@@ -32,6 +34,7 @@ type ReportData = {
   avgOrderValue: number;
   cancelledCount: number;
   bySource: BySource[];
+  sources: string[];
   timeSeries: TimePoint[];
   topProdotti: TopProdotto[];
   truncated: boolean;
@@ -191,7 +194,7 @@ export default function ReportPage() {
       {/* Andamento nel periodo */}
       <Card>
         <h2 className="text-base font-bold mb-4" style={{ fontFamily: "var(--font-poppins)" }}>
-          Andamento — ordini e fatturato
+          Andamento — fatturato per fonte
         </h2>
         {loading ? (
           <div className="h-64 rounded-xl animate-pulse" style={{ background: "var(--bg-primary)" }} />
@@ -202,15 +205,23 @@ export default function ReportPage() {
             <LineChart data={report.timeSeries} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis dataKey="date" tickFormatter={formatDayShort} tick={{ fontSize: 11, fontFamily: "var(--font-montserrat)" }} />
-              <YAxis yAxisId="left" tick={{ fontSize: 11, fontFamily: "var(--font-montserrat)" }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fontFamily: "var(--font-montserrat)" }} tickFormatter={(v) => formatEuro(v)} width={90} />
+              <YAxis tick={{ fontSize: 11, fontFamily: "var(--font-montserrat)" }} tickFormatter={(v) => formatEuro(v)} width={90} />
               <Tooltip
-                formatter={(value, name) => [name === "Fatturato" ? formatEuro(Number(value)) : value, name]}
+                formatter={(value, name) => [formatEuro(Number(value)), name]}
                 labelFormatter={(l) => formatISOToDisplay(String(l))}
               />
               <Legend />
-              <Line yAxisId="left" type="monotone" dataKey="count" name="Ordini" stroke="#6366F1" strokeWidth={2} dot={false} />
-              <Line yAxisId="right" type="monotone" dataKey="revenue" name="Fatturato" stroke="#16A34A" strokeWidth={2} dot={false} />
+              {report.sources.map((source) => (
+                <Line
+                  key={source}
+                  type="monotone"
+                  dataKey={source}
+                  name={source}
+                  stroke={FONTE_COLORS[source] ?? FONTE_COLORS.Altro}
+                  strokeWidth={2}
+                  dot={false}
+                />
+              ))}
             </LineChart>
           </ResponsiveContainer>
         )}
