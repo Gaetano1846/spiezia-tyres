@@ -41,7 +41,7 @@ type UserDoc = {
   Ruolo?: string;
   Rappresentante?: string;
   Metodo_di_Pagamento?: string;
-  last_active_time?: Timestamp;
+  last_active_time?: Timestamp | string;  // doc legacy: alcuni sono stringa ISO invece di Timestamp
   Blocco?: boolean;
   Cliente_Ref?: DocumentReference;  // riferimento al doc Clienti (dove vive il fido reale)
   Fido?: number;        // eventuale fido denormalizzato su users (fallback)
@@ -51,7 +51,7 @@ type UserDoc = {
   Cognome?: string;
   displayName?: string;
   Email?: string;
-  lastLogin?: Timestamp;
+  lastLogin?: Timestamp | string;
   Bloccato?: boolean;
 };
 
@@ -59,9 +59,22 @@ function formatEuro(n: number) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function relativeTime(ts?: Timestamp): string {
-  if (!ts) return "—";
-  const ms = Date.now() - ts.toMillis();
+// Alcuni doc legacy hanno last_active_time/lastLogin scritti come stringa ISO
+// invece di un Firestore Timestamp (dato esterno, boundary non affidabile —
+// normalizza entrambi i formati invece di assumere .toMillis() esista).
+function toMillis(ts: Timestamp | string | undefined | null): number | null {
+  if (!ts) return null;
+  if (typeof ts === "string") {
+    const ms = Date.parse(ts);
+    return Number.isNaN(ms) ? null : ms;
+  }
+  return ts.toMillis();
+}
+
+function relativeTime(ts?: Timestamp | string): string {
+  const start = toMillis(ts);
+  if (start === null) return "—";
+  const ms = Date.now() - start;
   const secs = Math.floor(ms / 1000);
   if (secs < 60) return "poco fa";
   const mins = Math.floor(secs / 60);
