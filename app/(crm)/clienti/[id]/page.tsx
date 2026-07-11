@@ -18,7 +18,8 @@ import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
-import type { Cliente, Preventivo, Veicolo, Appuntamento, Ordine, FoglioStato } from "@/lib/types";
+import type { Cliente, Preventivo, Veicolo, Appuntamento, FoglioStato } from "@/lib/types";
+import type { OrdineListItemApi } from "@/lib/ordiniDb";
 
 const appStatoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
   Completato:  "success",
@@ -58,6 +59,14 @@ type FoglioRow = {
 function fmtData(ts: Timestamp | null | undefined): string {
   if (!ts?.toDate) return "—";
   return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+// Ordini: da Postgres (core.ordini) — Data arriva già come ISO string, non
+// un Timestamp Firestore come le altre tab di questa pagina.
+function fmtDataIso(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function fmtOra(ts: Timestamp | null | undefined): string {
@@ -107,7 +116,7 @@ export default function ClienteDetailPage() {
   const [veicoli,      setVeicoli]      = useState<Veicolo[]>([]);
   const [preventivi,   setPreventivi]   = useState<PrevWithClienteId[]>([]);
   const [appuntamenti, setAppuntamenti] = useState<Appuntamento[]>([]);
-  const [ordini,       setOrdini]       = useState<Ordine[]>([]);
+  const [ordini,       setOrdini]       = useState<OrdineListItemApi[]>([]);
   const [fogli,        setFogli]        = useState<FoglioRow[]>([]);
   const [promemoria,   setPromemoria]   = useState<PromemoriaRow[]>([]);
   const [loading,      setLoading]      = useState(true);
@@ -135,9 +144,11 @@ export default function ClienteDetailPage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        // Cliente: ora su Postgres (Fase 3 migrazione) — il resto (Appuntamenti,
-        // Ordini, FogliDiLavoro, Promemoria) legge ancora Firestore direttamente,
-        // corretto perché il bridge mantiene i Cliente ref sincronizzati.
+        // Cliente: ora su Postgres (Fase 3 migrazione). Ordini: ora su Postgres
+        // (Fase 1 migrazione Ordini, core.ordini già allineato dal bridge). Il
+        // resto (Appuntamenti, FogliDiLavoro, Promemoria) legge ancora
+        // Firestore direttamente — corretto perché il bridge mantiene i
+        // Cliente ref sincronizzati.
         const clienteRes = await fetch(`/api/clienti/${id}`);
         if (!clienteRes.ok) {
           toast.error("Cliente non trovato");
@@ -149,7 +160,7 @@ export default function ClienteDetailPage() {
 
         const clienteRef = doc(db, "Clienti", id) as DocumentReference;
 
-        const [veicoliRes, preventiviSnap, appSnap, ordiniSnap, fogliSnap, proSnap] = await Promise.all([
+        const [veicoliRes, preventiviSnap, appSnap, ordiniRes, fogliSnap, proSnap] = await Promise.all([
           fetch(`/api/clienti/${id}/veicoli`),
           getDocs(query(collection(db, "Clienti", id, "Preventivo"), orderBy("DataCreazione", "desc"), limit(50))),
           getDocs(query(
@@ -157,12 +168,8 @@ export default function ClienteDetailPage() {
             where("Cliente", "==", clienteRef),
             limit(50),
           )),
-          getDocs(query(
-            collection(db, "Ordini"),
-            where("Cliente", "==", clienteRef),
-            limit(50),
-          )),
-          // Niente orderBy: where + orderBy richiederebbe un indice composito. Ordiniamo lato client (come per Appuntamenti/Ordini qui sotto).
+          fetch(`/api/admin/ordini?clienteId=${id}`),
+          // Niente orderBy: where + orderBy richiederebbe un indice composito. Ordiniamo lato client (come per Appuntamenti qui sotto).
           getDocs(query(
             collection(db, "Foglio_di_Lavoro"),
             where("Cliente", "==", clienteRef),
@@ -199,15 +206,9 @@ export default function ClienteDetailPage() {
             .map((d) => ({ id: d.id, ...d.data() } as Appuntamento))
             .sort((a, b) => ((b.DataOra as Timestamp)?.seconds ?? 0) - ((a.DataOra as Timestamp)?.seconds ?? 0))
         );
-        setOrdini(
-          ordiniSnap.docs
-            .map((d) => ({ id: d.id, ...d.data() } as Ordine))
-            .sort((a, b) => {
-              const ta = (a.DataCreazione as Timestamp)?.seconds ?? 0;
-              const tb = (b.DataCreazione as Timestamp)?.seconds ?? 0;
-              return tb - ta;
-            })
-        );
+        // core.ordini è già ordinato per data desc lato route.
+        const ordiniData = (await ordiniRes.json().catch(() => ({}))) as { ordini?: OrdineListItemApi[] };
+        setOrdini(ordiniData.ordini ?? []);
         setFogli(
           fogliSnap.docs
             .map((d) => ({
@@ -1053,10 +1054,10 @@ export default function ClienteDetailPage() {
                               {o.Numero ?? `#${o.id.slice(0, 6).toUpperCase()}`}
                             </td>
                             <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                              {fmtData(o.DataCreazione as Timestamp)}
+                              {fmtDataIso(o.Data)}
                             </td>
                             <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                              {euro(o.Totale as number)}
+                              {euro(o.Totale)}
                             </td>
                             <td className="px-2 py-3">
                               <Badge variant="neutral">{ordineStato}</Badge>

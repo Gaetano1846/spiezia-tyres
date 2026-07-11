@@ -7,6 +7,7 @@ export const runtime = "nodejs";
 // GET /api/admin/ordini?da=YYYY-MM-DD&a=YYYY-MM-DD  (lista per periodo)
 //     /api/admin/ordini?q=termine                    (ricerca globale, ignora da/a —
 //       mirror del comportamento Algolia precedente: cerca su TUTTI gli ordini)
+//     /api/admin/ordini?clienteId=xxx                (ordini di un cliente — tab CRM)
 //
 // Sostituisce la query Firestore diretta (client SDK) di admin/ordini/page.tsx —
 // core.ordini è già alimentato in tempo reale dal bridge, ClienteNome/UtenteNome
@@ -21,16 +22,17 @@ export async function GET(req: NextRequest) {
   const da = searchParams.get("da");
   const a = searchParams.get("a");
   const q = searchParams.get("q");
+  const clienteId = searchParams.get("clienteId");
 
-  if (!q && (!da || !a)) {
-    return NextResponse.json({ error: "Intervallo date o termine di ricerca obbligatorio" }, { status: 400 });
+  if (!q && !clienteId && (!da || !a)) {
+    return NextResponse.json({ error: "Intervallo date, termine di ricerca o clienteId obbligatorio" }, { status: 400 });
   }
 
   try {
     const ordini = await listOrdini(
-      q
-        ? { q, limit: 500 }
-        : { dataDa: `${da}T00:00:00`, dataA: `${a}T23:59:59.999`, limit: 2000 }
+      clienteId ? { clienteId, limit: 50 }
+      : q ? { q, limit: 500 }
+      : { dataDa: `${da}T00:00:00`, dataA: `${a}T23:59:59.999`, limit: 2000 }
     );
     return NextResponse.json({ ordini });
   } catch (err) {

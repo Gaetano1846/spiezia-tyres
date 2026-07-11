@@ -384,3 +384,45 @@ export async function listOrdiniForExport(filter: { ids?: string[]; limit?: numb
     })),
   }));
 }
+
+export interface OrdineDocumentoApi {
+  ordineId: string;
+  Numero: string | null;
+  Data: string | null;
+  Tipo: string;
+  Url: string;
+}
+
+/** Documenti scaricabili (fattura PDF + eventuali allegati) sugli ultimi
+ *  ordini del cliente — "PDF" è colonna dedicata, "Documenti[]" (allegati
+ *  vari, non presente su tutti gli ordini) non è mappato a colonna e vive
+ *  in fs_extra. Filtra server-side solo gli ordini che hanno qualcosa da
+ *  mostrare, invece di scaricare gli ultimi N e filtrare lato client. */
+export async function listOrdiniDocumenti(utenteId: string, limitN = 100): Promise<OrdineDocumentoApi[]> {
+  const db = getDb();
+  if (!db) return [];
+
+  const { rows } = await db.query(
+    `SELECT id, numero, fs_extra->>'Numero' AS numero_display,
+       coalesce(data_ora, created_at) AS effective_date,
+       pdf_url, fs_extra->'Documenti' AS documenti
+     FROM core.ordini
+     WHERE utente_id = $1 AND (pdf_url IS NOT NULL OR fs_extra ? 'Documenti')
+     ORDER BY effective_date DESC
+     LIMIT $2`,
+    [utenteId, limitN]
+  );
+
+  const out: OrdineDocumentoApi[] = [];
+  for (const r of rows) {
+    const ordineId = r.id as string;
+    const Numero = (r.numero_display as string) ?? (r.numero != null ? String(r.numero) : null);
+    const Data = isoOrNull(r.effective_date);
+    if (r.pdf_url) out.push({ ordineId, Numero, Data, Tipo: "Fattura", Url: r.pdf_url as string });
+    const documenti = Array.isArray(r.documenti) ? (r.documenti as Array<{ Tipo?: string; Link?: string }>) : [];
+    for (const d of documenti) {
+      if (d.Link) out.push({ ordineId, Numero, Data, Tipo: d.Tipo ?? "Documento", Url: d.Link });
+    }
+  }
+  return out;
+}

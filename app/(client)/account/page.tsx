@@ -15,12 +15,10 @@ import Link from "next/link";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 
-type DocumentoOrdine = { Tipo: string; Link: string; Reference_Number?: string };
-
 type DownloadItem = {
   ordineId: string;
   ordineNumero?: string;
-  ordineData?: import("firebase/firestore").Timestamp;
+  ordineData?: string | null; // ISO — da Postgres (core.ordini), non più un Timestamp Firestore
   tipo: string;
   url: string;
 };
@@ -50,9 +48,10 @@ const EMPTY_FORM: IndirizzoForm = {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
+function formatData(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function initials(name?: string | null, email?: string | null): string {
@@ -117,32 +116,21 @@ export default function AccountPage() {
   useEffect(() => {
     if (!uid || tab !== "download") return;
     setLoadingDownload(true);
-    const uRef = doc(db, "users", uid);
-    getDocs(
-      query(
-        collection(db, "Ordini"),
-        where("Utente", "==", uRef),
-        orderBy("DataOra", "desc"),
-        limit(100),
-      ),
-    ).then((snap) => {
-      const items: DownloadItem[] = [];
-      snap.docs.forEach((d) => {
-        const data = d.data() as Record<string, unknown>;
-        const ordineNumero = (data.Numero as string | undefined);
-        const ordineData = (data.DataOra ?? data.DataCreazione) as import("firebase/firestore").Timestamp | undefined;
-        if (data.PDF && typeof data.PDF === "string") {
-          items.push({ ordineId: d.id, ordineNumero, ordineData, tipo: "Fattura", url: data.PDF as string });
-        }
-        const docs = data.Documenti as DocumentoOrdine[] | undefined;
-        docs?.forEach((doc_) => {
-          if (doc_.Link) {
-            items.push({ ordineId: d.id, ordineNumero, ordineData, tipo: doc_.Tipo ?? "Documento", url: doc_.Link });
-          }
-        });
-      });
-      setDownloadItems(items);
-    })
+    // Da Postgres (core.ordini) — PDF/Documenti[] filtrati server-side
+    // (lib/ordiniDb.ts::listOrdiniDocumenti), non più scaricati e filtrati
+    // lato client dagli ultimi 100 ordini.
+    fetch("/api/ordini/documenti")
+      .then((res) => res.json())
+      .then((data: { documenti?: { ordineId: string; Numero: string | null; Data: string | null; Tipo: string; Url: string }[] }) => {
+        const items: DownloadItem[] = (data.documenti ?? []).map((d) => ({
+          ordineId: d.ordineId,
+          ordineNumero: d.Numero ?? undefined,
+          ordineData: d.Data,
+          tipo: d.Tipo,
+          url: d.Url,
+        }));
+        setDownloadItems(items);
+      })
       .catch(() => toast.error("Errore nel caricamento dei documenti"))
       .finally(() => setLoadingDownload(false));
   }, [uid, tab]);
