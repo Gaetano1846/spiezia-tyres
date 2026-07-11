@@ -2,18 +2,40 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { doc, getDoc, collection, getDocs, orderBy, query } from "firebase/firestore";
-import type { Timestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import Image from "next/image";
 import type { Ordine } from "@/lib/types";
+import type { OrdineApi } from "@/lib/ordiniDb";
+
+// Sola lettura — admin/ordini/[id]/stampa, riusa /api/admin/ordini/[id].
+function apiToLocalOrdine(o: OrdineApi): Ordine {
+  return {
+    id: o.id,
+    Numero: o.Numero ?? undefined,
+    Stato: o.Stato,
+    Articoli: o.Articoli.map((a) => ({
+      Titolo: a.Titolo ?? "",
+      Marca: a.Marca ?? "",
+      Quantita: a.Quantita,
+      PrezzoUnitario: a.PrezzoUnitario ?? 0,
+      Prezzo: a.PrezzoUnitario ?? 0,
+      PFU: a.PFU ?? 0,
+      Contributo_Logistico: a.ContributoLogistico ?? 0,
+      Misura: (a.FsExtra?.Misura as string) ?? "",
+    })),
+    IndirizzoFatturazione: o.IndirizzoFatturazione ?? undefined,
+    IndirizzoSpedizione: o.IndirizzoSpedizione ?? undefined,
+    Note: o.Note ?? undefined,
+    DataCreazione: o.Data as unknown as Ordine["DataCreazione"],
+  } as unknown as Ordine;
+}
 
 function fmt(n: number) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
-function fmtDate(ts: Timestamp | null | undefined) {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
+function fmtDate(iso: string | null | undefined) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 type ArticoloNorm = {
@@ -28,26 +50,16 @@ export default function StampaOrdinePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetch = async () => {
-      const snap = await getDoc(doc(db, "Ordini", id));
-      if (!snap.exists()) { setLoading(false); return; }
-      const o = { id: snap.id, ...snap.data() } as Ordine;
-      setOrdine(o);
-
-      const ref = o.Cliente ?? o.Utente;
-      if (ref) {
-        const cSnap = await getDoc(ref as Parameters<typeof getDoc>[0]);
-        if (cSnap.exists()) {
-          const d = cSnap.data() as Record<string, unknown>;
-          setClienteNome(
-            (d.Azienda && d.Ragione_Sociale) ? String(d.Ragione_Sociale) :
-            String(d.Nome ?? "")?.trim() || String(d.Email ?? "") || "—"
-          );
-        }
-      }
+    const fetchOrdine = async () => {
+      const res = await fetch(`/api/admin/ordini/${id}`);
+      const data = (await res.json().catch(() => ({}))) as { ordine?: OrdineApi };
+      if (!res.ok || !data.ordine) { setLoading(false); return; }
+      setOrdine(apiToLocalOrdine(data.ordine));
+      // ClienteNome/UtenteNome arrivano già risolti via JOIN (lib/ordiniDb.ts).
+      setClienteNome(data.ordine.ClienteNome || data.ordine.UtenteNome || "—");
       setLoading(false);
     };
-    fetch().catch(() => setLoading(false));
+    fetchOrdine().catch(() => setLoading(false));
   }, [id]);
 
   useEffect(() => {
@@ -124,7 +136,7 @@ export default function StampaOrdinePage() {
               {ordine.Numero ?? `#${id.slice(0, 8).toUpperCase()}`}
             </div>
             <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
-              {fmtDate(ordine.DataCreazione as Timestamp)}
+              {fmtDate(ordine.DataCreazione as unknown as string)}
             </div>
             <div style={{ marginTop: 6, display: "inline-block", padding: "3px 10px", background: "#FFC803", borderRadius: 20, fontWeight: 700, fontSize: 11 }}>
               {ordine.Stato}
