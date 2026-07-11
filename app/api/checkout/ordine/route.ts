@@ -79,6 +79,29 @@ async function saveAddressIfNew(
   }
 }
 
+// Scalo PROVVISORIO del fido residuo: il Fido reale arriva dal gestionale via
+// CSV (vedi lib/clientSync/fido.js, sync ogni 3h) — non è mai stato scalato
+// in tempo reale alla creazione ordine, né in Flutter né qui. Su richiesta
+// esplicita, un ordine ora decrementa SUBITO Fido_Residuo come stima
+// immediata: il prossimo sync CSV lo sovrascrive col valore reale
+// (autoritativo), quindi eventuali disallineamenti si correggono da soli
+// entro poche ore. Decrementa solo se il doc ha un Fido configurato (altrimenti
+// creerebbe un residuo negativo fittizio per chi non ha un plafond credito).
+async function decrementFidoResiduoIfConfigured(
+  docRef: FirebaseFirestore.DocumentReference,
+  importo: number
+): Promise<void> {
+  try {
+    const snap = await docRef.get();
+    if (!snap.exists) return;
+    const d = snap.data() as Record<string, unknown>;
+    if (typeof d.Fido !== "number") return;
+    await docRef.update({ Fido_Residuo: FieldValue.increment(-importo) });
+  } catch (err) {
+    console.error("[api/checkout/ordine] scalo provvisorio fido fallito (non bloccante):", err);
+  }
+}
+
 export async function POST(req: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non autorizzato" }, { status: 401 });
@@ -174,6 +197,12 @@ export async function POST(req: Request) {
         await saveAddressIfNew(col, userAddr(body.spedizione));
       }
     }
+
+    // Scalo provvisorio del fido — vedi commento su decrementFidoResiduoIfConfigured.
+    const fidoDocRef = canOrderForClient && body.clienteId
+      ? db.doc(`Clienti/${body.clienteId}`)
+      : db.doc(`users/${session.uid}`);
+    await decrementFidoResiduoIfConfigured(fidoDocRef, body.totale);
 
     return NextResponse.json({ id: ref.id, numero: orderData.Numero as string });
   } catch (err) {
