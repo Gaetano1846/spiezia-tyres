@@ -102,6 +102,39 @@ async function decrementFidoResiduoIfConfigured(
   }
 }
 
+// Blocco (non solo scalo): se il totale dell'ordine supera il fido residuo
+// disponibile, l'ordine va rifiutato — invece di passare e andare in
+// negativo (comportamento precedente). Nessun blocco se il cliente non ha un
+// plafond credito configurato (campo Fido assente).
+async function checkFidoLimit(
+  docRef: FirebaseFirestore.DocumentReference,
+  importo: number,
+  isForClient: boolean
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const snap = await docRef.get();
+  if (!snap.exists) return { ok: true };
+  const d = snap.data() as Record<string, unknown>;
+  if (typeof d.Fido !== "number") return { ok: true };
+
+  const residuo = typeof d.Fido_Residuo === "number" ? d.Fido_Residuo : d.Fido;
+  if (importo <= residuo) return { ok: true };
+
+  if (isForClient) {
+    return { ok: false, error: "Il fido residuo del cliente selezionato non copre il totale dell'ordine." };
+  }
+  const rappresentante = typeof d.Rappresentante === "string" ? d.Rappresentante.trim() : "";
+  if (rappresentante) {
+    return {
+      ok: false,
+      error: `Il totale dell'ordine supera il tuo fido disponibile. Contatta il tuo rappresentante (${rappresentante}) per procedere.`,
+    };
+  }
+  return {
+    ok: false,
+    error: "Il totale dell'ordine supera il tuo fido disponibile. Contattaci al +39 081 511 5011 per procedere.",
+  };
+}
+
 export async function POST(req: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non autorizzato" }, { status: 401 });
@@ -131,6 +164,16 @@ export async function POST(req: Request) {
   try {
     const db = adminDb();
     const sedeId = body.sedeId || "main";
+
+    const forClient = canOrderForClient && !!body.clienteId;
+    const fidoDocRef = forClient
+      ? db.doc(`Clienti/${body.clienteId}`)
+      : db.doc(`users/${session.uid}`);
+    const fidoCheck = await checkFidoLimit(fidoDocRef, body.totale, forClient);
+    if (!fidoCheck.ok) {
+      return NextResponse.json({ error: fidoCheck.error }, { status: 403 });
+    }
+
     const counterRef = db.doc(`Counters/${sedeId}`);
 
     const numero = await db.runTransaction(async (tx) => {
@@ -166,7 +209,7 @@ export async function POST(req: Request) {
       DataCreazione: FieldValue.serverTimestamp(),
     };
 
-    if (canOrderForClient && body.clienteId) {
+    if (forClient) {
       orderData.Cliente = db.doc(`Clienti/${body.clienteId}`);
       orderData.createdBy = session.uid;
     }
@@ -176,7 +219,7 @@ export async function POST(req: Request) {
     // Salva l'indirizzo di fatturazione (e quello di spedizione, se diverso)
     // nella rubrica per il riuso futuro — del cliente selezionato in modalità
     // "ordina per conto di", altrimenti dell'utente che ha ordinato.
-    if (canOrderForClient && body.clienteId) {
+    if (forClient) {
       const col = db.collection(`Clienti/${body.clienteId}/Indirizzo_FatturazioneC`);
       const clienteAddr = (a: AddressPayload) => ({
         Ragione_Sociale: a.nome, Via: a.via, CAP: a.cap, Citta: a.citta,
@@ -199,9 +242,6 @@ export async function POST(req: Request) {
     }
 
     // Scalo provvisorio del fido — vedi commento su decrementFidoResiduoIfConfigured.
-    const fidoDocRef = canOrderForClient && body.clienteId
-      ? db.doc(`Clienti/${body.clienteId}`)
-      : db.doc(`users/${session.uid}`);
     await decrementFidoResiduoIfConfigured(fidoDocRef, body.totale);
 
     return NextResponse.json({ id: ref.id, numero: orderData.Numero as string });
