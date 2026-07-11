@@ -23,6 +23,7 @@ import {
   Eye,
   Mail,
   MapPin,
+  Briefcase,
 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
@@ -301,6 +302,9 @@ export default function ClientiPage() {
   const [saving, setSaving] = useState(false);
   const [newCliente, setNewCliente] = useState<NewClienteState | null>(null);
   const [creating, setCreating] = useState(false);
+  // Nuovo rappresentante — account di login (core.utenti), nessuna anagrafica Clienti.
+  const [newRapp, setNewRapp] = useState<{ nome: string; email: string; password: string } | null>(null);
+  const [creatingRapp, setCreatingRapp] = useState(false);
   // Scheda di dettaglio (sola lettura)
   const [detailUser, setDetailUser] = useState<UserDoc | null>(null);
   const [detailCliente, setDetailCliente] = useState<ClienteDetail | null>(null);
@@ -604,6 +608,41 @@ export default function ClientiPage() {
     }
   }
 
+  function openNewRapp() {
+    setNewRapp({ nome: "", email: "", password: "" });
+  }
+
+  async function saveNewRapp() {
+    if (!newRapp) return;
+    const { nome, email, password } = newRapp;
+    if (!nome.trim() || !email.trim()) {
+      toast.error("Compila nome ed email");
+      return;
+    }
+    if (password.length < 6) {
+      toast.error("La password deve avere almeno 6 caratteri");
+      return;
+    }
+    setCreatingRapp(true);
+    try {
+      const res = await fetch("/api/admin/rappresentanti", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ Nome: nome, Email: email, Password: password }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Errore nella creazione del rappresentante");
+      toast.success("Rappresentante creato");
+      // Bridge asincrono verso Firestore — best-effort, vedi saveNewCliente sopra.
+      reloadUsers();
+      setNewRapp(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Errore nella creazione del rappresentante");
+    } finally {
+      setCreatingRapp(false);
+    }
+  }
+
   function reset() {
     setSearch("");
     setFiltroRuolo("Tutti");
@@ -654,6 +693,19 @@ export default function ClientiPage() {
           >
             <UserPlus size={16} />
             Nuovo Cliente
+          </button>
+          <button
+            onClick={openNewRapp}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:brightness-110 active:scale-[.98]"
+            style={{
+              background: "#fff",
+              color: "#111",
+              border: "1.5px solid #111",
+              fontFamily: "var(--font-montserrat)",
+            }}
+          >
+            <Briefcase size={16} />
+            Nuovo Rappresentante
           </button>
           <button
             onClick={aggiornaFido}
@@ -1481,6 +1533,79 @@ export default function ClientiPage() {
             >
               <Save size={16} />
               {creating ? "Creazione…" : "Crea cliente"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modale Nuovo Rappresentante (solo account di login, nessuna anagrafica Clienti) ── */}
+      {newRapp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => (creatingRapp ? null : setNewRapp(null))}
+          />
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5"
+            style={{ fontFamily: "var(--font-montserrat)" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Briefcase size={18} style={{ color: "#FFC803" }} />
+                <h2 className="text-base font-bold" style={{ color: "#111" }}>
+                  Nuovo rappresentante
+                </h2>
+              </div>
+              <button
+                onClick={() => setNewRapp(null)}
+                disabled={creatingRapp}
+                className="p-1 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+              >
+                <X size={18} style={{ color: "#111" }} />
+              </button>
+            </div>
+
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Crea un account di accesso con ruolo Rappresentante. Una volta creato, sarà
+              selezionabile nel campo &ldquo;Rappresentante&rdquo; durante la modifica di un cliente.
+            </p>
+
+            <div className="space-y-4">
+              <TextField
+                label="NOME"
+                value={newRapp.nome}
+                onChange={(v) => setNewRapp((p) => (p ? { ...p, nome: v } : p))}
+                placeholder="Nome e cognome"
+                required
+              />
+              <TextField
+                label="EMAIL"
+                type="email"
+                value={newRapp.email}
+                onChange={(v) => setNewRapp((p) => (p ? { ...p, email: v } : p))}
+                placeholder="rappresentante@spieziatyres.it"
+                required
+              />
+              <TextField
+                label="PASSWORD"
+                type="password"
+                value={newRapp.password}
+                onChange={(v) => setNewRapp((p) => (p ? { ...p, password: v } : p))}
+                placeholder="min. 6 caratteri"
+                required
+              />
+            </div>
+
+            {/* Salva */}
+            <button
+              onClick={saveNewRapp}
+              disabled={creatingRapp}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition-all hover:opacity-85 disabled:opacity-50 hover:brightness-[1.04] active:scale-[.98] disabled:active:scale-100"
+              style={{ background: "#FFC803", color: "#111", boxShadow: "var(--shadow-brand)" }}
+            >
+              <Save size={16} />
+              {creatingRapp ? "Creazione…" : "Crea rappresentante"}
             </button>
           </div>
         </div>
