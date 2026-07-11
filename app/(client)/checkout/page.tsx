@@ -476,6 +476,16 @@ export default function CheckoutPage() {
     );
   }
 
+  // Fido del cliente selezionato (solo "ordina per conto di") — i dati vengono
+  // già dal fetch client-side di SearchableClienteDropdown (legge l'intero doc
+  // Clienti), nessun fetch aggiuntivo necessario. Solo un avviso/blocco lato
+  // UI: il controllo autoritativo resta lato server in /api/checkout/ordine.
+  const clienteFidoResiduo =
+    canOrderForClient && ordinaPerCliente && clienteSelezionato && typeof clienteSelezionato.Fido === "number"
+      ? (typeof clienteSelezionato.Fido_Residuo === "number" ? clienteSelezionato.Fido_Residuo : clienteSelezionato.Fido)
+      : null;
+  const clienteFidoInsufficiente = clienteFidoResiduo !== null && totalsConSconto.totale > clienteFidoResiduo;
+
   async function handleConfirm() {
     if (!user?.uid) return;
     if (submittingRef.current) return; // doppio submit: ordine già in corso
@@ -729,7 +739,7 @@ export default function CheckoutPage() {
                         style={{ background: "rgba(255,200,3,0.1)", border: "1px solid rgba(255,200,3,0.35)" }}
                       >
                         <UserCheck size={16} style={{ color: "#FFC803", flexShrink: 0 }} />
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-poppins)" }}>
                             {clienteDisplayName(clienteSelezionato)}
                           </p>
@@ -739,6 +749,30 @@ export default function CheckoutPage() {
                             </p>
                           )}
                         </div>
+                        {clienteFidoResiduo !== null && (
+                          <div className="text-right flex-shrink-0">
+                            <p className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                              Fido residuo
+                            </p>
+                            <p
+                              className="text-sm font-bold"
+                              style={{ color: clienteFidoInsufficiente ? "#EF4444" : "#16a34a", fontFamily: "var(--font-poppins)" }}
+                            >
+                              {formatEuro(clienteFidoResiduo)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {clienteFidoInsufficiente && (
+                      <div
+                        className="mt-2 p-3 rounded-xl flex items-start gap-2"
+                        style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}
+                      >
+                        <AlertTriangle size={15} style={{ color: "#EF4444", flexShrink: 0, marginTop: 1 }} />
+                        <p className="text-xs" style={{ color: "#991B1B", fontFamily: "var(--font-montserrat)" }}>
+                          Fido insufficiente per coprire il totale dell&apos;ordine. Contatta l&apos;amministrazione.
+                        </p>
                       </div>
                     )}
                   </div>
@@ -920,6 +954,10 @@ export default function CheckoutPage() {
       toast.error("Seleziona un cliente prima di procedere");
       return;
     }
+    if (step === 0 && clienteFidoInsufficiente) {
+      toast.error("Fido insufficiente per coprire il totale dell'ordine. Contatta l'amministrazione.");
+      return;
+    }
     if (step === 1) {
       const f = fatturazione;
       if (!f.nome.trim() || !f.via.trim() || !f.citta.trim() || !f.cap.trim()) {
@@ -975,7 +1013,7 @@ export default function CheckoutPage() {
             ) : (
               <button
                 onClick={handleConfirm}
-                disabled={submitting}
+                disabled={submitting || clienteFidoInsufficiente}
                 className="flex items-center gap-2 px-8 py-2.5 rounded-full text-sm font-semibold transition-all hover:brightness-[1.04] active:scale-[.98] disabled:opacity-60 disabled:active:scale-100"
                 style={{ background: "var(--brand)", color: "#111", fontFamily: "var(--font-montserrat)", boxShadow: "var(--shadow-brand)" }}
               >

@@ -122,7 +122,9 @@ async function checkFidoLimit(
   if (importo <= residuo) return { ok: true };
 
   if (isForClient) {
-    return { ok: false, error: "Non è possibile completare l'ordine per questo cliente. Contattaci per assistenza." };
+    // A differenza del messaggio verso il cliente finale (sotto), qui il
+    // lettore è staff (Admin/Rappresentante) — menzionare il fido è corretto.
+    return { ok: false, error: "Fido insufficiente per coprire il totale dell'ordine. Contatta l'amministrazione." };
   }
   const rappresentante = typeof d.Rappresentante === "string" ? d.Rappresentante.trim() : "";
   if (rappresentante) {
