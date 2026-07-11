@@ -24,7 +24,40 @@ export const runtime = "nodejs";
 //     Normalizzato in articoloKey/articoloLabel/articoloRigaTotale.
 
 const CANCELLED_STATI = new Set(["Annullato", "Out of Stock", "Cancellato Tyre24", "Cancellato Cliente"]);
-const MAX_DOCS_PER_QUERY = 5000;
+
+// Solo i campi che l'aggregazione usa davvero — un doc Ordine porta anche
+// snapshot indirizzo/pagamento/cliente che qui non servono. La projection
+// taglia drasticamente il payload quando il periodo copre migliaia di ordini.
+const REPORT_FIELDS = ["Totale", "Source", "Stato", "DataOra", "DataCreazione", "Articoli"] as const;
+const PAGE_SIZE = 2000;
+// Ceiling di sicurezza per una singola query di range: ferma solo un loop
+// patologico, mai raggiunto sui dati reali (~25k Ordini in tutta la storia
+// dell'azienda a metà 2026) — non è più il limite "normale" del report.
+const SAFETY_CEILING = 100_000;
+
+async function fetchAllInRange(
+  db: FirebaseFirestore.Firestore,
+  dateField: "DataOra" | "DataCreazione",
+  fromTs: Timestamp,
+  toTs: Timestamp,
+): Promise<{ docs: { id: string; data: FirebaseFirestore.DocumentData }[]; truncated: boolean }> {
+  const base = db
+    .collection("Ordini")
+    .where(dateField, ">=", fromTs)
+    .where(dateField, "<=", toTs)
+    .orderBy(dateField)
+    .select(...REPORT_FIELDS);
+
+  const results: { id: string; data: FirebaseFirestore.DocumentData }[] = [];
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  for (;;) {
+    const page = cursor ? await base.startAfter(cursor).limit(PAGE_SIZE).get() : await base.limit(PAGE_SIZE).get();
+    for (const doc of page.docs) results.push({ id: doc.id, data: doc.data() });
+    if (results.length >= SAFETY_CEILING) return { docs: results, truncated: true };
+    if (page.size < PAGE_SIZE) return { docs: results, truncated: false };
+    cursor = page.docs[page.docs.length - 1];
+  }
+}
 
 interface RawArticolo {
   Prodotto?: string;
@@ -84,16 +117,16 @@ export async function GET(req: NextRequest) {
     const fromTs = Timestamp.fromDate(from);
     const toTs = Timestamp.fromDate(to);
 
-    const [snapDataOra, snapDataCreazione] = await Promise.all([
-      db.collection("Ordini").where("DataOra", ">=", fromTs).where("DataOra", "<=", toTs).limit(MAX_DOCS_PER_QUERY).get(),
-      db.collection("Ordini").where("DataCreazione", ">=", fromTs).where("DataCreazione", "<=", toTs).limit(MAX_DOCS_PER_QUERY).get(),
+    const [oraResult, creazioneResult] = await Promise.all([
+      fetchAllInRange(db, "DataOra", fromTs, toTs),
+      fetchAllInRange(db, "DataCreazione", fromTs, toTs),
     ]);
 
     const byId = new Map<string, FirebaseFirestore.DocumentData>();
-    for (const d of [...snapDataOra.docs, ...snapDataCreazione.docs]) {
-      if (!byId.has(d.id)) byId.set(d.id, d.data());
+    for (const { id, data } of [...oraResult.docs, ...creazioneResult.docs]) {
+      if (!byId.has(id)) byId.set(id, data);
     }
-    const truncated = snapDataOra.size >= MAX_DOCS_PER_QUERY || snapDataCreazione.size >= MAX_DOCS_PER_QUERY;
+    const truncated = oraResult.truncated || creazioneResult.truncated;
 
     let docs = [...byId.values()];
     if (fontiFiltro.length > 0) {
