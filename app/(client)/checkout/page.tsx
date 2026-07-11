@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, serverTimestamp, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
@@ -10,7 +10,6 @@ import Card from "@/components/ui/Card";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import type { Cliente } from "@/lib/types";
-import { nextCounter } from "@/lib/counters";
 
 const steps = ["Dati cliente", "Indirizzo", "Conferma"];
 
@@ -26,11 +25,6 @@ type AddressForm = {
 const emptyAddress: AddressForm = {
   nome: "", via: "", cap: "", citta: "", provincia: "", partitaIva: "",
 };
-
-function formatNumeroOrdine(n: number): string {
-  const year = new Date().getFullYear();
-  return `ORD-${year}-${String(n).padStart(5, "0")}`;
-}
 
 function formatEuro(n: number) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
@@ -506,44 +500,31 @@ export default function CheckoutPage() {
         sedeId = user.SedeNome;
       }
 
-      const n = await nextCounter("Ordine", sedeId);
-
-      // Build order document con prezzi scontati
-      const orderData: Record<string, unknown> = {
-        Utente: doc(db, "users", user.uid),
-        Source: "B2B",
-        Stato: "In Preparazione",
-        Numero: formatNumeroOrdine(n),
-        Articoli: itemsConSconto.map((i) => ({
-          Prodotto: i.id,
-          Titolo: `${i.marca} ${i.modello}`,
-          Marca: i.marca,
-          Quantita: i.quantita,
-          PrezzoUnitario: i.prezzoScontato,
-          PFU: i.pfu,
-          ...(i.sconto ? { ScontoApplicato: i.sconto } : {}),
-        })),
-        Totale: totalsConSconto.totale,
-        IVA: totalsConSconto.iva,
-        PFU: totalsConSconto.pfu,
-        ScontoTotale: totalsConSconto.scontoTotale,
-        Pagamento: {
-          Metodo: "Da definire",
-          Stato: "In attesa",
-        },
-        ContributoLogistico: totalsConSconto.contributoLogistico,
-        IndirizzoFatturazione: addr(fatturazione),
-        IndirizzoSpedizione: spedizioneDiv ? addr(spedizione) : addr(fatturazione),
-        DataCreazione: serverTimestamp(),
-      };
-
-      // Admin/Rappresentante mode: attach cliente reference and track creator
-      if (canOrderForClient && ordinaPerCliente && clienteSelezionato) {
-        orderData.Cliente = doc(db, "Clienti", clienteSelezionato.id);
-        orderData.createdBy = user.uid;
-      }
-
-      const ordineRef = await addDoc(collection(db, "Ordini"), orderData);
+      // Contatore + scrittura Ordini avvengono SERVER-SIDE (Admin SDK): le
+      // Firestore Security Rules richiedono un token Firebase Auth live, che
+      // un cliente autenticato via Postgres (auth VPS-native) non ha — la
+      // scrittura diretta dal browser fallirebbe sempre con permission-denied.
+      const res = await fetch("/api/checkout/ordine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sedeId,
+          articoli: itemsConSconto.map((i) => ({
+            id: i.id, marca: i.marca, modello: i.modello, quantita: i.quantita,
+            prezzoScontato: i.prezzoScontato, pfu: i.pfu, sconto: i.sconto,
+          })),
+          totale: totalsConSconto.totale,
+          iva: totalsConSconto.iva,
+          pfu: totalsConSconto.pfu,
+          scontoTotale: totalsConSconto.scontoTotale,
+          contributoLogistico: totalsConSconto.contributoLogistico,
+          fatturazione,
+          spedizione: spedizioneDiv ? spedizione : fatturazione,
+          clienteId: canOrderForClient && ordinaPerCliente && clienteSelezionato ? clienteSelezionato.id : undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { id?: string; numero?: string; error?: string };
+      if (!res.ok || !data.id) throw new Error(data.error ?? "Errore nella creazione dell'ordine");
 
       // ── Email conferma ordine (fire-and-forget) ──────────────────────────────
       const emailAddr = spedizioneDiv ? addr(spedizione) : addr(fatturazione);
@@ -552,7 +533,7 @@ export default function CheckoutPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           customer_name: fatturazione.nome || user.displayName || user.email || "",
-          order_number:  orderData.Numero,
+          order_number:  data.numero,
           order_total:   totalsConSconto.totale,
           order_date:    new Date().toLocaleDateString("it-IT"),
           fatturazioneJson: JSON.stringify(addr(fatturazione)),
@@ -574,9 +555,9 @@ export default function CheckoutPage() {
 
       clear();
       toast.success("Ordine confermato!");
-      router.replace(`/ordini/${ordineRef.id}`);
+      router.replace(`/ordini/${data.id}`);
     } catch (e) {
-      toast.error("Errore nella creazione dell'ordine");
+      toast.error(e instanceof Error ? e.message : "Errore nella creazione dell'ordine");
       console.error(e);
       submittingRef.current = false; // errore: consenti un nuovo tentativo
     } finally {
