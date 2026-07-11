@@ -1,29 +1,21 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
 import { getSession, isAdmin } from "@/lib/auth";
-import type { Timestamp, DocumentReference } from "firebase-admin/firestore";
+import { listOrdiniForExport } from "@/lib/ordiniDb";
+import { adminDb } from "@/lib/firebase-admin";
+import type { DocumentReference } from "firebase-admin/firestore";
 
 // ─── Export CSV ordini ───────────────────────────────────────────────────────
 // Stessi dati del vecchio export Flutter, ma formattati per una lettura pulita in
 // Excel/WPS italiano: delimitatore ";", decimali con la virgola, BOM UTF-8,
 // data in formato italiano, intestazioni leggibili e colonne riordinate
 // (categorie + importi a sinistra, testi lunghi a destra).
+//
+// Ordini: da core.ordini (Postgres, già allineato in tempo reale dal bridge)
+// via listOrdiniForExport — Articoli aggregati in una singola query invece
+// che N+1. Prodotti (PFU/Prezzo_Acquisto) restano su Firestore, fuori scope
+// di questa migrazione: risolti in batch dai ref_path degli articoli.
 
 const DELIM = ";";
-
-// DataOra → "dd/MM/yyyy HH:mm:ss" in fuso Europe/Rome (formato italiano, Excel lo riconosce come data).
-function fmtDataOra(ts: Timestamp | null | undefined): string {
-  const d = ts?.toDate?.();
-  if (!d) return "";
-  const p = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Rome",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
-  }).formatToParts(d).reduce<Record<string, string>>((a, x) => { a[x.type] = x.value; return a; }, {});
-  const hh = p.hour === "24" ? "00" : p.hour;
-  return `${p.day}/${p.month}/${p.year} ${hh}:${p.minute}:${p.second}`;
-}
 
 function toNum(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
@@ -36,6 +28,21 @@ function eur(value: unknown): string {
   return toNum(value).toFixed(2).replace(".", ",");
 }
 
+// ISO → "dd/MM/yyyy HH:mm:ss" in fuso Europe/Rome (formato italiano, Excel lo riconosce come data).
+function fmtDataOra(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Rome",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  }).formatToParts(d).reduce<Record<string, string>>((a, x) => { a[x.type] = x.value; return a; }, {});
+  const hh = p.hour === "24" ? "00" : p.hour;
+  return `${p.day}/${p.month}/${p.year} ${hh}:${p.minute}:${p.second}`;
+}
+
 // Escape CSV: quota solo se il valore contiene il delimitatore, doppice o a-capo; "null" → vuoto.
 function esc(val: unknown): string {
   let s = val == null ? "" : String(val);
@@ -46,20 +53,13 @@ function esc(val: unknown): string {
   return s;
 }
 
-type Articolo = {
-  Ref?: DocumentReference;
-  Titolo?: string;
-  SKU?: string;
-  Quantita?: number;
-  PFU?: number;
-};
 type Indirizzo = {
   Destinatario?: string; Via?: string; Citta?: string;
   Provincia?: string; CAP?: string; Paese?: string; Telefono?: string;
 };
 
 // Indirizzo → "Destinatario, Via, Citta, Provincia, CAP, Paese, Telefono" (parti non vuote).
-function fmtIndirizzo(ind: Indirizzo | undefined): string {
+function fmtIndirizzo(ind: Indirizzo | null | undefined): string {
   if (!ind) return "";
   return [ind.Destinatario, ind.Via, ind.Citta, ind.Provincia, ind.CAP, ind.Paese, ind.Telefono]
     .map((x) => (x == null ? "" : String(x)))
@@ -74,24 +74,20 @@ export async function GET() {
   }
 
   try {
-    // Ordina per DataOra (campo reale degli ordini; "DataCreazione" non esiste → export vuoto).
-    const snap = await adminDb().collection("Ordini").orderBy("DataOra", "desc").limit(2000).get();
+    const ordini = await listOrdiniForExport({ limit: 2000 });
 
-    // PFU e Prezzo_Acquisto vanno letti dai documenti Prodotto referenziati dagli articoli.
-    // Raccogliamo i Ref unici e li risolviamo in batch (getAll) per evitare N+1.
-    const prodRefByPath = new Map<string, DocumentReference>();
-    for (const d of snap.docs) {
-      const articoli = (d.data().Articoli ?? []) as Articolo[];
-      for (const a of articoli) {
-        if (a?.Ref?.path && !prodRefByPath.has(a.Ref.path)) prodRefByPath.set(a.Ref.path, a.Ref);
-      }
-    }
+    // PFU e Prezzo_Acquisto vanno letti dai documenti Prodotto referenziati dagli
+    // articoli (Prodotti resta su Firestore) — raccogliamo i ref_path unici e li
+    // risolviamo in batch (getAll) per evitare N+1.
+    const db = adminDb();
+    const refPaths = new Set<string>();
+    for (const o of ordini) for (const a of o.Articoli) if (a.RefPath) refPaths.add(a.RefPath);
     const prodByPath = new Map<string, { PFU: number; Prezzo_Acquisto: number }>();
-    const allRefs = [...prodRefByPath.values()];
-    for (let i = 0; i < allRefs.length; i += 300) {
-      const chunk = allRefs.slice(i, i + 300);
+    const allPaths = [...refPaths];
+    for (let i = 0; i < allPaths.length; i += 300) {
+      const chunk = allPaths.slice(i, i + 300).map((p) => db.doc(p) as DocumentReference);
       if (chunk.length === 0) continue;
-      const resolved = await adminDb().getAll(...chunk);
+      const resolved = await db.getAll(...chunk);
       for (const ps of resolved) {
         if (!ps.exists) continue;
         const pd = ps.data() ?? {};
@@ -107,19 +103,15 @@ export async function GET() {
     ];
     const lines: string[] = [header.map(esc).join(DELIM)];
 
-    for (const d of snap.docs) {
-      const o = d.data();
-      const articoli = (o.Articoli ?? []) as Articolo[];
-
+    for (const o of ordini) {
       // PFU totale (da articolo, o dal prodotto se l'articolo ha PFU 0) e Prezzo_Acquisto totale.
       let totalPFU = 0;
       let totalPrezzoAcquisto = 0;
-      for (const a of articoli) {
-        const qty = toNum(a?.Quantita);
-        let pfuValue = toNum(a?.PFU);
-        const path = a?.Ref?.path;
-        if (path && prodByPath.has(path)) {
-          const p = prodByPath.get(path)!;
+      for (const a of o.Articoli) {
+        const qty = a.Quantita;
+        let pfuValue = toNum(a.PFU);
+        if (a.RefPath && prodByPath.has(a.RefPath)) {
+          const p = prodByPath.get(a.RefPath)!;
           if (pfuValue === 0) pfuValue = p.PFU;
           totalPrezzoAcquisto += p.Prezzo_Acquisto * qty;
         }
@@ -127,25 +119,23 @@ export async function GET() {
       }
 
       // Articoli → "qty x Titolo (SKU)" separati da " | ".
-      const articoliStr = articoli
-        .map((a) => `${toNum(a?.Quantita)} x ${a?.Titolo ?? ""} (${a?.SKU ?? ""})`)
+      const articoliStr = o.Articoli
+        .map((a) => `${a.Quantita} x ${a.Titolo ?? ""} (${a.Sku ?? ""})`)
         .join(" | ");
 
-      const pagamento = (o.Pagamento ?? {}) as { Nome?: string };
-
       const row = [
-        fmtDataOra(o.DataOra as Timestamp),
-        o.ID ?? d.id,
-        o.Source ?? "",
-        o.Stato ?? "",
-        pagamento.Nome ?? "",
+        fmtDataOra(o.Data),
+        o.Numero ?? o.id,
+        o.Source,
+        o.Stato,
+        o.Pagamento?.Nome ?? "",
         eur(o.Totale),
         eur(o.IVA),
         eur(totalPFU),
         eur(totalPrezzoAcquisto),
         articoliStr,
-        fmtIndirizzo(o.Indirizzo_Fatturazione as Indirizzo),
-        fmtIndirizzo(o.Indirizzo_Spedizione as Indirizzo),
+        fmtIndirizzo(o.IndirizzoFatturazione),
+        fmtIndirizzo(o.IndirizzoSpedizione),
       ].map(esc).join(DELIM);
 
       lines.push(row);

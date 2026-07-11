@@ -313,3 +313,74 @@ export async function countOrdini(filters: Pick<ListOrdiniFilters, "dataDa" | "d
   );
   return { count: Number(rows[0]?.count ?? 0), revenue: Number(rows[0]?.revenue ?? 0) };
 }
+
+export interface OrdineExportRow {
+  id: string;
+  Numero: string | null;
+  Source: string;
+  Stato: string;
+  Totale: number;
+  IVA: number | null;
+  Pagamento: Pagamento | null;
+  IndirizzoFatturazione: Indirizzo | null;
+  IndirizzoSpedizione: Indirizzo | null;
+  Data: string | null;
+  Articoli: { Sku: string | null; Titolo: string | null; Quantita: number; PFU: number | null; RefPath: string | null }[];
+}
+
+/** Righe per export CSV — Articoli aggregati in una singola query (JOIN +
+ *  json_agg) invece di N+1 fetch per ordine. Condivisa da entrambi i flussi
+ *  di export (bulk "ultimi N" e selezione manuale per id). */
+export async function listOrdiniForExport(filter: { ids?: string[]; limit?: number } = {}): Promise<OrdineExportRow[]> {
+  const db = getDb();
+  if (!db) return [];
+
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (filter.ids?.length) {
+    params.push(filter.ids);
+    where.push(`o.id = ANY($${params.length})`);
+  }
+  params.push(filter.limit ?? 2000);
+
+  const { rows } = await db.query(
+    `SELECT o.id, o.numero, o.source, o.stato, o.totale, o.iva, o.pagamento,
+       o.indirizzo_fatturazione, o.indirizzo_spedizione,
+       coalesce(o.data_ora, o.created_at) AS effective_date,
+       o.fs_extra->>'Numero' AS numero_display,
+       coalesce(
+         json_agg(json_build_object(
+           'sku', oa.sku, 'titolo', oa.titolo, 'quantita', oa.quantita,
+           'pfu', oa.pfu, 'ref_path', oa.ref_path
+         ) ORDER BY oa.riga) FILTER (WHERE oa.id IS NOT NULL),
+         '[]'
+       ) AS articoli
+     FROM core.ordini o
+     LEFT JOIN core.ordine_articoli oa ON oa.ordine_id = o.id
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     GROUP BY o.id
+     ORDER BY effective_date DESC
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return rows.map((r) => ({
+    id: r.id as string,
+    Numero: (r.numero_display as string) ?? (r.numero != null ? String(r.numero) : null),
+    Source: (r.source as string) ?? "Sconosciuto",
+    Stato: (r.stato as string) ?? "In Lavorazione",
+    Totale: Number(r.totale ?? 0),
+    IVA: r.iva != null ? Number(r.iva) : null,
+    Pagamento: (r.pagamento as Pagamento) ?? null,
+    IndirizzoFatturazione: (r.indirizzo_fatturazione as Indirizzo) ?? null,
+    IndirizzoSpedizione: (r.indirizzo_spedizione as Indirizzo) ?? null,
+    Data: isoOrNull(r.effective_date),
+    Articoli: (r.articoli as Array<Record<string, unknown>>).map((a) => ({
+      Sku: (a.sku as string) ?? null,
+      Titolo: (a.titolo as string) ?? null,
+      Quantita: Number(a.quantita ?? 0),
+      PFU: a.pfu != null ? Number(a.pfu) : null,
+      RefPath: (a.ref_path as string) ?? null,
+    })),
+  }));
+}
