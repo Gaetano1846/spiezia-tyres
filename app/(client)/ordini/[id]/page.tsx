@@ -1,11 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import {
-  doc, getDoc, collection, getDocs, orderBy, query,
-  Timestamp, type DocumentReference,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { Timestamp } from "firebase/firestore";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { ShoppingBag, MapPin, CreditCard, Package, Truck, ChevronRight, CheckCircle2, Circle } from "lucide-react";
 import Link from "next/link";
@@ -13,15 +9,50 @@ import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 import type { Ordine, ArticoloOrdine, Indirizzo } from "@/lib/types";
+import type { OrdineApi } from "@/lib/ordiniDb";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type CronologiaEntry = {
   id: string;
   Evento: string;
-  Data: Timestamp | number;
+  Data: Timestamp | number | string | null;
   Operatore?: string;
 };
+
+// Pagina sola lettura (nessuna scrittura da qui) — a differenza del dettaglio
+// admin, qui possiamo spostare SIA l'ordine SIA la Cronologia su Postgres
+// senza rischio di lag di propagazione post-scrittura.
+function apiToLocalOrdine(o: OrdineApi): Ordine {
+  return {
+    id: o.id,
+    Numero: o.Numero ?? undefined,
+    Source: o.Source,
+    Stato: o.Stato,
+    Articoli: o.Articoli.map((a) => ({
+      Titolo: a.Titolo ?? "",
+      Marca: a.Marca ?? "",
+      Quantita: a.Quantita,
+      PrezzoUnitario: a.PrezzoUnitario ?? 0,
+      PFU: a.PFU ?? 0,
+    })),
+    Totale: o.Totale,
+    IVA: o.IVA ?? 0,
+    PFU: o.PFU ?? 0,
+    SpeseExtra: Array.isArray(o.FsExtra?.SpeseExtra_array) ? o.FsExtra.SpeseExtra_array : [],
+    ContributoLogistico: o.ContributoLogistico ?? undefined,
+    Pagamento: o.Pagamento ?? undefined,
+    IndirizzoFatturazione: o.IndirizzoFatturazione ?? undefined,
+    IndirizzoSpedizione: o.IndirizzoSpedizione ?? undefined,
+    Note: o.Note ?? undefined,
+    DataCreazione: o.Data as unknown as Timestamp,
+    GLS_TrackingNumber: o.GlsTrackingNumber ?? undefined,
+  } as unknown as Ordine;
+}
+
+function apiToLocalCronologia(entries: OrdineApi["Cronologia"]): CronologiaEntry[] {
+  return entries.map((c) => ({ id: c.id, Evento: c.Testo ?? "", Data: c.Ts, Operatore: c.Autore ?? undefined }));
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -30,19 +61,20 @@ function formatEuro(n: number | undefined | null) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function tsToDate(ts: Timestamp | number | null | undefined): Date | null {
+function tsToDate(ts: Timestamp | number | string | null | undefined): Date | null {
   if (!ts) return null;
+  if (typeof ts === "string") { const d = new Date(ts); return Number.isNaN(d.getTime()) ? null : d; }
   if (typeof ts === "number") return new Date(ts);
   return ts instanceof Timestamp ? ts.toDate() : new Date((ts as { seconds: number }).seconds * 1000);
 }
 
-function formatData(ts: Timestamp | number | null | undefined): string {
+function formatData(ts: Timestamp | number | string | null | undefined): string {
   const d = tsToDate(ts);
   if (!d) return "—";
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function formatDataOra(ts: Timestamp | number | null | undefined): string {
+function formatDataOra(ts: Timestamp | number | string | null | undefined): string {
   const d = tsToDate(ts);
   if (!d) return "—";
   return d.toLocaleString("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -158,22 +190,17 @@ export default function OrdinePage() {
           return;
         }
 
-        const snap = await getDoc(doc(db, "Ordini", id));
-        if (!snap.exists()) {
+        // Ordine + Cronologia: da Postgres (core.ordini/b2b.ordini_cronologia,
+        // già allineati in tempo reale dal bridge). Nessuna scrittura avviene
+        // da questa pagina, quindi zero rischio di lag lettura-dopo-scrittura.
+        const res = await fetch(`/api/ordini/${id}`);
+        const data = (await res.json().catch(() => ({}))) as { ordine?: OrdineApi; error?: string };
+        if (!res.ok || !data.ordine) {
           setNotFound(true);
           return;
         }
-        setOrdine({ id: snap.id, ...snap.data() } as Ordine);
-
-        // Load cronologia (optional — may not exist)
-        try {
-          const cronSnap = await getDocs(
-            query(collection(db, "Ordini", id, "Cronologia"), orderBy("Data", "asc")),
-          );
-          setCronologia(cronSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as CronologiaEntry));
-        } catch {
-          // Cronologia subcollection is optional; silently skip if missing
-        }
+        setOrdine(apiToLocalOrdine(data.ordine));
+        setCronologia(apiToLocalCronologia(data.ordine.Cronologia));
       } catch {
         toast.error("Errore nel caricamento dell'ordine");
         setNotFound(true);

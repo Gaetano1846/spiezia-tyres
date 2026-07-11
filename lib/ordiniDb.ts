@@ -65,6 +65,9 @@ export interface OrdineListItemApi {
    *  validare/etichettare un cambio-stato senza un secondo fetch. */
   Corriere: string | null;
   GlsTrackingNumber: string | null;
+  /** Conteggio articoli — la lista ordini cliente mostra "N articoli" senza
+   *  caricare il dettaglio completo di ogni riga. */
+  ArticoliCount: number;
 }
 
 export interface OrdineApi extends OrdineListItemApi {
@@ -95,7 +98,8 @@ const LIST_COLS = `o.id, o.numero, o.source, o.stato, o.cliente_id, o.utente_id,
   coalesce(o.data_ora, o.created_at) AS effective_date, o.fs_extra->>'Numero' AS numero_display,
   o.corriere, o.gls_tracking_number,
   coalesce(NULLIF(c.ragione_sociale, ''), c.nome) AS cliente_nome,
-  u.display_name AS utente_nome`;
+  u.display_name AS utente_nome,
+  (SELECT count(*) FROM core.ordine_articoli oa WHERE oa.ordine_id = o.id) AS articoli_count`;
 
 const DETAIL_COLS = `${LIST_COLS}, o.sede_id, o.iva, o.pfu, o.sconto_totale, o.contributo_logistico,
   o.pagamento, o.indirizzo_fatturazione, o.indirizzo_spedizione, o.colli, o.peso,
@@ -121,6 +125,7 @@ function rowToListItem(r: Record<string, unknown>): OrdineListItemApi {
     Data: isoOrNull(r.effective_date),
     Corriere: (r.corriere as string) ?? null,
     GlsTrackingNumber: (r.gls_tracking_number as string) ?? null,
+    ArticoliCount: Number(r.articoli_count ?? 0),
   };
 }
 

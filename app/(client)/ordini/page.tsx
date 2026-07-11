@@ -1,8 +1,5 @@
 "use client";
 import { useState, useEffect } from "react";
-import { collection, query, where, getDocs, doc } from "firebase/firestore";
-import type { Timestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import Link from "next/link";
 import { Eye, RotateCcw, Search, ShoppingBag, Users } from "lucide-react";
@@ -10,15 +7,47 @@ import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 import type { Ordine, OrdineStato } from "@/lib/types";
+import type { OrdineListItemApi } from "@/lib/ordiniDb";
 
-// Un Rappresentante vede gli ordini di TUTTI i suoi clienti assegnati (non
-// solo i propri) — arricchiti server-side con l'identità del cliente a cui
-// appartengono, per il filtro dedicato sotto.
+// Ordini propri: da Postgres (core.ordini, via lib/ordiniDb.ts — API canonica).
+// Ordini del rappresentante: ANCORA da Firestore via /api/rappresentante/ordini
+// (Fase 1.4, non ancora fatta) — shape diversa, arricchita server-side con
+// l'identità del cliente a cui appartengono, per il filtro dedicato sotto.
 type OrdineRappresentante = Omit<Ordine, "DataCreazione"> & {
   _repClienteUid?: string | null;
   _repClienteNome?: string | null;
-  DataCreazione?: Timestamp | number | null;
+  DataCreazione?: { seconds: number } | number | null;
+  DataOra?: { seconds: number } | number | null;
 };
+
+// Forma unica su cui gira tutta la UI sotto — un piccolo adattatore per
+// ciascuna delle due fonti la produce subito dopo il fetch.
+type OrdineRow = {
+  id: string;
+  Numero: string | null;
+  Stato: string;
+  Totale: number;
+  articoliCount: number;
+  dataDisplay: string | number | { seconds: number } | null | undefined;
+  repClienteUid?: string | null;
+  repClienteNome?: string | null;
+};
+
+function fromApi(o: OrdineListItemApi): OrdineRow {
+  return {
+    id: o.id, Numero: o.Numero, Stato: o.Stato, Totale: o.Totale,
+    articoliCount: o.ArticoliCount, dataDisplay: o.Data,
+  };
+}
+
+function fromRappresentante(o: OrdineRappresentante): OrdineRow {
+  return {
+    id: o.id, Numero: o.Numero ?? null, Stato: o.Stato, Totale: o.Totale ?? 0,
+    articoliCount: o.Articoli?.length ?? 0,
+    dataDisplay: o.DataCreazione ?? o.DataOra,
+    repClienteUid: o._repClienteUid, repClienteNome: o._repClienteNome,
+  };
+}
 
 const statoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
   "In Lavorazione":     "brand",
@@ -35,21 +64,18 @@ function formatEuro(n: number) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function formatData(ts: Timestamp | number | null | undefined): string {
-  if (!ts) return "—";
-  const toDate =
-    typeof ts === "number"
-      ? new Date(ts)
-      : typeof ts.toDate === "function"
-      ? ts.toDate()
-      : new Date((ts as { seconds: number }).seconds * 1000);
-  return toDate.toLocaleDateString("it-IT");
+function formatData(v: string | number | { seconds: number } | null | undefined): string {
+  if (!v) return "—";
+  const d = typeof v === "string" ? new Date(v)
+    : typeof v === "number" ? new Date(v)
+    : new Date(v.seconds * 1000);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("it-IT");
 }
 
 export default function OrdiniPage() {
   const { user, loading: authLoading } = useAuth();
   const isRappresentante = user?.Ruolo === "Rappresentante";
-  const [ordini, setOrdini] = useState<OrdineRappresentante[]>([]);
+  const [ordini, setOrdini] = useState<OrdineRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statoFiltro, setStatoFiltro] = useState<OrdineStato | "">("");
@@ -74,25 +100,16 @@ export default function OrdiniPage() {
             error?: string;
           };
           if (!res.ok) throw new Error(data.error ?? "Errore nel caricamento");
-          setOrdini(data.ordini ?? []);
+          setOrdini((data.ordini ?? []).map(fromRappresentante));
           setMiClienti(data.clienti ?? []);
           return;
         }
 
-        const utenteRef = doc(db, "users", user.uid);
-        const q = query(collection(db, "Ordini"), where("Utente", "==", utenteRef));
-        const snap = await getDocs(q);
-        const data = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as Ordine))
-          .sort((a, b) => {
-            // DataCreazione = Next.js field; DataOra = Flutter legacy field
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const ta = ((a as any).DataCreazione ?? (a as any).DataOra)?.seconds ?? 0;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const tb = ((b as any).DataCreazione ?? (b as any).DataOra)?.seconds ?? 0;
-            return tb - ta;
-          });
-        setOrdini(data);
+        const res = await fetch("/api/ordini");
+        const data = (await res.json().catch(() => ({}))) as { ordini?: OrdineListItemApi[]; error?: string };
+        if (!res.ok) throw new Error(data.error ?? "Errore nel caricamento");
+        // core.ordini è già ordinato per data desc lato route.
+        setOrdini((data.ordini ?? []).map(fromApi));
       } catch (e) {
         toast.error("Errore nel caricamento ordini");
         console.error(e);
@@ -107,7 +124,7 @@ export default function OrdiniPage() {
   const filtered = ordini.filter((o) => {
     const matchSearch = !search || (o.Numero ?? "").toLowerCase().includes(search.toLowerCase());
     const matchStato = !statoFiltro || o.Stato === statoFiltro;
-    const matchCliente = !clienteFiltro || o._repClienteUid === clienteFiltro;
+    const matchCliente = !clienteFiltro || o.repClienteUid === clienteFiltro;
     return matchSearch && matchStato && matchCliente;
   });
 
@@ -234,12 +251,11 @@ export default function OrdiniPage() {
                 </div>
                 {isRappresentante && (
                   <span className="text-sm truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                    {o._repClienteNome ?? "—"}
+                    {o.repClienteNome ?? "—"}
                   </span>
                 )}
                 <span className="text-sm" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                  {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                  {formatData(((o as any).DataCreazione ?? (o as any).DataOra) as Timestamp)}
+                  {formatData(o.dataDisplay)}
                 </span>
                 <Badge variant={statoVariant[o.Stato] ?? "neutral"}>{o.Stato}</Badge>
                 <div>
@@ -247,7 +263,7 @@ export default function OrdiniPage() {
                     {formatEuro(o.Totale ?? 0)}
                   </p>
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    {o.Articoli?.length ?? 0} {o.Articoli?.length === 1 ? "articolo" : "articoli"}
+                    {o.articoliCount} {o.articoliCount === 1 ? "articolo" : "articoli"}
                   </p>
                 </div>
                 <Link
