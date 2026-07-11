@@ -412,6 +412,7 @@ export default function CheckoutPage() {
   const [clienteSelezionato, setClienteSelezionato] = useState<(Cliente & { id: string }) | null>(null);
   // Indirizzi fatturazione del cliente selezionato (admin mode)
   const [clienteAddresses, setClienteAddresses] = useState<SavedAddress[]>([]);
+  const [clienteAddressesLoading, setClienteAddressesLoading] = useState(false);
 
   // Quando admin/rappresentante seleziona un cliente, carica i suoi indirizzi
   // di fatturazione salvati. SERVER-SIDE: le Firestore Security Rules su
@@ -423,6 +424,7 @@ export default function CheckoutPage() {
       setClienteAddresses([]);
       return;
     }
+    setClienteAddressesLoading(true);
     fetch(`/api/checkout/cliente/${clienteSelezionato.id}/indirizzi`)
       .then((r) => r.json())
       .then((data: { indirizzi?: Array<Record<string, string>> }) => {
@@ -443,7 +445,8 @@ export default function CheckoutPage() {
           setFatturazione({ nome: first.nome, via: first.via, cap: first.cap, citta: first.citta, provincia: first.provincia, partitaIva: first.partitaIva });
         }
       })
-      .catch(() => setClienteAddresses([]));
+      .catch(() => setClienteAddresses([]))
+      .finally(() => setClienteAddressesLoading(false));
   }, [clienteSelezionato]);
 
   useEffect(() => {
@@ -850,6 +853,14 @@ export default function CheckoutPage() {
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
                 </div>
               </div>
+            )}
+            {/* Nessun indirizzo salvato per questo cliente — non è un errore,
+                compila il form sotto: verrà salvato in automatico per il
+                prossimo ordine a questo cliente. */}
+            {canOrderForClient && ordinaPerCliente && clienteSelezionato && !clienteAddressesLoading && clienteAddresses.length === 0 && (
+              <p className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                Nessun indirizzo salvato per questo cliente — compila i campi sotto, verrà salvato automaticamente per i prossimi ordini.
+              </p>
             )}
             {/* Indirizzi utente salvati (modalità normale) */}
             {(!canOrderForClient || !ordinaPerCliente) && savedAddresses.length > 0 && (
