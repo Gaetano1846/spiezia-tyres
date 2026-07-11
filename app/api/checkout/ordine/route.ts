@@ -105,7 +105,9 @@ async function decrementFidoResiduoIfConfigured(
 // Blocco (non solo scalo): se il totale dell'ordine supera il fido residuo
 // disponibile, l'ordine va rifiutato — invece di passare e andare in
 // negativo (comportamento precedente). Nessun blocco se il cliente non ha un
-// plafond credito configurato (campo Fido assente).
+// plafond credito configurato (campo Fido assente). Il messaggio verso il
+// cliente resta volutamente generico (non menziona il fido) — solo "non è
+// possibile, contattaci/contatta il rappresentante".
 async function checkFidoLimit(
   docRef: FirebaseFirestore.DocumentReference,
   importo: number,
@@ -120,18 +122,18 @@ async function checkFidoLimit(
   if (importo <= residuo) return { ok: true };
 
   if (isForClient) {
-    return { ok: false, error: "Il fido residuo del cliente selezionato non copre il totale dell'ordine." };
+    return { ok: false, error: "Non è possibile completare l'ordine per questo cliente. Contattaci per assistenza." };
   }
   const rappresentante = typeof d.Rappresentante === "string" ? d.Rappresentante.trim() : "";
   if (rappresentante) {
     return {
       ok: false,
-      error: `Il totale dell'ordine supera il tuo fido disponibile. Contatta il tuo rappresentante (${rappresentante}) per procedere.`,
+      error: `Non è possibile completare l'ordine in questo momento. Contatta il tuo rappresentante (${rappresentante}) per procedere.`,
     };
   }
   return {
     ok: false,
-    error: "Il totale dell'ordine supera il tuo fido disponibile. Contattaci al +39 081 511 5011 per procedere.",
+    error: "Non è possibile completare l'ordine in questo momento. Contattaci al +39 081 511 5011 per procedere.",
   };
 }
 
@@ -171,7 +173,7 @@ export async function POST(req: Request) {
       : db.doc(`users/${session.uid}`);
     const fidoCheck = await checkFidoLimit(fidoDocRef, body.totale, forClient);
     if (!fidoCheck.ok) {
-      return NextResponse.json({ error: fidoCheck.error }, { status: 403 });
+      return NextResponse.json({ error: fidoCheck.error, code: "ORDER_BLOCKED" }, { status: 403 });
     }
 
     const counterRef = db.doc(`Counters/${sedeId}`);

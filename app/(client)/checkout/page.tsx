@@ -367,6 +367,9 @@ export default function CheckoutPage() {
   // un secondo click prima del re-render creerebbe un ordine duplicato.
   const submittingRef = useRef(false);
   const [fidoBlocked, setFidoBlocked] = useState(false);
+  // Errore bloccante dal server (es. limite di credito) — popup fisso con OK,
+  // non un toast che sparisce da solo: il cliente deve poterlo rileggere.
+  const [blockedError, setBlockedError] = useState<string | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
 
   // Ordine per conto di un cliente: riservato ad Admin e Rappresentanti — mai ai clienti normali.
@@ -523,8 +526,16 @@ export default function CheckoutPage() {
           clienteId: canOrderForClient && ordinaPerCliente && clienteSelezionato ? clienteSelezionato.id : undefined,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { id?: string; numero?: string; error?: string };
-      if (!res.ok || !data.id) throw new Error(data.error ?? "Errore nella creazione dell'ordine");
+      const data = (await res.json().catch(() => ({}))) as { id?: string; numero?: string; error?: string; code?: string };
+      if (!res.ok || !data.id) {
+        if (data.code === "ORDER_BLOCKED") {
+          setBlockedError(data.error ?? "Non è possibile completare l'ordine in questo momento. Contattaci per assistenza.");
+          submittingRef.current = false;
+          setSubmitting(false);
+          return;
+        }
+        throw new Error(data.error ?? "Errore nella creazione dell'ordine");
+      }
 
       // ── Email conferma ordine (fire-and-forget) ──────────────────────────────
       const emailAddr = spedizioneDiv ? addr(spedizione) : addr(fatturazione);
@@ -979,6 +990,29 @@ export default function CheckoutPage() {
           {OrderSummary()}
         </div>
       </div>
+
+      {/* ── Popup errore bloccante — fisso al centro, si chiude solo con OK ── */}
+      {blockedError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4"
+            style={{ fontFamily: "var(--font-montserrat)" }}
+          >
+            <AlertTriangle size={40} style={{ color: "#EF4444" }} className="mx-auto" />
+            <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+              {blockedError}
+            </p>
+            <button
+              onClick={() => setBlockedError(null)}
+              className="w-full py-2.5 rounded-xl font-bold text-sm transition-all hover:brightness-[1.04] active:scale-[.98]"
+              style={{ background: "var(--brand)", color: "#111" }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
