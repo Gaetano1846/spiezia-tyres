@@ -6,6 +6,7 @@
 // i componenti React esistenti non cambiano (solo la sorgente dati cambia).
 
 import { getDb, newId } from "@/lib/db";
+import { hashPassword } from "@/lib/spiezia-auth/password";
 import type { Cliente, Veicolo } from "@/lib/types";
 
 export type ClienteApi = Omit<Cliente, "Sede"> & { SedeId?: string | null };
@@ -114,6 +115,9 @@ export interface CreateClienteInput {
   Azienda: boolean;
   Fido?: number;
   SedeId?: string | null;
+  /** Se valorizzata, crea anche l'identità di login del cliente (core.utenti +
+   *  credenziale argon2id) così il cliente può accedere allo storefront. */
+  Password?: string;
 }
 
 /** Crea un cliente. Ritorna null se l'email esiste già (chiamante decide il 409). */
@@ -124,22 +128,66 @@ export async function createCliente(input: CreateClienteInput): Promise<ClienteA
   const existing = await findClienteByEmail(input.Email);
   if (existing) return null;
 
+  const wantsLogin = typeof input.Password === "string" && input.Password.length > 0;
+  // Hash PRIMA di aprire la transazione: se la password non è valida fallisce
+  // subito, senza creare nulla.
+  const passwordHash = wantsLogin ? await hashPassword(input.Password!) : null;
+
   const id = newId();
   const fido = Number.isFinite(input.Fido) ? Number(input.Fido) : 0;
-  const { rows } = await db.query(
-    `INSERT INTO core.clienti
-       (id, nome, ragione_sociale, azienda, email, telefono, via, citta, cap,
-        paese, codice_fiscale, partita_iva, pec, tipo, metodo_pagamento,
-        b2b, locale, fido, fido_residuo, sede_id, source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,false,true,$16,$16,$17,'b2b-crm')
-     RETURNING ${CLIENTE_COLS}`,
-    [id, input.Nome || null, input.Ragione_Sociale || null, input.Azienda, input.Email,
-     input.Telefono, input.Via || null, input.Citta || null, input.CAP,
-     input.Paese || null, input.Codice_Fiscale || null, input.Partita_Iva || null,
-     input.PEC || null, input.Tipo || null, input.Metodo_di_Pagamento || null,
-     fido, input.SedeId || null]
-  );
-  return rowToCliente(rows[0]);
+
+  // Se serve il login del cliente, cliente + utente + credenziale nella STESSA
+  // transazione (o tutto o niente).
+  const client = wantsLogin ? await db.connect() : null;
+  try {
+    const runner = client ?? db;
+    if (client) await client.query("BEGIN");
+
+    const { rows } = await runner.query(
+      `INSERT INTO core.clienti
+         (id, nome, ragione_sociale, azienda, email, telefono, via, citta, cap,
+          paese, codice_fiscale, partita_iva, pec, tipo, metodo_pagamento,
+          b2b, locale, fido, fido_residuo, sede_id, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,false,true,$16,$16,$17,'b2b-crm')
+       RETURNING ${CLIENTE_COLS}`,
+      [id, input.Nome || null, input.Ragione_Sociale || null, input.Azienda, input.Email,
+       input.Telefono, input.Via || null, input.Citta || null, input.CAP,
+       input.Paese || null, input.Codice_Fiscale || null, input.Partita_Iva || null,
+       input.PEC || null, input.Tipo || null, input.Metodo_di_Pagamento || null,
+       fido, input.SedeId || null]
+    );
+
+    if (client && passwordHash) {
+      const email = input.Email.toLowerCase();
+      // Riusa un'eventuale identità già esistente con questa email, altrimenti
+      // creane una nuova (ruolo Privato = cliente storefront).
+      const found = await client.query(
+        `SELECT id FROM core.utenti WHERE email = $1 AND origine = 'b2b' LIMIT 1`, [email]);
+      let userId: string;
+      if (found.rows.length > 0) {
+        userId = found.rows[0].id;
+      } else {
+        userId = newId();
+        await client.query(
+          `INSERT INTO core.utenti (id, email, display_name, origine, ruolo, crm, azienda, ragione_sociale)
+           VALUES ($1,$2,$3,'b2b','Privato',false,$4,$5)`,
+          [userId, email, input.Nome || input.Ragione_Sociale || null, input.Azienda, input.Ragione_Sociale || null]);
+      }
+      await client.query(
+        `INSERT INTO core.auth_credentials (user_id, algo, hash)
+         VALUES ($1, 'argon2id', $2)
+         ON CONFLICT (user_id) DO UPDATE SET algo = 'argon2id', hash = EXCLUDED.hash, updated_at = now()`,
+        [userId, passwordHash]);
+      await client.query("COMMIT");
+    }
+
+    return rowToCliente(rows[0]);
+  } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    if (client) client.release();
+  }
 }
 
 export interface UpdateClienteInput {

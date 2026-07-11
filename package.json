@@ -20,6 +20,7 @@
     "firebase": "^12.13.0",
     "firebase-admin": "^13.4.0",
     "framer-motion": "^12.38.0",
+    "hash-wasm": "^4.12.0",
     "html2canvas": "^1.4.1",
     "imapflow": "^1.4.6",
     "jspdf": "^4.2.1",

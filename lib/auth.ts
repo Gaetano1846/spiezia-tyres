@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { timingSafeEqual, createHmac } from "node:crypto";
 import type { SessionPayload, Ruolo } from "@/lib/types";
+import { getPgSession, PG_TOKEN_PREFIX } from "@/lib/spiezia-auth/session";
 
 const SESSION_COOKIE = "spiezia_session";
 const DEV_COOKIE = "spiezia_dev_session";
@@ -35,10 +36,17 @@ export async function getSession(): Promise<SessionPayload | null> {
     }
   }
 
-  // ── Production: verifica session cookie Firebase Admin ────────────────────
   const session = cookieStore.get(SESSION_COOKIE)?.value;
   if (!session) return null;
 
+  // ── Auth VPS-native: token di sessione Postgres (prefisso sp1_) ───────────
+  // È il path autoritativo del nuovo B2B. Il fallback Firebase sotto serve solo
+  // per le sessioni legacy (cookie Firebase ancora validi) durante la transizione.
+  if (session.startsWith(PG_TOKEN_PREFIX)) {
+    return getPgSession(session);
+  }
+
+  // ── Fallback: session cookie Firebase (sessioni legacy) ───────────────────
   try {
     const { adminAuth, adminDb } = await import("@/lib/firebase-admin");
     const decoded = await adminAuth().verifySessionCookie(session, true);

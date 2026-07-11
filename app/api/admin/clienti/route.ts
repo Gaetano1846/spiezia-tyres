@@ -47,6 +47,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Email non valida" }, { status: 400 });
   }
 
+  // Password opzionale: se fornita, crea l'identità di login del cliente. Min 6.
+  const password = str(body.Password);
+  if (password && password.length < 6) {
+    return NextResponse.json({ error: "La password deve avere almeno 6 caratteri" }, { status: 400 });
+  }
+
   try {
     const fidoRaw = Number(body.Fido);
     const fido = Number.isFinite(fidoRaw) ? fidoRaw : 0;
@@ -71,6 +77,7 @@ export async function POST(req: Request) {
       Azienda: azienda,
       Fido: fido,
       SedeId: sedeId,
+      Password: password || undefined,
     });
 
     if (!cliente) {

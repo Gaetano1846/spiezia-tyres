@@ -2,8 +2,21 @@ import { NextResponse, type NextRequest } from "next/server";
 import https from "https";
 import type { Ruolo } from "@/lib/types";
 import { buildDevCookie, buildSessionCookie, buildRoleCookie } from "@/lib/auth";
+import { findUserByEmail, createPgSession } from "@/lib/spiezia-auth/session";
+import { verifyUserPassword } from "@/lib/spiezia-auth/password";
 
-// Node.js https rispetta NODE_TLS_REJECT_UNAUTHORIZED; native fetch (undici) no.
+export const runtime = "nodejs";
+
+// Auth VPS-native (Fase 1 cutover). Ordine di verifica:
+//   1. Postgres (core.auth_credentials): se l'utente ha una credenziale PG e la
+//      password è corretta → sessione opaca su core.sessions, NESSUN Firebase.
+//      È il path autoritativo del nuovo B2B.
+//   2. Fallback Firebase (idToken): SOLO se il path PG non conclude (utente/
+//      credenziale assente, o parametri scrypt mancanti). Rete di sicurezza
+//      finché Firebase resta vivo per Flutter — ogni fallback è loggato così
+//      accumuliamo evidenza reale di dove il PG non copre.
+// La password non viene mai loggata né persistita in chiaro.
+
 function httpsGet(url: string, token: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     https.get(url, { headers: { Authorization: `Bearer ${token}` } }, (res) => {
@@ -23,50 +36,67 @@ function isAdminConfigured(): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  // email/password servono SOLO allo shadow-verify della migrazione Firebase→PG
-  // (vedi lib/spiezia-auth/shadow.ts): Firebase resta autoritativo, la password
-  // non viene mai loggata né persistita.
   const { idToken, email: bodyEmail, password: bodyPassword } = await req.json();
-  if (!idToken) return NextResponse.json({ error: "idToken required" }, { status: 400 });
+  const email = typeof bodyEmail === "string" ? bodyEmail.trim() : "";
+  const password = typeof bodyPassword === "string" ? bodyPassword : "";
 
-  // ── Dev mode: Admin SDK assente → verifica idToken tramite Firestore REST ────
-  // Il token viene decodificato per estrarre uid, ma la validità è confermata
-  // dalla risposta Firestore (che usa il token come Bearer — fallisce se scaduto/falso).
+  // ── 1. Path Postgres VPS-native ──────────────────────────────────────────
+  if (process.env.DATABASE_URL && email && password) {
+    try {
+      const user = await findUserByEmail(email);
+      if (user && !user.disabled) {
+        const v = await verifyUserPassword(user.id, password);
+        if (v.ok) {
+          const token = await createPgSession(
+            user.id,
+            { Ruolo: user.Ruolo, CRM: user.CRM },
+            { ip: req.headers.get("x-forwarded-for") ?? undefined, userAgent: req.headers.get("user-agent") ?? undefined },
+          );
+          if (token) {
+            const res = NextResponse.json({ ok: true, Ruolo: user.Ruolo, CRM: user.CRM, backend: "pg" });
+            res.headers.append("Set-Cookie", buildSessionCookie(token));
+            res.headers.append("Set-Cookie", buildRoleCookie(user.Ruolo, user.CRM));
+            return res;
+          }
+        } else if (v.reason === "bad_password" && idToken) {
+          // PG ha una credenziale ma la password non combacia, mentre il client
+          // ha ottenuto un idToken (Firebase l'ha accettata): mismatch reale da
+          // investigare (parametri scrypt / password cambiata in un solo sistema).
+          console.error(`[auth] MISMATCH PG/Firebase per ${email}: PG rifiuta, Firebase accetta`);
+        }
+        // no_credential / scrypt_params_missing → cade nel fallback Firebase sotto
+      }
+    } catch (err) {
+      console.error("[auth] path PG fallito, fallback Firebase:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // ── 2. Fallback Firebase (rete di sicurezza) ─────────────────────────────
+  if (!idToken) return NextResponse.json({ error: "Credenziali non valide" }, { status: 401 });
+
+  // Dev: Admin SDK assente → verifica idToken via Firestore REST
   if (!isAdminConfigured()) {
     try {
       const parts = idToken.split(".");
-      if (parts.length !== 3) {
-        return NextResponse.json({ error: "Token malformato" }, { status: 401 });
-      }
+      if (parts.length !== 3) return NextResponse.json({ error: "Token malformato" }, { status: 401 });
       const decoded = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
       const uid: string = decoded.user_id ?? decoded.sub ?? "";
-      const email: string = decoded.email ?? "";
+      const tokEmail: string = decoded.email ?? "";
+      if (!uid) return NextResponse.json({ error: "uid non trovato nel token" }, { status: 401 });
 
-      if (!uid) {
-        return NextResponse.json({ error: "uid non trovato nel token" }, { status: 401 });
-      }
-
-      // Verifica implicita: Firestore rifiuterà la richiesta se il Bearer token
-      // è scaduto, revocato o falsificato (con regole non-`if true`).
-      // Se la fetch fallisce → 401 senza eccezioni silenziate.
       const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!;
       const fsUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/users/${uid}`;
-
       let fsData: { fields?: Record<string, { stringValue?: string; booleanValue?: boolean }> };
       try {
         fsData = await httpsGet(fsUrl, idToken) as typeof fsData;
       } catch {
-        // Token non valido o utente inesistente — non autenticare
         return NextResponse.json({ error: "Token non verificabile (dev)" }, { status: 401 });
       }
-
       const fields = fsData.fields ?? {};
       const Ruolo = (fields.Ruolo?.stringValue as Ruolo) ?? "Privato";
       const CRM = fields.CRM?.booleanValue ?? false;
-
-      const sessionPayload = { uid, email, Ruolo, CRM };
-      const res = NextResponse.json({ ok: true, Ruolo, CRM });
-      res.headers.append("Set-Cookie", buildDevCookie(sessionPayload));
+      const res = NextResponse.json({ ok: true, Ruolo, CRM, backend: "firebase" });
+      res.headers.append("Set-Cookie", buildDevCookie({ uid, email: tokEmail, Ruolo, CRM }));
       res.headers.append("Set-Cookie", buildRoleCookie(Ruolo, CRM));
       return res;
     } catch (err) {
@@ -75,41 +105,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Production: verifica idToken con Admin SDK ────────────────────────────
+  // Prod: verifica idToken con Admin SDK
   try {
     const { adminAuth, adminDb } = await import("@/lib/firebase-admin");
     const decoded = await adminAuth().verifyIdToken(idToken);
     const userDoc = await adminDb().collection("users").doc(decoded.uid).get();
     if (!userDoc.exists) return NextResponse.json({ error: "Utente non trovato" }, { status: 403 });
-
     const data = userDoc.data()!;
     const Ruolo = (data.Ruolo as Ruolo) ?? "Privato";
     const CRM = Boolean(data.CRM);
 
     const sessionCookie = await adminAuth().createSessionCookie(idToken, { expiresIn: TTL_MS });
-    const sessionPayload = { uid: decoded.uid, email: decoded.email ?? "", Ruolo, CRM };
+    console.warn(`[auth] login via FALLBACK Firebase per ${email || decoded.email} — credenziale PG non disponibile`);
 
-    // Shadow-verify migrazione: valida il path Postgres in parallelo, mai bloccante.
-    void import("@/lib/spiezia-auth/shadow")
-      .then(({ runShadowAuthCheck }) =>
-        runShadowAuthCheck({
-          uid: decoded.uid,
-          email: decoded.email ?? bodyEmail ?? "",
-          password: typeof bodyPassword === "string" ? bodyPassword : undefined,
-          ruolo: (data.Ruolo as string) ?? "Privato",
-          crm: CRM,
-        })
-      )
-      .catch((err) => console.error("[shadow-auth] avvio fallito:", err));
-
-    const res = NextResponse.json({ ok: true, Ruolo, CRM });
+    const res = NextResponse.json({ ok: true, Ruolo, CRM, backend: "firebase" });
     res.headers.append("Set-Cookie", buildSessionCookie(sessionCookie));
     res.headers.append("Set-Cookie", buildRoleCookie(Ruolo, CRM));
-    // In development, getSession() reads spiezia_dev_session (plain JSON, no Admin SDK call).
-    // Set it alongside the production session cookie so both dev and prod paths work locally.
-    if (process.env.NODE_ENV === "development") {
-      res.headers.append("Set-Cookie", buildDevCookie(sessionPayload));
-    }
     return res;
   } catch (err) {
     console.error("[auth/login]", err);

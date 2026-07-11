@@ -161,6 +161,7 @@ type NewClienteState = {
   Tipo: string;
   Fido: string;
   Metodo_di_Pagamento: string;
+  Password: string;
 };
 
 const EMPTY_NEW_CLIENTE: NewClienteState = {
@@ -179,6 +180,7 @@ const EMPTY_NEW_CLIENTE: NewClienteState = {
   Tipo: "",
   Fido: "",
   Metodo_di_Pagamento: "",
+  Password: "",
 };
 
 // Valori tipici del campo Clienti.Tipo (schema Flutter)
@@ -541,6 +543,10 @@ export default function ClientiPage() {
       toast.error("Compila i campi obbligatori: Nome, Email, Telefono, CAP");
       return;
     }
+    if (nc.Password.trim() && nc.Password.trim().length < 6) {
+      toast.error("La password del cliente deve avere almeno 6 caratteri");
+      return;
+    }
     setCreating(true);
     try {
       const res = await fetch("/api/admin/clienti", {
@@ -562,6 +568,7 @@ export default function ClientiPage() {
           Tipo: nc.Tipo,
           Fido: nc.Fido.trim() === "" ? 0 : parseFloat(nc.Fido) || 0,
           Metodo_di_Pagamento: nc.Metodo_di_Pagamento,
+          Password: nc.Password.trim() || undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -1414,6 +1421,25 @@ export default function ClientiPage() {
                   value={newCliente.Metodo_di_Pagamento}
                   onChange={(v) => updateNew("Metodo_di_Pagamento", v)}
                   placeholder="Es. Bonifico, Contanti…"
+                />
+              </div>
+            </div>
+
+            {/* Accesso — password opzionale per far loggare il cliente allo storefront */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>
+                Accesso (opzionale)
+              </p>
+              <p className="text-xs mb-3" style={{ color: "#9ca3af" }}>
+                Imposta una password per permettere al cliente di accedere con la sua email. Lascia vuoto per non creare un account.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <TextField
+                  label="PASSWORD CLIENTE"
+                  type="password"
+                  value={newCliente.Password}
+                  onChange={(v) => updateNew("Password", v)}
+                  placeholder="min. 6 caratteri"
                 />
               </div>
             </div>
