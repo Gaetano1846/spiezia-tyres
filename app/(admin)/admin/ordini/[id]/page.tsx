@@ -19,8 +19,11 @@ import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
 import { trackGlsJob } from "@/lib/gls/jobTracking";
-import type { Ordine, OrdineStato } from "@/lib/types";
+import type { Ordine, OrdineStato, SpeseExtra } from "@/lib/types";
+import type { OrdineApi } from "@/lib/ordiniDb";
 
+// Cronologia/Note_Interne restano su Firestore in questa pagina (vedi
+// commento sul fetch principale) — DataOra/DataCreazione sono Timestamp reali.
 type CronologiaEntry = {
   id: string;
   DataOra: Timestamp;
@@ -35,6 +38,60 @@ type NotaInterna = {
   Testo: string;
   Operatore: string;
 };
+
+// core.ordini è già alimentato in tempo reale dal bridge (bidirezionale con
+// Firestore) — qui adattiamo la forma Postgres alla forma Ordine già attesa
+// da tutto il resto di questa pagina (invariata), per limitare il diff a
+// SOLO il fetch iniziale. Prodotti/stock restano su Firestore (fuori scope
+// di questa migrazione): RefPath ricostruisce il riferimento per il lookup.
+function apiToLocalOrdine(o: OrdineApi): Ordine {
+  const fsExtra = o.FsExtra ?? {};
+  const speseExtra = Array.isArray(fsExtra.SpeseExtra_array) ? (fsExtra.SpeseExtra_array as SpeseExtra[]) : [];
+  const articoli = o.Articoli.map((a) => ({
+    Titolo: a.Titolo ?? "",
+    Marca: a.Marca ?? "",
+    Quantita: a.Quantita,
+    PrezzoUnitario: a.PrezzoUnitario ?? 0,
+    Prezzo: a.PrezzoUnitario ?? 0, // normalizeArticolo legge Prezzo (forma importer)
+    PFU: a.PFU ?? 0,
+    Contributo_Logistico: a.ContributoLogistico ?? 0,
+    SKU: a.Sku ?? "",
+    Immagine: (a.FsExtra?.Immagine as string) ?? "",
+    // Vero DocumentReference (non un oggetto {path} fittizio): il lookup
+    // stock più sotto chiama getDoc(r) su Prodotti, che resta su Firestore.
+    Ref: a.RefPath ? doc(db, a.RefPath) : undefined,
+  }));
+  return {
+    id: o.id,
+    Numero: o.Numero ?? undefined,
+    Utente: (o.UtenteId ? doc(db, "users", o.UtenteId) : undefined) as DocumentReference,
+    Cliente: o.ClienteId ? doc(db, "Clienti", o.ClienteId) : undefined,
+    Source: o.Source,
+    Stato: o.Stato,
+    Articoli: articoli,
+    Totale: o.Totale,
+    IVA: o.IVA ?? 0,
+    PFU: o.PFU ?? 0,
+    SpeseExtra: speseExtra,
+    ContributoLogistico: o.ContributoLogistico ?? undefined,
+    Pagamento: o.Pagamento ?? undefined,
+    IndirizzoFatturazione: o.IndirizzoFatturazione ?? undefined,
+    IndirizzoSpedizione: o.IndirizzoSpedizione ?? undefined,
+    Note: o.Note ?? undefined,
+    Colli: o.Colli ?? undefined,
+    Peso: o.Peso ?? undefined,
+    DataCreazione: o.Data as unknown as Timestamp,
+    GLS_TrackingNumber: o.GlsTrackingNumber ?? undefined,
+    GLS_PdfUrl: o.GlsPdfUrl ?? undefined,
+    Motivo_Annullamento: o.MotivoAnnullamento ?? undefined,
+    Corriere: o.Corriere ?? undefined,
+    eBay_OrderID: fsExtra.eBay_OrderID as string | undefined,
+    Amazon_MarketplaceID: fsExtra.Amazon_MarketplaceID as string | undefined,
+    WC_OrderNumber: fsExtra.WC_OrderNumber as string | undefined,
+    // Indirizzo_Fatturazione/Indirizzo_Spedizione (snake_case, letti da rawIndirizzo
+    // come fallback): stessa colonna Postgres, quindi già coperti sopra via cast.
+  } as unknown as Ordine;
+}
 
 type ClienteInfo = {
   id: string;
@@ -91,14 +148,27 @@ function euro(n: number | undefined) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function fmtDt(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+// Accetta sia Timestamp Firestore (Cronologia/Note_Interne, ancora scritte
+// via client SDK) sia stringa ISO (Ordine, ora letto da Postgres via API).
+function toDate(v: Timestamp | string | null | undefined): Date | null {
+  if (!v) return null;
+  if (typeof v === "string") {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return v.toDate ? v.toDate() : null;
 }
 
-function fmtData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
+function fmtDt(v: Timestamp | string | null | undefined): string {
+  const d = toDate(v);
+  if (!d) return "—";
+  return d.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtData(v: Timestamp | string | null | undefined): string {
+  const d = toDate(v);
+  if (!d) return "—";
+  return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 // Note ordine da marketplace: spesso in HTML (<br/>, entità). Le rendiamo testo semplice.
@@ -260,12 +330,18 @@ export default function OrdineAdminDetailPage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, "Ordini", id));
-        if (!snap.exists()) {
-          toast.error("Ordine non trovato");
+        // Ordine: da Postgres (core.ordini, già allineato in tempo reale dal
+        // bridge). Cronologia/Note_Interne restano su Firestore qui sotto —
+        // questa pagina le riscrive e rilegge nello STESSO flusso subito dopo
+        // ogni azione, e passare a Postgres introdurrebbe un ritardo di
+        // propagazione del bridge tra scrittura e rilettura.
+        const res = await fetch(`/api/admin/ordini/${id}`);
+        const data = await res.json().catch(() => null) as { ordine?: OrdineApi; error?: string } | null;
+        if (!res.ok || !data?.ordine) {
+          toast.error(data?.error ?? "Ordine non trovato");
           return;
         }
-        const o = { id: snap.id, ...snap.data() } as Ordine;
+        const o = apiToLocalOrdine(data.ordine);
         setOrdine(o);
         setTracking(o.GLS_TrackingNumber ?? "");
 

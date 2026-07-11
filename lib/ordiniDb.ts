@@ -27,6 +27,13 @@ export interface ArticoloOrdineApi {
   PFU: number | null;
   ContributoLogistico: number | null;
   PrezzoTotale: number | null;
+  /** Path del doc Firestore Prodotti originale (es. "Prodotti/xyz") — Prodotti
+   *  resta su Firestore, questo serve solo a ricostruire il riferimento per lo
+   *  stock-lookup lato pagina di dettaglio. */
+  RefPath: string | null;
+  /** Campi non mappati a colonne dedicate (es. Immagine) — mai persi, vedi
+   *  mapping/ordini.mjs::buildArticoliRecords nel repo bridge. */
+  FsExtra: Record<string, unknown>;
 }
 
 export interface CronologiaEntryApi {
@@ -54,6 +61,10 @@ export interface OrdineListItemApi {
   UtenteNome: string | null;
   Totale: number;
   Data: string | null;
+  /** Presenti anche in lista (non solo dettaglio): servono alla UI admin per
+   *  validare/etichettare un cambio-stato senza un secondo fetch. */
+  Corriere: string | null;
+  GlsTrackingNumber: string | null;
 }
 
 export interface OrdineApi extends OrdineListItemApi {
@@ -67,12 +78,14 @@ export interface OrdineApi extends OrdineListItemApi {
   IndirizzoSpedizione: Indirizzo | null;
   Colli: number | null;
   Peso: number | null;
-  Corriere: string | null;
-  GlsTrackingNumber: string | null;
   GlsPdfUrl: string | null;
   PdfUrl: string | null;
   Note: string | null;
   MotivoAnnullamento: string | null;
+  /** Campi non mappati a colonne dedicate (marketplace id, SpeseExtra quando
+   *  arriva come array, ecc.) — mai persi, vedi mapping/ordini.mjs nel repo
+   *  bridge. Le pagine di dettaglio leggono da qui i campi "ambigui". */
+  FsExtra: Record<string, unknown>;
   Articoli: ArticoloOrdineApi[];
   Cronologia: CronologiaEntryApi[];
   NoteInterne: NoteInternaApi[];
@@ -80,12 +93,13 @@ export interface OrdineApi extends OrdineListItemApi {
 
 const LIST_COLS = `o.id, o.numero, o.source, o.stato, o.cliente_id, o.utente_id, o.totale,
   coalesce(o.data_ora, o.created_at) AS effective_date, o.fs_extra->>'Numero' AS numero_display,
+  o.corriere, o.gls_tracking_number,
   coalesce(NULLIF(c.ragione_sociale, ''), c.nome) AS cliente_nome,
   u.display_name AS utente_nome`;
 
 const DETAIL_COLS = `${LIST_COLS}, o.sede_id, o.iva, o.pfu, o.sconto_totale, o.contributo_logistico,
-  o.pagamento, o.indirizzo_fatturazione, o.indirizzo_spedizione, o.colli, o.peso, o.corriere,
-  o.gls_tracking_number, o.gls_pdf_url, o.pdf_url, o.note, o.motivo_annullamento`;
+  o.pagamento, o.indirizzo_fatturazione, o.indirizzo_spedizione, o.colli, o.peso,
+  o.gls_pdf_url, o.pdf_url, o.note, o.motivo_annullamento, o.fs_extra`;
 
 function isoOrNull(v: unknown): string | null {
   if (!v) return null;
@@ -105,6 +119,8 @@ function rowToListItem(r: Record<string, unknown>): OrdineListItemApi {
     UtenteNome: (r.utente_nome as string) ?? null,
     Totale: Number(r.totale ?? 0),
     Data: isoOrNull(r.effective_date),
+    Corriere: (r.corriere as string) ?? null,
+    GlsTrackingNumber: (r.gls_tracking_number as string) ?? null,
   };
 }
 
@@ -121,12 +137,11 @@ function rowToOrdine(r: Record<string, unknown>): OrdineApi {
     IndirizzoSpedizione: (r.indirizzo_spedizione as Indirizzo) ?? null,
     Colli: r.colli != null ? Number(r.colli) : null,
     Peso: r.peso != null ? Number(r.peso) : null,
-    Corriere: (r.corriere as string) ?? null,
-    GlsTrackingNumber: (r.gls_tracking_number as string) ?? null,
     GlsPdfUrl: (r.gls_pdf_url as string) ?? null,
     PdfUrl: (r.pdf_url as string) ?? null,
     Note: (r.note as string) ?? null,
     MotivoAnnullamento: (r.motivo_annullamento as string) ?? null,
+    FsExtra: (r.fs_extra as Record<string, unknown>) ?? {},
     Articoli: [],
     Cronologia: [],
     NoteInterne: [],
@@ -143,6 +158,8 @@ function rowToArticolo(r: Record<string, unknown>): ArticoloOrdineApi {
     PFU: r.pfu != null ? Number(r.pfu) : null,
     ContributoLogistico: r.contributo_logistico != null ? Number(r.contributo_logistico) : null,
     PrezzoTotale: r.tot_riga != null ? Number(r.tot_riga) : null,
+    RefPath: (r.ref_path as string) ?? null,
+    FsExtra: (r.fs_extra as Record<string, unknown>) ?? {},
   };
 }
 
@@ -248,7 +265,7 @@ export async function getOrdine(id: string): Promise<OrdineApi | null> {
 
   const [articoli, cronologia, noteInterne] = await Promise.all([
     db.query(
-      `SELECT sku, titolo, marca, quantita, prezzo_unitario, pfu, contributo_logistico, tot_riga
+      `SELECT sku, titolo, marca, quantita, prezzo_unitario, pfu, contributo_logistico, tot_riga, ref_path, fs_extra
          FROM core.ordine_articoli WHERE ordine_id = $1 ORDER BY riga`,
       [id]
     ),

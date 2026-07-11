@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
-  collection, query, orderBy, getDocs, getDoc,
-  where, limit, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, Timestamp,
-  type DocumentReference,
+  collection, query, orderBy, where,
+  onSnapshot, doc, updateDoc, addDoc, serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
@@ -14,9 +13,9 @@ import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import HeaderFilter from "@/components/ui/HeaderFilter";
 import toast from "react-hot-toast";
-import { searchOrdini, type OrdiniSearchField } from "@/lib/algolia";
 import { trackGlsJob } from "@/lib/gls/jobTracking";
-import type { Ordine, OrdineStato, OrdineSource } from "@/lib/types";
+import type { OrdineStato } from "@/lib/types";
+import type { OrdineListItemApi } from "@/lib/ordiniDb";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -71,7 +70,10 @@ const STATO_PILL: Record<string, { bg: string; text: string; border: string }> =
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type OrdineEntry = { ordine: Ordine; clienteNome: string; docId: string };
+// Motivo_Annullamento non arriva dalla lista (solo dal dettaglio) — impostato
+// localmente in modo ottimistico subito dopo l'azione "Annulla ordine".
+type OrdineRow = OrdineListItemApi & { Motivo_Annullamento?: string };
+type OrdineEntry = { ordine: OrdineRow; clienteNome: string; docId: string };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -80,74 +82,20 @@ function getTodayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Record<string, unknown>>> {
-  if (refs.length === 0) return new Map();
-  const unique = [...new Map(refs.map((r) => [r.path, r])).values()];
-  const snaps = await Promise.all(unique.map((r) => getDoc(r)));
-  const map = new Map<string, Record<string, unknown>>();
-  snaps.forEach((s) => {
-    if (s.exists()) map.set(s.ref.path, { id: s.id, ...s.data() } as Record<string, unknown>);
-  });
-  return map;
+// core.ordini restituisce già ClienteNome/UtenteNome pre-risolti via JOIN
+// (lib/ordiniDb.ts) — niente più batchGetDocs/nomeDaOrdine lato client.
+function entriesFromApi(rows: OrdineListItemApi[]): OrdineEntry[] {
+  return rows.map((ordine) => ({
+    ordine,
+    clienteNome: ordine.ClienteNome || ordine.UtenteNome || "—",
+    docId: ordine.id,
+  }));
 }
 
-// Estrae il "Destinatario" da un indirizzo (mappa Firestore con chiavi underscore).
-function destinatarioFromAddr(addr: unknown): string {
-  if (addr && typeof addr === "object") {
-    const d = (addr as Record<string, unknown>).Destinatario;
-    if (typeof d === "string") return d.trim();
-  }
-  return "";
-}
-
-// Nome mostrato in lista — mirror FF (ordini_row): destinatario di FATTURAZIONE,
-// tranne per le fonti Anonimo/AdTyres (o se manca) → destinatario di SPEDIZIONE.
-function nomeDaOrdine(ordine: Ordine): string {
-  const raw = ordine as unknown as Record<string, unknown>;
-  const fatt = destinatarioFromAddr(raw.Indirizzo_Fatturazione);
-  const sped = destinatarioFromAddr(raw.Indirizzo_Spedizione);
-  const source = String(ordine.Source ?? "");
-  const useSped = source === "Anonimo" || source === "AdTyres" || !fatt;
-  return (useSped ? sped : fatt) || "";
-}
-
-// Risolve il nome cliente per una lista di ordini seguendo la logica del FF
-// (destinatario fatturazione/spedizione), con fallback sui riferimenti
-// Cliente → Ragione_Sociale/Nome / Utente → display_name/email. Usato sia dal
-// caricamento normale sia dai risultati di ricerca Algolia: le viste coincidono.
-async function resolveOrdineEntries(raw: { docId: string; ordine: Ordine }[]): Promise<OrdineEntry[]> {
-  const clienteRefs = raw.map(({ ordine }) => ordine.Cliente).filter(Boolean) as DocumentReference[];
-  const utenteRefs  = raw.map(({ ordine }) => ordine.Utente).filter(Boolean) as DocumentReference[];
-  const [clientiMap, utentiMap] = await Promise.all([
-    batchGetDocs(clienteRefs),
-    batchGetDocs(utenteRefs),
-  ]);
-  return raw.map(({ ordine, docId }) => {
-    let clienteNome = nomeDaOrdine(ordine);
-    if (!clienteNome) {
-      // Fallback sul riferimento quando gli indirizzi non hanno un destinatario
-      if (ordine.Cliente) {
-        const c = clientiMap.get(ordine.Cliente.path);
-        // Azienda è un booleano nello schema Clienti → non usarlo come nome
-        if (c) clienteNome = String(c.Ragione_Sociale || c.Nome || "").trim();
-      } else if (ordine.Utente) {
-        const u = utentiMap.get(ordine.Utente.path);
-        // Campo reale users: display_name (snake_case); displayName come fallback legacy
-        if (u) clienteNome = String(u.display_name || u.displayName || u.email || "");
-      }
-    }
-    return { ordine, clienteNome: clienteNome || "—", docId };
-  });
-}
-
-function getTs(ordine: Ordine): Timestamp | undefined {
-  const o = ordine as unknown as Record<string, Timestamp>;
-  return o.DataOra ?? o.dataOra ?? o.data_ora ?? o.DataCreazione ?? o.createdAt ?? o.created_time;
-}
-
-function formatData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  const d = ts.toDate();
+function formatData(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" })
     + " " + d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 }
@@ -304,10 +252,11 @@ export default function OrdiniAdminPage() {
   const [stato, setStato]   = useState<string>(""); // include stati legacy nel filtro
   const [fonte, setFonte]   = useState("");
 
-  // Ricerca Algolia su TUTTI gli ordini (mirror FF). searchField = dropdown
-  // "Numero Ordine / Nome / Dati Spedizione". searchEntries: null = non in
-  // ricerca (mostra la lista per data); array = risultati Algolia risolti.
-  const [searchField, setSearchField]     = useState<OrdiniSearchField>("Numero Ordine");
+  // Ricerca su TUTTI gli ordini (Postgres search_text + JOIN nome cliente —
+  // copre numero/id/indirizzi/tracking E nome in un'unica query, niente più
+  // bisogno del dropdown "campo di ricerca" che c'era con Algolia).
+  // searchEntries: null = non in ricerca (mostra la lista per data); array =
+  // risultati risolti.
   const [searchEntries, setSearchEntries] = useState<OrdineEntry[] | null>(null);
   const [searching, setSearching]         = useState(false);
   const [dataDa, setDataDa] = useState(getTodayISO);
@@ -350,34 +299,17 @@ export default function OrdiniAdminPage() {
   }, []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
-  // Re-fetch whenever the date range changes — server-side date filter for accuracy
+  // Re-fetch whenever the date range changes — server-side date filter for accuracy.
+  // core.ordini è già ordinato per data desc dalla route (coalesce data_ora/created_at).
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const daDate = new Date(dataDa + "T00:00:00");
-        const aDate  = new Date(dataA  + "T23:59:59");
-        const daTsamp = Timestamp.fromDate(daDate);
-        const aTsamp  = Timestamp.fromDate(aDate);
-
-        const ordiniSnap = await getDocs(query(
-          collection(db, "Ordini"),
-          where("DataOra", ">=", daTsamp),
-          where("DataOra", "<=", aTsamp),
-          orderBy("DataOra", "desc"),
-          limit(2000),
-        ));
-
-        const ordini = ordiniSnap.docs
-          .map((d) => {
-            const data = d.data() as Record<string, unknown>;
-            // Numero ordine: campo schema "ID"; fallback su "id" legacy e infine sul doc id
-            return { docId: d.id, ordine: { ...data, id: data.ID ?? data.id ?? d.id } as Ordine };
-          })
-          .sort((a, b) => (getTs(b.ordine)?.toMillis() ?? 0) - (getTs(a.ordine)?.toMillis() ?? 0));
-
-        const resolved = await resolveOrdineEntries(ordini);
-        setEntries(resolved);
+        const params = new URLSearchParams({ da: dataDa, a: dataA });
+        const res = await fetch(`/api/admin/ordini?${params.toString()}`);
+        const data = await res.json().catch(() => null) as { ordini?: OrdineListItemApi[]; error?: string } | null;
+        if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+        setEntries(entriesFromApi(data?.ordini ?? []));
       } catch (e) {
         toast.error("Errore nel caricamento ordini");
         console.error(e);
@@ -419,36 +351,17 @@ export default function OrdiniAdminPage() {
   const hasExtraFilters = !!(search || stato || fonte || inSearch);
   const isDefaultRange  = dataDa === today && dataA === today;
 
-  // Esegui la ricerca Algolia su tutti gli ordini (mirror FF: OrdiniRecord.search).
-  // Costruisce OrdineEntry dai hit (Cliente path → ref, DataOra millis → Timestamp)
-  // e risolve i nomi cliente con lo stesso pipeline della lista normale.
+  // Ricerca su TUTTI gli ordini (non solo il periodo visibile) — mirror del
+  // comportamento Algolia precedente, ora via search_text + JOIN cliente su Postgres.
   async function handleSearchOrdini() {
     const term = search.trim();
     if (!term) { setSearchEntries(null); setSelectedIds(new Set()); return; }
     setSearching(true);
     try {
-      const hits = await searchOrdini(term, searchField);
-      // Ricostruisce un DocumentReference dal path stringa dell'hit (Algolia non
-      // serializza i reference); path malformato → undefined (nome → "—").
-      const refFromPath = (path?: string): DocumentReference | undefined => {
-        if (!path) return undefined;
-        try { return doc(db, path); } catch { return undefined; }
-      };
-      const raw = hits
-        .map((h) => {
-          const docId = h.objectID || (h.path ? h.path.split("/").pop() ?? "" : "");
-          const ordine = {
-            ...(h as Record<string, unknown>),
-            id:      h.ID ?? docId,
-            DataOra: typeof h.DataOra === "number" ? Timestamp.fromMillis(h.DataOra) : undefined,
-            Cliente: refFromPath(h.Cliente),
-            Utente:  refFromPath(h.Utente),
-          } as unknown as Ordine;
-          return { docId, ordine };
-        })
-        .filter((e) => e.docId);
-      const resolved = await resolveOrdineEntries(raw);
-      setSearchEntries(resolved);
+      const res = await fetch(`/api/admin/ordini?q=${encodeURIComponent(term)}`);
+      const data = await res.json().catch(() => null) as { ordini?: OrdineListItemApi[]; error?: string } | null;
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setSearchEntries(entriesFromApi(data?.ordini ?? []));
       setSelectedIds(new Set());
     } catch (e) {
       console.error(e);
@@ -514,7 +427,7 @@ export default function OrdiniAdminPage() {
   }
 
   // ── Cambio stato inline (per riga) ─────────────────────────────────────────
-  async function handleRowStatoChange(docId: string, nuovoStato: OrdineStato, prevStato: OrdineStato, ordine: Ordine) {
+  async function handleRowStatoChange(docId: string, nuovoStato: OrdineStato, prevStato: OrdineStato, ordine: OrdineRow) {
     if (savingStato || nuovoStato === prevStato) return;
     const orderId = ordine.id ?? docId;
 
@@ -533,7 +446,7 @@ export default function OrdiniAdminPage() {
 
     // Spedito richiede il codice tracking (come FF e come il dettaglio ordine:
     // senza tracking → errore, niente cambio stato né push marketplace)
-    if (nuovoStato === "Spedito" && !(ordine.GLS_TrackingNumber ?? "").trim()) {
+    if (nuovoStato === "Spedito" && !(ordine.GlsTrackingNumber ?? "").trim()) {
       toast.error("Codice tracking assente: inseriscilo dal dettaglio ordine prima di segnare 'Spedito'.");
       return;
     }
@@ -853,23 +766,9 @@ export default function OrdiniAdminPage() {
           (come la sezione Spedizioni); su mobile in un pannello collassabile. */}
       <div className="space-y-2">
        <div className="flex gap-2 items-center flex-wrap">
-        {/* Selettore campo di ricerca — mirror FF (Numero Ordine / Nome / Dati Spedizione) */}
-        <div className="relative flex-shrink-0">
-          <select
-            value={searchField}
-            onChange={(e) => setSearchField(e.target.value as OrdiniSearchField)}
-            title="Campo di ricerca"
-            className="appearance-none pl-3 pr-8 py-2 rounded-xl text-sm font-semibold outline-none cursor-pointer"
-            style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "#111", fontFamily: "var(--font-montserrat)" }}
-          >
-            {(["Numero Ordine", "Nome", "Dati Spedizione"] as OrdiniSearchField[]).map((o) => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </select>
-          <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "#9ca3af" }} />
-        </div>
-
-        {/* Campo di ricerca + pulsante — ricerca Algolia su TUTTI gli ordini (mirror FF).
+        {/* Campo di ricerca + pulsante — ricerca su TUTTI gli ordini (numero, id
+            esterno, indirizzi, tracking, nome cliente — un'unica query Postgres,
+            non serve più un selettore di campo come con Algolia).
             Invio o click su "Cerca" avviano la ricerca; la X esce e torna alla lista per data. */}
         <div className="flex items-center gap-2 flex-1 min-w-[220px]">
           <div className="relative flex-1 min-w-[130px]">
@@ -1187,7 +1086,7 @@ export default function OrdiniAdminPage() {
                         </td>
 
                         <td className="px-3 py-3 text-xs whitespace-nowrap" style={{ color: "#6b7280" }}>
-                          {formatData(getTs(ordine))}
+                          {formatData(ordine.Data)}
                         </td>
 
                         <td className="px-3 py-3">
@@ -1344,7 +1243,7 @@ export default function OrdiniAdminPage() {
                             {ordine.Source}
                           </span>
                           <span className="text-[10px] font-semibold uppercase tracking-wider ml-1" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Data</span>
-                          <span className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>{formatData(getTs(ordine))}</span>
+                          <span className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>{formatData(ordine.Data)}</span>
                         </div>
                         {/* Azioni */}
                         <div className="flex items-center gap-2 flex-wrap">
