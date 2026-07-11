@@ -42,13 +42,41 @@ function addr(a: AddressPayload) {
     Citta: a.citta,
     Provincia: a.provincia,
     Paese: "IT",
-    PartitaIVA: a.partitaIva || undefined,
+    // L'Admin SDK, a differenza del client SDK, rifiuta `undefined` come
+    // valore di campo Firestore ("Cannot use 'undefined' as a Firestore
+    // value") — null è l'equivalente "assente" accettato.
+    PartitaIVA: a.partitaIva || null,
   };
 }
 
 function formatNumeroOrdine(n: number): string {
   const year = new Date().getFullYear();
   return `ORD-${year}-${String(n).padStart(5, "0")}`;
+}
+
+function normalizeAddr(a: { Via?: unknown; CAP?: unknown; Citta?: unknown }): string {
+  return [a.Via, a.CAP, a.Citta].map((v) => String(v ?? "").trim().toLowerCase()).join("|");
+}
+
+// Salva l'indirizzo inserito nella rubrica dell'utente (o del cliente, in
+// modalità "ordina per conto di"), se non è già presente — così il prossimo
+// ordine può riusarlo dal menu "Usa un indirizzo salvato". SERVER-SIDE per lo
+// stesso motivo del resto della route (nessun token Firebase Auth lato client
+// garantito). Best-effort: un fallimento qui non deve far fallire l'ordine,
+// già creato con successo a questo punto.
+async function saveAddressIfNew(
+  colRef: FirebaseFirestore.CollectionReference,
+  doc: Record<string, unknown>
+): Promise<void> {
+  try {
+    const existing = await colRef.get();
+    const key = normalizeAddr(doc);
+    const alreadySaved = existing.docs.some((d) => normalizeAddr(d.data()) === key);
+    if (alreadySaved) return;
+    await colRef.add(doc);
+  } catch (err) {
+    console.error("[api/checkout/ordine] salvataggio indirizzo fallito (non bloccante):", err);
+  }
 }
 
 export async function POST(req: Request) {
@@ -121,6 +149,32 @@ export async function POST(req: Request) {
     }
 
     const ref = await db.collection("Ordini").add(orderData);
+
+    // Salva l'indirizzo di fatturazione (e quello di spedizione, se diverso)
+    // nella rubrica per il riuso futuro — del cliente selezionato in modalità
+    // "ordina per conto di", altrimenti dell'utente che ha ordinato.
+    if (canOrderForClient && body.clienteId) {
+      const col = db.collection(`Clienti/${body.clienteId}/Indirizzo_FatturazioneC`);
+      const clienteAddr = (a: AddressPayload) => ({
+        Ragione_Sociale: a.nome, Via: a.via, CAP: a.cap, Citta: a.citta,
+        Provincia: a.provincia, PartitaIVA: a.partitaIva || null,
+      });
+      await saveAddressIfNew(col, clienteAddr(body.fatturazione));
+      if (body.spedizione && normalizeAddr(clienteAddr(body.spedizione)) !== normalizeAddr(clienteAddr(body.fatturazione))) {
+        await saveAddressIfNew(col, clienteAddr(body.spedizione));
+      }
+    } else {
+      const col = db.collection(`users/${session.uid}/Indirizzo_Fatturazione`);
+      const userAddr = (a: AddressPayload) => ({
+        Nome: a.nome, Via: a.via, CAP: a.cap, Citta: a.citta,
+        Provincia: a.provincia, PartitaIVA: a.partitaIva || null,
+      });
+      await saveAddressIfNew(col, userAddr(body.fatturazione));
+      if (body.spedizione && normalizeAddr(userAddr(body.spedizione)) !== normalizeAddr(userAddr(body.fatturazione))) {
+        await saveAddressIfNew(col, userAddr(body.spedizione));
+      }
+    }
+
     return NextResponse.json({ id: ref.id, numero: orderData.Numero as string });
   } catch (err) {
     console.error("[api/checkout/ordine]", err);
