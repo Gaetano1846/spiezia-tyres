@@ -176,24 +176,15 @@ export default function OrdinePage() {
       setLoading(true);
       try {
         // Un rappresentante può visualizzare ordini piazzati DAI SUOI CLIENTI
-        // (non solo i propri) — le Firestore Security Rules non riconoscono
-        // quel legame, serve la route server-side (Admin SDK) dedicata.
-        if (isRappresentante) {
-          const res = await fetch(`/api/rappresentante/ordini/${id}`);
-          const data = (await res.json().catch(() => ({}))) as { ordine?: Ordine; cronologia?: CronologiaEntry[]; error?: string };
-          if (!res.ok || !data.ordine) {
-            setNotFound(true);
-            return;
-          }
-          setOrdine(data.ordine);
-          setCronologia(data.cronologia ?? []);
-          return;
-        }
-
+        // (non solo i propri) — l'autorizzazione (assegnazione cliente→rep)
+        // va verificata server-side, quindi route dedicata; stessa forma
+        // OrdineApi (Cronologia inclusa) della route self-service sotto.
+        //
         // Ordine + Cronologia: da Postgres (core.ordini/b2b.ordini_cronologia,
         // già allineati in tempo reale dal bridge). Nessuna scrittura avviene
         // da questa pagina, quindi zero rischio di lag lettura-dopo-scrittura.
-        const res = await fetch(`/api/ordini/${id}`);
+        const url = isRappresentante ? `/api/rappresentante/ordini/${id}` : `/api/ordini/${id}`;
+        const res = await fetch(url);
         const data = (await res.json().catch(() => ({}))) as { ordine?: OrdineApi; error?: string };
         if (!res.ok || !data.ordine) {
           setNotFound(true);

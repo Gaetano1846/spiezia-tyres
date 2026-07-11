@@ -6,46 +6,32 @@ import { Eye, RotateCcw, Search, ShoppingBag, Users } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-import type { Ordine, OrdineStato } from "@/lib/types";
+import type { OrdineStato } from "@/lib/types";
 import type { OrdineListItemApi } from "@/lib/ordiniDb";
 
-// Ordini propri: da Postgres (core.ordini, via lib/ordiniDb.ts — API canonica).
-// Ordini del rappresentante: ANCORA da Firestore via /api/rappresentante/ordini
-// (Fase 1.4, non ancora fatta) — shape diversa, arricchita server-side con
-// l'identità del cliente a cui appartengono, per il filtro dedicato sotto.
-type OrdineRappresentante = Omit<Ordine, "DataCreazione"> & {
-  _repClienteUid?: string | null;
-  _repClienteNome?: string | null;
-  DataCreazione?: { seconds: number } | number | null;
-  DataOra?: { seconds: number } | number | null;
-};
+// Sia gli ordini propri (/api/ordini) sia quelli del rappresentante
+// (/api/rappresentante/ordini) sono ora OrdineListItemApi — core.ordini per
+// entrambi. Il rappresentante riceve in più RepClienteUid/RepClienteNome
+// (a quale cliente assegnato appartiene l'ordine), assenti per il cliente.
+type OrdineListItemRep = OrdineListItemApi & { RepClienteUid?: string | null; RepClienteNome?: string | null };
 
-// Forma unica su cui gira tutta la UI sotto — un piccolo adattatore per
-// ciascuna delle due fonti la produce subito dopo il fetch.
+// Forma unica su cui gira tutta la UI sotto.
 type OrdineRow = {
   id: string;
   Numero: string | null;
   Stato: string;
   Totale: number;
   articoliCount: number;
-  dataDisplay: string | number | { seconds: number } | null | undefined;
+  dataDisplay: string | null;
   repClienteUid?: string | null;
   repClienteNome?: string | null;
 };
 
-function fromApi(o: OrdineListItemApi): OrdineRow {
+function fromApi(o: OrdineListItemRep): OrdineRow {
   return {
     id: o.id, Numero: o.Numero, Stato: o.Stato, Totale: o.Totale,
     articoliCount: o.ArticoliCount, dataDisplay: o.Data,
-  };
-}
-
-function fromRappresentante(o: OrdineRappresentante): OrdineRow {
-  return {
-    id: o.id, Numero: o.Numero ?? null, Stato: o.Stato, Totale: o.Totale ?? 0,
-    articoliCount: o.Articoli?.length ?? 0,
-    dataDisplay: o.DataCreazione ?? o.DataOra,
-    repClienteUid: o._repClienteUid, repClienteNome: o._repClienteNome,
+    repClienteUid: o.RepClienteUid, repClienteNome: o.RepClienteNome,
   };
 }
 
@@ -95,12 +81,12 @@ export default function OrdiniPage() {
           // prima persona) — vedi commento nella route sul modello dati.
           const res = await fetch("/api/rappresentante/ordini");
           const data = (await res.json().catch(() => ({}))) as {
-            ordini?: OrdineRappresentante[];
+            ordini?: OrdineListItemRep[];
             clienti?: Array<{ uid: string; nome: string }>;
             error?: string;
           };
           if (!res.ok) throw new Error(data.error ?? "Errore nel caricamento");
-          setOrdini((data.ordini ?? []).map(fromRappresentante));
+          setOrdini((data.ordini ?? []).map(fromApi));
           setMiClienti(data.clienti ?? []);
           return;
         }

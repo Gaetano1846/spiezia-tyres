@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
 import { getClientiAssegnati } from "@/lib/rappresentanteDb";
+import { listOrdini } from "@/lib/ordiniDb";
 
 export const runtime = "nodejs";
 
@@ -9,22 +10,15 @@ export const runtime = "nodejs";
 //
 // Ordini di TUTTI i clienti assegnati al rappresentante loggato — non solo
 // quelli che il rappresentante ha piazzato lui stesso ("ordina per conto di",
-// Ordini.Utente == rappresentante), ma anche quelli che il cliente ha
-// piazzato autonomamente (Ordini.Utente == cliente). Il collegamento
-// cliente→rappresentante vive su users/{uid}.Rappresentante (email del
-// rappresentante, assegnato da admin/clienti). SERVER-SIDE via Admin SDK per
-// lo stesso motivo di tutte le altre route Ordini di questa sessione: le
-// Firestore Security Rules richiedono un token Firebase Auth live che con
-// l'auth VPS-native non è garantito lato client.
-
-const CHUNK = 30; // limite Firestore per l'operatore 'in'
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
+// utente_id == rappresentante), ma anche quelli che il cliente ha piazzato
+// autonomamente (utente_id == cliente) O quelli piazzati da staff per suo
+// conto (cliente_id == la sua anagrafica). Il collegamento cliente→
+// rappresentante vive su users/{uid}.Rappresentante (Firestore, fuori scope
+// di questa migrazione), risolto da getClientiAssegnati.
+//
+// core.ordini è già allineato in tempo reale dal bridge: una singola query
+// Postgres con utente_id/cliente_id = ANY($1) sostituisce le due query
+// Firestore "in" chunked a 30 (nessun limite di dimensione batch da gestire).
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non autorizzato" }, { status: 401 });
@@ -34,66 +28,29 @@ export async function GET() {
 
   try {
     const db = adminDb();
-
-    // 1. Clienti assegnati a questo rappresentante (users.Rappresentante == mia email).
     const clienti = await getClientiAssegnati(db, session.email);
+    if (clienti.length === 0) return NextResponse.json({ ordini: [], clienti: [] });
 
-    if (clienti.length === 0) {
-      return NextResponse.json({ ordini: [], clienti: [] });
-    }
-
-    // Mappe di risoluzione: id doc Cliente → {uid, nome} del cliente assegnato.
+    const uidToNome = new Map(clienti.map((c) => [c.uid, c.nome]));
     const clienteRefIdToUid = new Map(
       clienti.filter((c) => c.clienteRefId).map((c) => [c.clienteRefId as string, c.uid])
     );
-    const uidToNome = new Map(clienti.map((c) => [c.uid, c.nome]));
 
-    const userRefs = clienti.map((c) => db.doc(`users/${c.uid}`));
-    const clienteRefs = clienti
-      .filter((c) => c.clienteRefId)
-      .map((c) => db.doc(`Clienti/${c.clienteRefId}`));
+    const utenteIds = clienti.map((c) => c.uid);
+    const clienteIds = clienti.filter((c) => c.clienteRefId).map((c) => c.clienteRefId as string);
 
-    // 2. Ordini piazzati direttamente dai clienti (Utente == loro uid).
-    const ordiniById = new Map<string, Record<string, unknown>>();
-    for (const batch of chunk(userRefs, CHUNK)) {
-      const snap = await db.collection("Ordini").where("Utente", "in", batch).get();
-      for (const doc of snap.docs) {
-        const data = doc.data();
-        const utenteId = (data.Utente as FirebaseFirestore.DocumentReference)?.id;
-        ordiniById.set(doc.id, { id: doc.id, ...data, _repClienteUid: utenteId });
-      }
-    }
+    const rows = await listOrdini({ utenteIds, clienteIds, limit: 2000 });
 
-    // 3. Ordini piazzati per loro conto da staff (Cliente == la loro anagrafica).
-    for (const batch of chunk(clienteRefs, CHUNK)) {
-      if (batch.length === 0) continue;
-      const snap = await db.collection("Ordini").where("Cliente", "in", batch).get();
-      for (const doc of snap.docs) {
-        if (ordiniById.has(doc.id)) continue; // già incluso via Utente
-        const data = doc.data();
-        const clienteId = (data.Cliente as FirebaseFirestore.DocumentReference)?.id;
-        const repClienteUid = clienteId ? clienteRefIdToUid.get(clienteId) : undefined;
-        ordiniById.set(doc.id, { id: doc.id, ...data, _repClienteUid: repClienteUid ?? null });
-      }
-    }
-
-    const ordini = [...ordiniById.values()]
-      .map((o) => {
-        const ts = (o.DataCreazione ?? o.DataOra) as FirebaseFirestore.Timestamp | undefined;
-        const sortMillis = ts?.toMillis?.() ?? 0;
-        return {
-          ...o,
-          _repClienteNome: o._repClienteUid ? uidToNome.get(o._repClienteUid as string) ?? null : null,
-          // I riferimenti Firestore non sono serializzabili in JSON — solo id.
-          Utente: (o.Utente as FirebaseFirestore.DocumentReference | undefined)?.id ?? null,
-          Cliente: (o.Cliente as FirebaseFirestore.DocumentReference | undefined)?.id ?? null,
-          DataCreazione: sortMillis || null,
-          DataOra: undefined,
-          _sortMillis: sortMillis,
-        };
-      })
-      .sort((a, b) => b._sortMillis - a._sortMillis)
-      .map(({ _sortMillis, ...rest }) => rest);
+    const ordini = rows.map((o) => {
+      const repClienteUid = o.UtenteId && uidToNome.has(o.UtenteId)
+        ? o.UtenteId
+        : (o.ClienteId ? clienteRefIdToUid.get(o.ClienteId) ?? null : null);
+      return {
+        ...o,
+        RepClienteUid: repClienteUid,
+        RepClienteNome: repClienteUid ? uidToNome.get(repClienteUid) ?? null : null,
+      };
+    });
 
     return NextResponse.json({
       ordini,
