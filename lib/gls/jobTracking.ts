@@ -1,8 +1,8 @@
-// Tracking lato client dei job di spedizione bulk (SpedizioniJobs). Usa
+// Tracking lato client dei job di spedizione bulk (b2b.spedizioni_jobs). Usa
 // localStorage così un job avviato sopravvive alla navigazione tra pagine admin
-// E a un refresh del browser (il job stesso gira lato server/Firestore — questo
+// E a un refresh del browser (il job stesso gira lato server/Postgres — questo
 // modulo serve solo a ricordare "quali jobId sto seguendo in questa sessione").
-// Eventi custom per notificare il widget (components/admin/SpedizioniJobsWidget)
+// Eventi custom per notificare il widget (components/layout/SpedizioniJobsWidget)
 // senza dover passare per un Context/prop-drilling attraverso il layout.
 
 const STORAGE_KEY = "spiezia_gls_active_jobs";

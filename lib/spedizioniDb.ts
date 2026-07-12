@@ -6,7 +6,7 @@
 // (tocca spedizioni fatturate da GLS). Il bridge esistente propaga verso
 // Firestore per il CRM Flutter legacy.
 
-import { getDb } from "@/lib/db";
+import { getDb, newId } from "@/lib/db";
 
 export interface SpedizioneApi {
   id: string;
@@ -173,4 +173,132 @@ export async function updateSpedizioniStatus(results: SpedizioneStatusResult[], 
   } finally {
     client.release();
   }
+}
+
+// ─── Job bulk GLS (Fase 4.3 — SpedizioniJobs → Postgres) ──────────────────────
+//
+// Progress-feed del pulsante "Spedisci" bulk. Prima Firestore-only con widget
+// realtime via onSnapshot; ora Postgres-autoritativo, il widget passa a
+// polling breve (nessuna infra WebSocket/SSE in questo repo — vedi
+// components/layout/SpedizioniJobsWidget.tsx). Il bridge esistente propaga
+// comunque verso Firestore per compatibilità Flutter.
+
+export interface SpedizioneJobApi {
+  id: string;
+  Tipo: string;
+  Sede: string | null;
+  ContractIndex: number | null;
+  TotalOrders: number;
+  ProcessedOrders: number;
+  SuccessOrders: number;
+  FailedOrders: number;
+  Failures: unknown[];
+  Status: string;
+  Error: string | null;
+  Marketplace: Record<string, unknown> | null;
+  CreatedBy: string | null;
+  CreatedAt: string | null;
+  FinishedAt: string | null;
+}
+
+function rowToSpedizioneJob(r: Record<string, unknown>): SpedizioneJobApi {
+  return {
+    id: r.id as string,
+    Tipo: (r.tipo as string) ?? "GLS",
+    Sede: (r.sede as string) ?? null,
+    ContractIndex: r.contract_index != null ? Number(r.contract_index) : null,
+    TotalOrders: Number(r.total_orders ?? 0),
+    ProcessedOrders: Number(r.processed_orders ?? 0),
+    SuccessOrders: Number(r.success_orders ?? 0),
+    FailedOrders: Number(r.failed_orders ?? 0),
+    Failures: (r.failures as unknown[]) ?? [],
+    Status: (r.status as string) ?? "running",
+    Error: (r.error as string) ?? null,
+    Marketplace: (r.marketplace as Record<string, unknown>) ?? null,
+    CreatedBy: (r.created_by as string) ?? null,
+    CreatedAt: r.created_at ? (r.created_at as Date).toISOString() : null,
+    FinishedAt: r.finished_at ? (r.finished_at as Date).toISOString() : null,
+  };
+}
+
+export async function getSpedizioneJob(id: string): Promise<SpedizioneJobApi | null> {
+  const db = getDb();
+  if (!db) return null;
+  const { rows } = await db.query(`SELECT * FROM b2b.spedizioni_jobs WHERE id = $1`, [id]);
+  if (!rows[0]) return null;
+  return rowToSpedizioneJob(rows[0]);
+}
+
+export interface CreateSpedizioneJobInput {
+  sede?: string | null;
+  contractIndex?: number | null;
+  totalOrders: number;
+  createdBy?: string | null;
+}
+
+/** @returns id del job appena creato (generato qui, ULID-like). */
+export async function createSpedizioneJob(input: CreateSpedizioneJobInput): Promise<string> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  const id = newId();
+  await pool.query(
+    `INSERT INTO b2b.spedizioni_jobs (id, tipo, sede, contract_index, total_orders, created_by, created_at)
+     VALUES ($1,'GLS',$2,$3,$4,$5,now())`,
+    [id, input.sede ?? null, input.contractIndex ?? null, input.totalOrders, input.createdBy ?? null]
+  );
+  return id;
+}
+
+export interface UpdateSpedizioneJobProgressInput {
+  processedOrders: number;
+  successOrders: number;
+  failedOrders: number;
+  failures: unknown[];
+}
+
+export async function updateSpedizioneJobProgress(id: string, input: UpdateSpedizioneJobProgressInput): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  await pool.query(
+    `UPDATE b2b.spedizioni_jobs
+        SET processed_orders = $1, success_orders = $2, failed_orders = $3, failures = $4, updated_at = now()
+      WHERE id = $5`,
+    [input.processedOrders, input.successOrders, input.failedOrders, JSON.stringify(input.failures), id]
+  );
+}
+
+export interface FinishSpedizioneJobInput {
+  status: string;
+  processedOrders?: number;
+  successOrders?: number;
+  failedOrders?: number;
+  failures?: unknown[];
+  marketplace?: Record<string, unknown>;
+  error?: string;
+}
+
+/** Chiude un job (status "done"/"error") — anche usata per il caso crash
+ *  (status:"error", solo error+status, il resto invariato). */
+export async function finishSpedizioneJob(id: string, input: FinishSpedizioneJobInput): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  await pool.query(
+    `UPDATE b2b.spedizioni_jobs
+        SET status = $1,
+            processed_orders = coalesce($2, processed_orders),
+            success_orders = coalesce($3, success_orders),
+            failed_orders = coalesce($4, failed_orders),
+            failures = coalesce($5, failures),
+            marketplace = coalesce($6, marketplace),
+            error = coalesce($7, error),
+            finished_at = now(),
+            updated_at = now()
+      WHERE id = $8`,
+    [
+      input.status, input.processedOrders ?? null, input.successOrders ?? null, input.failedOrders ?? null,
+      input.failures ? JSON.stringify(input.failures) : null,
+      input.marketplace ? JSON.stringify(input.marketplace) : null,
+      input.error ?? null, id,
+    ]
+  );
 }

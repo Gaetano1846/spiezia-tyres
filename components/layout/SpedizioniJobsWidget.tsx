@@ -1,20 +1,41 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import Link from "next/link";
 import { X, Truck, AlertTriangle, CheckCircle2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { getTrackedJobIds, untrackGlsJob } from "@/lib/gls/jobTracking";
 import type { SpedizioneJob } from "@/lib/types";
+import type { SpedizioneJobApi } from "@/lib/spedizioniDb";
 
 // Widget globale (montato nel layout admin, quindi visibile su ogni pagina
-// /admin/*) che segue live i job di spedizione bulk GLS avviati dall'utente
-// (vedi lib/gls/jobTracking.ts + app/api/gls-italy/route.ts). Permette di
-// navigare tra le pagine mentre la creazione etichette gira in background sul
-// server, mostrando sempre il progresso e — a fine job — quali ordini sono
-// falliti (con link diretto al dettaglio ordine).
+// /admin/*) che segue i job di spedizione bulk GLS avviati dall'utente (vedi
+// lib/gls/jobTracking.ts + app/api/gls-italy/route.ts). Permette di navigare
+// tra le pagine mentre la creazione etichette gira in background sul server,
+// mostrando sempre il progresso e — a fine job — quali ordini sono falliti
+// (con link diretto al dettaglio ordine).
+//
+// Fase 4.3: SpedizioniJobs è ora Postgres-autoritativo (b2b.spedizioni_jobs),
+// niente più onSnapshot realtime (nessuna infra WebSocket/SSE in questo repo)
+// — sostituito con polling breve (1.5s) su GET /api/spedizioni/jobs/[id].
+
+function apiToLocalJob(j: SpedizioneJobApi): SpedizioneJob {
+  return {
+    id: j.id,
+    tipo: "GLS",
+    sede: (j.Sede as SpedizioneJob["sede"]) ?? "Nola",
+    contractIndex: j.ContractIndex ?? 0,
+    totalOrders: j.TotalOrders,
+    processedOrders: j.ProcessedOrders,
+    successOrders: j.SuccessOrders,
+    failedOrders: j.FailedOrders,
+    failures: j.Failures as SpedizioneJob["failures"],
+    status: j.Status as SpedizioneJob["status"],
+    error: j.Error ?? undefined,
+    marketplace: j.Marketplace as SpedizioneJob["marketplace"],
+    createdBy: j.CreatedBy,
+  };
+}
 
 export default function SpedizioniJobsWidget() {
   const [trackedIds, setTrackedIds] = useState<string[]>([]);
@@ -41,18 +62,38 @@ export default function SpedizioniJobsWidget() {
     };
   }, []);
 
-  // Un listener realtime per job tracciato.
+  // Polling per ogni job tracciato (sostituisce onSnapshot, Fase 4.3).
   useEffect(() => {
-    const unsubs = trackedIds.map((jobId) =>
-      onSnapshot(doc(db, "SpedizioniJobs", jobId), (snap) => {
-        if (!snap.exists()) {
-          setJobs((prev) => { const next = { ...prev }; delete next[jobId]; return next; });
-          return;
-        }
-        const job = { id: snap.id, ...(snap.data() as Omit<SpedizioneJob, "id">) };
-        setJobs((prev) => ({ ...prev, [jobId]: job }));
+    if (trackedIds.length === 0) return;
+    let cancelled = false;
 
-        if ((job.status === "done" || job.status === "error") && !notifiedRef.current.has(jobId)) {
+    async function pollOnce() {
+      const results = await Promise.all(
+        trackedIds.map(async (jobId) => {
+          try {
+            const res = await fetch(`/api/spedizioni/jobs/${jobId}`);
+            if (!res.ok) return [jobId, null] as const;
+            const data = (await res.json()) as { job?: SpedizioneJobApi };
+            return [jobId, data.job ? apiToLocalJob(data.job) : null] as const;
+          } catch {
+            return [jobId, null] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+
+      setJobs((prev) => {
+        const next = { ...prev };
+        for (const [jobId, job] of results) {
+          if (job) next[jobId] = job;
+          else delete next[jobId];
+        }
+        return next;
+      });
+
+      for (const [jobId, job] of results) {
+        if (!job || notifiedRef.current.has(jobId)) continue;
+        if (job.status === "done" || job.status === "error") {
           notifiedRef.current.add(jobId);
           if (job.status === "error") {
             toast.error(`Spedizione GLS ${job.sede}: errore — ${job.error ?? "sconosciuto"}`);
@@ -62,9 +103,15 @@ export default function SpedizioniJobsWidget() {
             toast.success(`Spedizione GLS ${job.sede} completata — ${job.successOrders} ordini`);
           }
         }
-      })
-    );
-    return () => unsubs.forEach((u) => u());
+      }
+    }
+
+    pollOnce();
+    const interval = setInterval(pollOnce, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [trackedIds]);
 
   function dismiss(jobId: string) {

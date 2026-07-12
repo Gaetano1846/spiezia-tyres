@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { Timestamp } from "firebase-admin/firestore";
 import { processGlsAction, getAuthByContract, processMultipleOrders, createSpedizioniEntries } from "@/lib/gls/sdk";
 import { processMarketplaceAction } from "@/lib/marketplace/sdk";
 import { getSession, isAdmin } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
+import { createSpedizioneJob, updateSpedizioneJobProgress, finishSpedizioneJob } from "@/lib/spedizioniDb";
+import { updateOrdineStato, appendCronologia } from "@/lib/ordiniDb";
 import type { SessionPayload } from "@/lib/types";
 
 // Sostituto interno della Cloud Function `gls-italy`.
@@ -31,9 +31,9 @@ export async function POST(req: Request) {
 
   // "processMultipleOrders" (creazione bulk etichette) può richiedere molto
   // tempo per batch grandi. Invece di tenere il client in attesa, avviamo un
-  // job Firestore (SpedizioniJobs) e processiamo in background: il client
-  // riceve subito il jobId e può navigare altrove seguendo il progresso live
-  // via onSnapshot (vedi components/admin/SpedizioniJobsWidget.tsx).
+  // job Postgres (b2b.spedizioni_jobs) e processiamo in background: il client
+  // riceve subito il jobId e può navigare altrove seguendo il progresso via
+  // polling (vedi components/layout/SpedizioniJobsWidget.tsx, Fase 4.3).
   if (body.action === "processMultipleOrders") {
     const ordiniIds = Array.isArray(body.ordiniIds) ? (body.ordiniIds as string[]) : [];
     if (ordiniIds.length === 0) {
@@ -53,51 +53,34 @@ async function startBulkShipmentJob(
   ordiniIds: string[],
   session: SessionPayload | null
 ): Promise<string> {
-  const db = adminDb();
-  const jobRef = db.collection("SpedizioniJobs").doc();
-  const now = Timestamp.now();
-
-  await jobRef.set({
-    tipo: "GLS",
+  const jobId = await createSpedizioneJob({
     sede: contractIndex === 0 ? "Nola" : "Roma",
     contractIndex,
     totalOrders: ordiniIds.length,
-    processedOrders: 0,
-    successOrders: 0,
-    failedOrders: 0,
-    failures: [],
-    status: "running",
     createdBy: session?.email ?? null,
-    createdAt: now,
-    updatedAt: now,
   });
 
   // Fire-and-forget: il container Next.js è un processo Node persistente (non
   // serverless), quindi il lavoro continua dopo l'invio della response.
-  runBulkShipmentJob(jobRef.id, contractIndex, ordiniIds).catch((error: unknown) => {
-    console.error(`GLS job ${jobRef.id} crashed:`, error);
-    jobRef.update({
+  runBulkShipmentJob(jobId, contractIndex, ordiniIds).catch((error: unknown) => {
+    console.error(`GLS job ${jobId} crashed:`, error);
+    finishSpedizioneJob(jobId, {
       status: "error",
       error: error instanceof Error ? error.message : "Errore sconosciuto",
-      updatedAt: Timestamp.now(),
     }).catch(() => {});
   });
 
-  return jobRef.id;
+  return jobId;
 }
 
 async function runBulkShipmentJob(jobId: string, contractIndex: number, ordiniIds: string[]): Promise<void> {
-  const db = adminDb();
-  const jobRef = db.collection("SpedizioniJobs").doc(jobId);
-
   const auth = getAuthByContract(contractIndex);
   const batchResult = await processMultipleOrders(auth, ordiniIds, contractIndex, true, async (progress) => {
-    await jobRef.update({
+    await updateSpedizioneJobProgress(jobId, {
       processedOrders: progress.processedCount,
       successOrders: progress.successCount,
       failedOrders: progress.failedCount,
       failures: progress.failures,
-      updatedAt: Timestamp.now(),
     });
   });
 
@@ -126,25 +109,14 @@ async function runBulkShipmentJob(jobId: string, contractIndex: number, ordiniId
   // "In Preparazione" (nel FF: reference.update(stato) subito dopo
   // ProcessMultipleOrdersGLS, PRIMA del push marketplace). Solo gli ordini
   // riusciti — il FF li marcava tutti se la bulk call rispondeva ok, qui
-  // abbiamo l'esito per-ordine e lo usiamo.
+  // abbiamo l'esito per-ordine e lo usiamo. Stesso helper condiviso di ogni
+  // altro cambio-stato manuale (Fase 4.1) — così la voce Cronologia non manca
+  // mai, anche per gli ordini spediti in bulk.
   if (successIds.length) {
-    const statoBatch = db.batch();
     for (const ordineId of successIds) {
-      statoBatch.update(db.collection("Ordini").doc(ordineId), {
-        Stato: "In Preparazione",
-        DataAggiornamento: Timestamp.now(),
-      });
-      // Voce Cronologia per il cambio stato, come per ogni cambio manuale —
-      // altrimenti gli ordini spediti in bulk avrebbero una transizione di
-      // stato senza traccia nello storico.
-      statoBatch.set(db.collection("Ordini").doc(ordineId).collection("Cronologia").doc(), {
-        DataOra: Timestamp.now(),
-        Operatore: "Sistema (spedizione GLS)",
-        Azione: "Stato → In Preparazione",
-        Nota: "",
-      });
+      await updateOrdineStato(ordineId, "In Preparazione");
+      await appendCronologia(ordineId, { azione: "Stato → In Preparazione", operatore: "Sistema (spedizione GLS)" });
     }
-    await statoBatch.commit();
   }
 
   // Mirror FF: dopo la creazione GLS, comunica il tracking ai marketplace
@@ -166,14 +138,12 @@ async function runBulkShipmentJob(jobId: string, contractIndex: number, ordiniId
     }
   }
 
-  await jobRef.update({
+  await finishSpedizioneJob(jobId, {
     status: "done",
     processedOrders: batchResult.summary.ordersProcessed,
     successOrders: batchResult.summary.ordersSuccessful,
     failedOrders: batchResult.summary.ordersFailed,
     failures: batchResult.summary.errors,
     marketplace,
-    finishedAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
   });
 }
