@@ -41,6 +41,10 @@ export interface CronologiaEntryApi {
   Ts: string | null;
   Autore: string | null;
   Testo: string | null;
+  /** Motivo/nota libera associata alla voce (es. motivo annullamento) — campo
+   *  distinto da Testo per compatibilità con l'admin, che mostra Azione e
+   *  Nota su righe separate. Mai una colonna dedicata, vive in fs_extra.Nota. */
+  Nota: string | null;
 }
 
 export interface NoteInternaApi {
@@ -178,6 +182,7 @@ function rowToCronologiaEntry(r: Record<string, unknown>): CronologiaEntryApi {
     Ts: isoOrNull(r.data),
     Autore: (fsExtra.Operatore as string) ?? null,
     Testo: (r.note as string) ?? null,
+    Nota: (fsExtra.Nota as string) ?? null,
   };
 }
 
@@ -577,4 +582,104 @@ export async function createOrdine(input: CreateOrdineInput): Promise<{ id: stri
   } finally {
     client.release();
   }
+}
+
+// ─── Cambio-stato / Cronologia / Note_Interne (Fase 4 migrazione Spedizioni/GLS) ──
+//
+// Prima scrittura Postgres per questo dominio: cambio-stato ordine dall'admin,
+// creazione GLS/chiusura/eliminazione spedizioni. Consolidati qui perché la
+// stessa coppia Stato+Cronologia era duplicata a mano in 3 punti (dettaglio
+// ordine, lista ordini, job bulk GLS) — un'unica funzione condivisa chiude il
+// rischio di drift tra le copie.
+
+export interface UpdateOrdineStatoOpts {
+  motivoAnnullamento?: string | null;
+  glsTrackingNumber?: string | null;
+}
+
+export async function updateOrdineStato(id: string, stato: string, opts: UpdateOrdineStatoOpts = {}): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  await pool.query(
+    `UPDATE core.ordini
+        SET stato = $1,
+            motivo_annullamento = coalesce($2, motivo_annullamento),
+            gls_tracking_number = coalesce($3, gls_tracking_number),
+            updated_at = now()
+      WHERE id = $4`,
+    [stato, opts.motivoAnnullamento ?? null, opts.glsTrackingNumber ?? null, id]
+  );
+}
+
+export interface AppendCronologiaInput {
+  /** Testo principale (es. "Stato → Spedito") — diventa Testo/Evento in lettura. */
+  azione: string;
+  /** Motivo/nota libera opzionale (es. motivo annullamento) — preservata in
+   *  fs_extra.Nota, stesso shape già prodotto dal bridge per le voci storiche
+   *  scritte via Firestore (vedi mapping/ordini.mjs::buildCronologiaRecord). */
+  nota?: string | null;
+  operatore: string;
+  utenteId?: string | null;
+}
+
+export async function appendCronologia(ordineId: string, input: AppendCronologiaInput): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  const fsExtra: Record<string, unknown> = { Operatore: input.operatore };
+  if (input.nota) fsExtra.Nota = input.nota;
+  await pool.query(
+    `INSERT INTO b2b.ordini_cronologia (id, ordine_id, data, utente_id, note, fs_extra)
+     VALUES ($1,$2,now(),$3,$4,$5)`,
+    [newId(), ordineId, input.utenteId ?? null, input.azione, JSON.stringify(fsExtra)]
+  );
+}
+
+export interface AppendNotaInternaInput {
+  testo: string;
+  operatore: string;
+}
+
+export async function appendNotaInterna(ordineId: string, input: AppendNotaInternaInput): Promise<{ id: string; ts: string }> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  const id = newId();
+  const { rows } = await pool.query(
+    `INSERT INTO b2b.ordini_note_interne (id, ordine_id, testo, fs_extra)
+     VALUES ($1,$2,$3,$4)
+     RETURNING created_at`,
+    [id, ordineId, input.testo, JSON.stringify({ Operatore: input.operatore })]
+  );
+  return { id, ts: (rows[0].created_at as Date).toISOString() };
+}
+
+export async function updateOrdineColli(id: string, colli: number, peso: number): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  await pool.query(`UPDATE core.ordini SET colli = $1, peso = $2, updated_at = now() WHERE id = $3`, [colli, peso, id]);
+}
+
+export async function updateOrdineTracking(id: string, trackingNumber: string): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  await pool.query(`UPDATE core.ordini SET gls_tracking_number = $1, updated_at = now() WHERE id = $2`, [trackingNumber, id]);
+}
+
+export async function updateOrdineIndirizzi(
+  id: string,
+  fields: { indirizzoFatturazione?: Record<string, unknown>; indirizzoSpedizione?: Record<string, unknown> }
+): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  await pool.query(
+    `UPDATE core.ordini
+        SET indirizzo_fatturazione = coalesce($1, indirizzo_fatturazione),
+            indirizzo_spedizione = coalesce($2, indirizzo_spedizione),
+            updated_at = now()
+      WHERE id = $3`,
+    [
+      fields.indirizzoFatturazione ? JSON.stringify(fields.indirizzoFatturazione) : null,
+      fields.indirizzoSpedizione ? JSON.stringify(fields.indirizzoSpedizione) : null,
+      id,
+    ]
+  );
 }

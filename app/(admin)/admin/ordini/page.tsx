@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
-  collection, query, orderBy, where,
-  onSnapshot, doc, updateDoc, addDoc, serverTimestamp,
+  collection, query, orderBy, where, onSnapshot, doc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useAuth } from "@/components/layout/AuthProvider";
 import { Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
@@ -286,7 +284,6 @@ export default function OrdiniAdminPage() {
   const [spedendo, setSpedendo] = useState<"Roma" | "Nola" | null>(null);
   const [aggiornandoTracking, setAggiornandoTracking] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const { user } = useAuth();
 
   // I job GLS bulk girano in background: quando uno termina (il widget
   // SpedizioniJobs lo de-traccia emettendo "gls-job-removed") ri-fetchiamo la
@@ -453,16 +450,12 @@ export default function OrdiniAdminPage() {
 
     setSavingStato(docId);
     try {
-      await updateDoc(doc(db, "Ordini", docId), {
-        Stato:             nuovoStato,
-        DataAggiornamento: serverTimestamp(),
+      const res = await fetch(`/api/admin/ordini/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stato", stato: nuovoStato }),
       });
-      await addDoc(collection(db, "Ordini", docId, "Cronologia"), {
-        DataOra:   serverTimestamp(),
-        Operatore: user?.displayName || user?.email || "Operatore",
-        Azione:    `Stato → ${nuovoStato}`,
-        Nota:      "",
-      });
+      if (!res.ok) throw new Error(`Errore ${res.status}`);
       // Aggiornamento ottimistico in lista
       setEntries((prev) =>
         prev.map((e) => e.docId === docId ? { ...e, ordine: { ...e.ordine, Stato: nuovoStato } } : e)
@@ -505,17 +498,12 @@ export default function OrdiniAdminPage() {
     }
     setAnnullando(true);
     try {
-      await updateDoc(doc(db, "Ordini", annullaModal.docId), {
-        Stato:               "Annullato",
-        Motivo_Annullamento: motivo,
-        DataAggiornamento:   serverTimestamp(),
+      const res = await fetch(`/api/admin/ordini/${annullaModal.docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "annulla", motivo }),
       });
-      await addDoc(collection(db, "Ordini", annullaModal.docId, "Cronologia"), {
-        DataOra:   serverTimestamp(),
-        Operatore: user?.displayName || user?.email || "Operatore",
-        Azione:    "Stato → Annullato",
-        Nota:      motivo,
-      });
+      if (!res.ok) throw new Error(`Errore ${res.status}`);
       setEntries((prev) =>
         prev.map((e) => e.docId === annullaModal.docId
           ? { ...e, ordine: { ...e.ordine, Stato: "Annullato", Motivo_Annullamento: motivo } }

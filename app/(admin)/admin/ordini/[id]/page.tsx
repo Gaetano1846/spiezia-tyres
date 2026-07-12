@@ -3,12 +3,10 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
-  doc, getDoc, collection, getDocs, query, orderBy,
-  updateDoc, addDoc, serverTimestamp, Timestamp,
+  doc, getDoc, Timestamp,
   type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useAuth } from "@/components/layout/AuthProvider";
 import {
   ChevronRight, ArrowLeft, Printer, Mail, XCircle, ExternalLink,
   Plus, Send, CheckCircle2, Package, Truck, Clock, RotateCcw,
@@ -22,22 +20,32 @@ import { trackGlsJob } from "@/lib/gls/jobTracking";
 import type { Ordine, OrdineStato, SpeseExtra } from "@/lib/types";
 import type { OrdineApi } from "@/lib/ordiniDb";
 
-// Cronologia/Note_Interne restano su Firestore in questa pagina (vedi
-// commento sul fetch principale) — DataOra/DataCreazione sono Timestamp reali.
+// Cronologia/Note_Interne ora lette (e scritte via PATCH/POST server-side, Fase
+// 4 migrazione Spedizioni/GLS) da core.ordini/b2b.ordini_cronologia/
+// b2b.ordini_note_interne — stesso backend dell'ordine, zero ritardo di
+// propagazione bridge tra scrittura e rilettura.
 type CronologiaEntry = {
   id: string;
-  DataOra: Timestamp;
-  Operatore: string;
+  DataOra: string | null;
+  Operatore?: string | null;
   Azione: string;
-  Nota?: string;
+  Nota?: string | null;
 };
 
 type NotaInterna = {
   id: string;
-  DataCreazione: Timestamp;
+  DataCreazione: string | null;
   Testo: string;
-  Operatore: string;
+  Operatore?: string | null;
 };
+
+function apiToLocalCronologia(entries: OrdineApi["Cronologia"]): CronologiaEntry[] {
+  return entries.map((c) => ({ id: c.id, DataOra: c.Ts, Operatore: c.Autore, Azione: c.Testo ?? "", Nota: c.Nota }));
+}
+
+function apiToLocalNote(entries: OrdineApi["NoteInterne"]): NotaInterna[] {
+  return entries.map((n) => ({ id: n.id, DataCreazione: n.Ts, Testo: n.Testo ?? "", Operatore: n.Autore }));
+}
 
 // core.ordini è già alimentato in tempo reale dal bridge (bidirezionale con
 // Firestore) — qui adattiamo la forma Postgres alla forma Ordine già attesa
@@ -298,7 +306,6 @@ function AddressCard({ title, view, onEdit }: { title: string; view: IndirizzoVi
 export default function OrdineAdminDetailPage() {
   const params  = useParams();
   const id      = params.id as string;
-  const { user } = useAuth();
 
   const [ordine,      setOrdine]      = useState<Ordine | null>(null);
   const [cronologia,  setCronologia]  = useState<CronologiaEntry[]>([]);
@@ -330,11 +337,10 @@ export default function OrdineAdminDetailPage() {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        // Ordine: da Postgres (core.ordini, già allineato in tempo reale dal
-        // bridge). Cronologia/Note_Interne restano su Firestore qui sotto —
-        // questa pagina le riscrive e rilegge nello STESSO flusso subito dopo
-        // ogni azione, e passare a Postgres introdurrebbe un ritardo di
-        // propagazione del bridge tra scrittura e rilettura.
+        // Ordine + Cronologia + Note_Interne: tutto da Postgres (core.ordini/
+        // b2b.ordini_cronologia/b2b.ordini_note_interne), stesso backend delle
+        // scritture (Fase 4) — zero ritardo di propagazione bridge tra
+        // scrittura e rilettura.
         const res = await fetch(`/api/admin/ordini/${id}`);
         const data = await res.json().catch(() => null) as { ordine?: OrdineApi; error?: string } | null;
         if (!res.ok || !data?.ordine) {
@@ -344,6 +350,8 @@ export default function OrdineAdminDetailPage() {
         const o = apiToLocalOrdine(data.ordine);
         setOrdine(o);
         setTracking(o.GLS_TrackingNumber ?? "");
+        setCronologia(apiToLocalCronologia(data.ordine.Cronologia));
+        setNote(apiToLocalNote(data.ordine.NoteInterne));
 
         // Colli / Peso: valori salvati sull'ordine oppure default (somma quantità · ×5)
         const arts0 = (o.Articoli ?? []) as Record<string, unknown>[];
@@ -384,13 +392,6 @@ export default function OrdineAdminDetailPage() {
             });
           });
         }
-
-        const [cronSnap, noteSnap] = await Promise.all([
-          getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc"))),
-          getDocs(query(collection(db, "Ordini", id, "Note_Interne"), orderBy("DataCreazione", "desc"))),
-        ]);
-        setCronologia(cronSnap.docs.map((d) => ({ id: d.id, ...d.data() } as CronologiaEntry)));
-        setNote(noteSnap.docs.map((d) => ({ id: d.id, ...d.data() } as NotaInterna)));
 
         const ref = o.Cliente ?? o.Utente;
         if (ref) {
@@ -465,28 +466,22 @@ export default function OrdineAdminDetailPage() {
     }
     setSavingStato(true);
     try {
-      const updatePayload: Record<string, unknown> = {
-        Stato: nuovoStato,
-        DataAggiornamento: serverTimestamp(),
-      };
       // Se il tracking è stato digitato ma non ancora salvato, persistilo qui:
-      // il push marketplace (pushTracking) rilegge GLS_TrackingNumber da
-      // Firestore e altrimenti invierebbe un parcel number vuoto.
-      if (nuovoStato === "Spedito" && trackingTyped && trackingTyped !== trackingSaved) {
-        updatePayload.GLS_TrackingNumber = trackingTyped;
-      }
-      await updateDoc(doc(db, "Ordini", id), updatePayload);
-      await addDoc(collection(db, "Ordini", id, "Cronologia"), {
-        DataOra:   serverTimestamp(),
-        Operatore: user?.displayName || user?.email || "Operatore",
-        Azione:    `Stato → ${nuovoStato}`,
-        Nota:      "",
+      // il push marketplace (pushTracking) rilegge GLS_TrackingNumber e
+      // altrimenti invierebbe un parcel number vuoto.
+      const glsTrackingNumber = nuovoStato === "Spedito" && trackingTyped && trackingTyped !== trackingSaved
+        ? trackingTyped
+        : undefined;
+      const res = await fetch(`/api/admin/ordini/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stato", stato: nuovoStato, glsTrackingNumber }),
       });
-      const persistedTracking = updatePayload.GLS_TrackingNumber as string | undefined;
-      setOrdine({ ...ordine, Stato: nuovoStato, ...(persistedTracking ? { GLS_TrackingNumber: persistedTracking } : {}) });
-      if (persistedTracking) setTracking(persistedTracking);
-      const newCron = await getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc")));
-      setCronologia(newCron.docs.map((d) => ({ id: d.id, ...d.data() } as CronologiaEntry)));
+      const data = await res.json().catch(() => null) as { ordine?: OrdineApi; error?: string } | null;
+      if (!res.ok || !data?.ordine) throw new Error(data?.error || `Errore ${res.status}`);
+      setOrdine({ ...ordine, Stato: nuovoStato, ...(glsTrackingNumber ? { GLS_TrackingNumber: glsTrackingNumber } : {}) });
+      if (glsTrackingNumber) setTracking(glsTrackingNumber);
+      setCronologia(apiToLocalCronologia(data.ordine.Cronologia));
       toast.success(`Stato: ${nuovoStato}`);
 
       // ── Side-effect marketplace automatico (mirror FF stato_ordine) ──
@@ -519,12 +514,15 @@ export default function OrdineAdminDetailPage() {
     if (!nuovaNota.trim() || savingNota) return;
     setSavingNota(true);
     try {
-      const ref = await addDoc(collection(db, "Ordini", id, "Note_Interne"), {
-        DataCreazione: serverTimestamp(),
-        Testo:     nuovaNota.trim(),
-        Operatore: user?.displayName || user?.email || "Operatore",
+      const testo = nuovaNota.trim();
+      const res = await fetch(`/api/admin/ordini/${id}/note-interne`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testo }),
       });
-      setNote([{ id: ref.id, DataCreazione: Timestamp.now(), Testo: nuovaNota.trim(), Operatore: user?.displayName || "" }, ...note]);
+      const data = await res.json().catch(() => null) as { id?: string; ts?: string; testo?: string; operatore?: string; error?: string } | null;
+      if (!res.ok || !data?.id) throw new Error(data?.error || `Errore ${res.status}`);
+      setNote([{ id: data.id, DataCreazione: data.ts ?? null, Testo: testo, Operatore: data.operatore }, ...note]);
       setNuovaNota("");
       toast.success("Nota salvata");
     } catch {
@@ -538,7 +536,12 @@ export default function OrdineAdminDetailPage() {
     if (!ordine || savingTracking) return;
     setSavingTracking(true);
     try {
-      await updateDoc(doc(db, "Ordini", id), { GLS_TrackingNumber: tracking });
+      const res = await fetch(`/api/admin/ordini/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "tracking", trackingNumber: tracking }),
+      });
+      if (!res.ok) throw new Error(`Errore ${res.status}`);
       setOrdine({ ...ordine, GLS_TrackingNumber: tracking });
 
       // AdTyres sync — push il tracking appena salvato (lib/marketplace/sdk.js
@@ -567,7 +570,12 @@ export default function OrdineAdminDetailPage() {
     const colliSafe = Number.isNaN(colliVal) ? 0 : colliVal;
     const pesoSafe  = Number.isNaN(pesoVal)  ? 0 : pesoVal;
     try {
-      await updateDoc(doc(db, "Ordini", id), { Colli: colliSafe, Peso: pesoSafe });
+      const res = await fetch(`/api/admin/ordini/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "colli", colli: colliSafe, peso: pesoSafe }),
+      });
+      if (!res.ok) throw new Error(`Errore ${res.status}`);
       setOrdine((o) => o ? { ...o, Colli: colliSafe, Peso: pesoSafe } : o);
       setColli(String(colliSafe));
       setPeso(String(pesoSafe));
@@ -717,20 +725,15 @@ export default function OrdineAdminDetailPage() {
     }
     setAnnullando(true);
     try {
-      await updateDoc(doc(db, "Ordini", id), {
-        Stato:               "Annullato",
-        Motivo_Annullamento: motivo,
-        DataAggiornamento:   serverTimestamp(),
+      const res = await fetch(`/api/admin/ordini/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "annulla", motivo }),
       });
-      await addDoc(collection(db, "Ordini", id, "Cronologia"), {
-        DataOra:   serverTimestamp(),
-        Operatore: user?.displayName || user?.email || "Operatore",
-        Azione:    "Stato → Annullato",
-        Nota:      motivo,
-      });
+      const data = await res.json().catch(() => null) as { ordine?: OrdineApi; error?: string } | null;
+      if (!res.ok || !data?.ordine) throw new Error(data?.error || `Errore ${res.status}`);
       setOrdine({ ...ordine, Stato: "Annullato", Motivo_Annullamento: motivo });
-      const newCron = await getDocs(query(collection(db, "Ordini", id, "Cronologia"), orderBy("DataOra", "asc")));
-      setCronologia(newCron.docs.map((d) => ({ id: d.id, ...d.data() } as CronologiaEntry)));
+      setCronologia(apiToLocalCronologia(data.ordine.Cronologia));
       setAnnullaOpen(false);
       setMotivoAnnulla("");
       toast.success("Ordine annullato");
@@ -744,14 +747,16 @@ export default function OrdineAdminDetailPage() {
   async function handleSaveAddr() {
     if (!editingAddr || savingAddr) return;
     setSavingAddr(true);
-    // Scriviamo sia camelCase (ordini nuovi / app) sia snake_case (ordini storici /
-    // marketplace / email CF / PDF) così l'indirizzo resta visibile ovunque.
-    const camel = editingAddr === "fatturazione" ? "IndirizzoFatturazione"  : "IndirizzoSpedizione";
-    const snake = editingAddr === "fatturazione" ? "Indirizzo_Fatturazione" : "Indirizzo_Spedizione";
+    const camel = editingAddr === "fatturazione" ? "IndirizzoFatturazione" : "IndirizzoSpedizione";
     try {
-      await updateDoc(doc(db, "Ordini", id), { [camel]: addrForm, [snake]: addrForm });
+      const res = await fetch(`/api/admin/ordini/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "indirizzo", tipo: editingAddr, valore: addrForm }),
+      });
+      if (!res.ok) throw new Error(`Errore ${res.status}`);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setOrdine((o) => o ? { ...o, [camel]: addrForm, [snake]: addrForm } as any : o);
+      setOrdine((o) => o ? { ...o, [camel]: addrForm } as any : o);
       setEditingAddr(null);
       toast.success("Indirizzo aggiornato");
     } catch {
