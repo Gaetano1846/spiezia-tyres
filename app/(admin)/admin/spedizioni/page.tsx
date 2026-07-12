@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import { Truck, Search, Printer, Eye, RefreshCw, X, ChevronDown, SlidersHorizontal, CalendarDays, Trash2, MapPin, Send, Share2 } from "lucide-react";
 import StatCard from "@/components/ui/StatCard";
@@ -487,14 +485,16 @@ export default function SpedizioniPage() {
       return;
     }
 
-    // GLS: leggo GLS_PdfUrl dall'Ordine collegato (stesso comportamento del Flutter)
+    // GLS: leggo GlsPdfUrl dall'Ordine collegato (core.ordini, Fase 4 — stesso
+    // comportamento del Flutter, ora da Postgres invece di Firestore diretto)
     if (!r.OrdineId) { toast.error("Ordine collegato non trovato"); return; }
     const toastId = toast.loading("Recupero etichetta GLS…");
     try {
-      const ordineSnap = await getDoc(doc(db, "Ordini", r.OrdineId));
-      if (!ordineSnap.exists()) throw new Error("Ordine non trovato");
-      const pdfUrl = (ordineSnap.data() as Record<string, unknown>).GLS_PdfUrl as string | undefined;
-      if (!pdfUrl) throw new Error("GLS_PdfUrl non disponibile su questo ordine");
+      const res = await fetch(`/api/admin/ordini/${r.OrdineId}`);
+      const data = await res.json().catch(() => null) as { ordine?: { GlsPdfUrl?: string | null }; error?: string } | null;
+      if (!res.ok || !data?.ordine) throw new Error(data?.error || "Ordine non trovato");
+      const pdfUrl = data.ordine.GlsPdfUrl;
+      if (!pdfUrl) throw new Error("GlsPdfUrl non disponibile su questo ordine");
       window.open(pdfUrl, "_blank");
       toast.dismiss(toastId);
     } catch (err) {
