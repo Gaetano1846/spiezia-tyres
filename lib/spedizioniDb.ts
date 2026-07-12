@@ -1,15 +1,10 @@
-// Accesso Postgres al dominio Spedizioni (Fase 6 — cutover app→Postgres),
-// SOLO lettura lista/KPI + assegnazione sede magazzino (scrittura pura,
-// nessuna Cloud Function coinvolta).
-//
-// Tutto il resto della pagina admin/spedizioni (chiudi manifesto GLS/SDA,
-// elimina spedizioni GLS, rigenera etichette, push tracking marketplace,
-// stampa etichetta) resta VOLUTAMENTE Firestore/Cloud-Function diretto: sono
-// tutte operazioni che toccano il dominio Ordini/GLS/pagamenti, il più a
-// rischio di tutto il progetto ed esplicitamente escluso dalla migrazione
-// fin dal piano iniziale. b2b.spedizioni è scritta anche da lib/gls/sdk.js
-// (Admin SDK diretto su Firestore) — il bridge la sincronizza qui senza che
-// quel modulo debba cambiare (vedi commento in mapping/spedizioni.mjs).
+// Accesso Postgres al dominio Spedizioni. Lettura lista/KPI + assegnazione
+// sede magazzino da Fase 6; da Fase 4 (migrazione Spedizioni/GLS) anche
+// createSpedizioniEntries/updateSpedizioniStatus, usate da lib/gls/sdk.js
+// per le spedizioni GLS reali (creazione/chiusura/eliminazione) — prima
+// scritte Firestore-diretto, il dominio a più alto rischio del progetto
+// (tocca spedizioni fatturate da GLS). Il bridge esistente propaga verso
+// Firestore per il CRM Flutter legacy.
 
 import { getDb } from "@/lib/db";
 
@@ -95,4 +90,87 @@ export async function setSpedizioniWarehouse(ids: string[], sedeId: string): Pro
     `UPDATE b2b.spedizioni SET warehouse_sede_id = $2, warehouse_status = 'In Preparazione' WHERE id = ANY($1)`,
     [ids, sedeId]
   );
+}
+
+// ─── Scrittura spedizioni GLS (Fase 4 migrazione Spedizioni/GLS) ──────────────
+
+export interface CreateSpedizioneInput {
+  /** Numero spedizione GLS — diventa sia id che parcel_id. */
+  parcelId: string;
+  ordineId?: string | null;
+  /** BDA (order.ID lato Firestore storico). */
+  orderIdExt?: string | null;
+  destinationName?: string | null;
+  contractIndex?: number | null;
+  corriere: string;
+  dataString: string;
+  status: string;
+  warehouseStatus?: string | null;
+  source: string;
+  /** Payload grezzo del risultato GLS (pr) — colonna dedicata, mai fs_extra
+   *  (bug storico nel bridge Firestore-diretto, corretto in Fase 4.0). */
+  raw?: Record<string, unknown>;
+}
+
+/** Crea una riga b2b.spedizioni per ogni collo appena creato su GLS —
+ *  equivalente esatto di createSpedizioniEntries (lib/gls/sdk.js, versione
+ *  Firestore-diretta pre-Fase 4). */
+export async function createSpedizioniEntries(entries: CreateSpedizioneInput[]): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  if (entries.length === 0) return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const e of entries) {
+      await client.query(
+        `INSERT INTO b2b.spedizioni
+           (id, parcel_id, ordine_id, order_id_ext, destination_name, contract_index, corriere,
+            data_string, status, warehouse_status, source, raw, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          e.parcelId, e.parcelId, e.ordineId ?? null, e.orderIdExt ?? null, e.destinationName ?? null,
+          e.contractIndex ?? null, e.corriere, e.dataString, e.status, e.warehouseStatus ?? null,
+          e.source, JSON.stringify(e.raw ?? {}),
+        ]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export interface SpedizioneStatusResult {
+  parcelId: string;
+  [key: string]: unknown;
+}
+
+/** Aggiorna lo stato di un lotto di spedizioni — closeInfo è l'intero
+ *  risultato per-collo (stesso shape dell'originale Firestore-diretto:
+ *  `closeInfo: r`, non solo il campo success). */
+export async function updateSpedizioniStatus(results: SpedizioneStatusResult[], newStatus: string): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  if (results.length === 0) return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const r of results) {
+      await client.query(
+        `UPDATE b2b.spedizioni SET status = $1, close_info = $2, updated_at = now() WHERE id = $3`,
+        [newStatus, JSON.stringify(r), r.parcelId]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }

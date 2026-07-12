@@ -86,6 +86,10 @@ export interface OrdineApi extends OrdineListItemApi {
   Colli: number | null;
   Peso: number | null;
   GlsPdfUrl: string | null;
+  /** BDA per le spedizioni GLS (external_order_id) — sempre popolato,
+   *  indipendente dalla sorgente (checkout/importer/Flutter). */
+  ExternalOrderId: string | null;
+  GlsContractIndex: number | null;
   PdfUrl: string | null;
   Note: string | null;
   MotivoAnnullamento: string | null;
@@ -107,7 +111,8 @@ const LIST_COLS = `o.id, o.numero, o.source, o.stato, o.cliente_id, o.utente_id,
 
 const DETAIL_COLS = `${LIST_COLS}, o.sede_id, o.iva, o.pfu, o.sconto_totale, o.contributo_logistico,
   o.pagamento, o.indirizzo_fatturazione, o.indirizzo_spedizione, o.colli, o.peso,
-  o.gls_pdf_url, o.pdf_url, o.note, o.motivo_annullamento, o.fs_extra`;
+  o.gls_pdf_url, o.external_order_id, o.gls_contract_index,
+  o.pdf_url, o.note, o.motivo_annullamento, o.fs_extra`;
 
 function isoOrNull(v: unknown): string | null {
   if (!v) return null;
@@ -147,6 +152,8 @@ function rowToOrdine(r: Record<string, unknown>): OrdineApi {
     Colli: r.colli != null ? Number(r.colli) : null,
     Peso: r.peso != null ? Number(r.peso) : null,
     GlsPdfUrl: (r.gls_pdf_url as string) ?? null,
+    ExternalOrderId: (r.external_order_id as string) ?? null,
+    GlsContractIndex: r.gls_contract_index != null ? Number(r.gls_contract_index) : null,
     PdfUrl: (r.pdf_url as string) ?? null,
     Note: (r.note as string) ?? null,
     MotivoAnnullamento: (r.motivo_annullamento as string) ?? null,
@@ -680,6 +687,42 @@ export async function updateOrdineIndirizzi(
       fields.indirizzoFatturazione ? JSON.stringify(fields.indirizzoFatturazione) : null,
       fields.indirizzoSpedizione ? JSON.stringify(fields.indirizzoSpedizione) : null,
       id,
+    ]
+  );
+}
+
+export interface UpdateOrdineGlsInput {
+  stato?: string;
+  glsTrackingNumber?: string | null;
+  glsPdfUrl?: string | null;
+  glsContractIndex?: number | null;
+  corriere?: string | null;
+  /** Merge shallow in fs_extra (jsonb ||) — per i campi GLS_ e ZPL_ senza
+   *  colonna dedicata (GLS_Tracking, GLS_Status, ZPL_Labels, ecc.), stesso
+   *  nome esatto usato dal writer Firestore storico (mapping/ordini.mjs li
+   *  passa già così com'è nel catch-all fs_extra). Il merge via || invece
+   *  di un replace JS evita una race persa tra scritture ravvicinate sullo
+   *  stesso ordine (es. processOrderParcels seguito a ruota da processOrderZpl). */
+  fsExtraMerge?: Record<string, unknown>;
+}
+
+export async function updateOrdineGls(id: string, input: UpdateOrdineGlsInput): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  await pool.query(
+    `UPDATE core.ordini
+        SET stato = coalesce($1, stato),
+            gls_tracking_number = coalesce($2, gls_tracking_number),
+            gls_pdf_url = coalesce($3, gls_pdf_url),
+            gls_contract_index = coalesce($4, gls_contract_index),
+            corriere = coalesce($5, corriere),
+            fs_extra = fs_extra || $6::jsonb,
+            updated_at = now()
+      WHERE id = $7`,
+    [
+      input.stato ?? null, input.glsTrackingNumber ?? null, input.glsPdfUrl ?? null,
+      input.glsContractIndex ?? null, input.corriere ?? null,
+      JSON.stringify(input.fsExtraMerge ?? {}), id,
     ]
   );
 }
