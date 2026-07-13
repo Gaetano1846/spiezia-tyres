@@ -53,7 +53,11 @@ export async function POST(req: NextRequest) {
             { ip: req.headers.get("x-forwarded-for") ?? undefined, userAgent: req.headers.get("user-agent") ?? undefined },
           );
           if (token) {
-            const res = NextResponse.json({ ok: true, Ruolo: user.Ruolo, CRM: user.CRM, backend: "pg" });
+            // token nel body: consumato dai client nativi (app Flutter) che non
+            // possono gestire un cookie jar e mandano Authorization: Bearer <token>
+            // su ogni richiesta successiva (vedi lib/auth.ts::getSession). Il
+            // browser continua a usare il Set-Cookie, ignora questo campo extra.
+            const res = NextResponse.json({ ok: true, Ruolo: user.Ruolo, CRM: user.CRM, backend: "pg", token });
             res.headers.append("Set-Cookie", buildSessionCookie(token));
             res.headers.append("Set-Cookie", buildRoleCookie(user.Ruolo, user.CRM));
             return res;
@@ -130,7 +134,7 @@ export async function POST(req: NextRequest) {
             { ip: req.headers.get("x-forwarded-for") ?? undefined, userAgent: req.headers.get("user-agent") ?? undefined },
           );
           if (token) {
-            const res = NextResponse.json({ ok: true, Ruolo: pgUser.Ruolo, CRM: pgUser.CRM, backend: "pg" });
+            const res = NextResponse.json({ ok: true, Ruolo: pgUser.Ruolo, CRM: pgUser.CRM, backend: "pg", token });
             res.headers.append("Set-Cookie", buildSessionCookie(token));
             res.headers.append("Set-Cookie", buildRoleCookie(pgUser.Ruolo, pgUser.CRM));
             return res;

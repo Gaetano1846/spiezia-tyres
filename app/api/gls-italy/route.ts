@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { processGlsAction, getAuthByContract, processMultipleOrders, createSpedizioniEntries } from "@/lib/gls/sdk";
 import { processMarketplaceAction } from "@/lib/marketplace/sdk";
-import { getSession, isAdmin } from "@/lib/auth";
+import { getSession, isAdmin, isMagazzino } from "@/lib/auth";
 import { createSpedizioneJob, updateSpedizioneJobProgress, finishSpedizioneJob } from "@/lib/spedizioniDb";
 import { updateOrdineStato, appendCronologia } from "@/lib/ordiniDb";
 import type { SessionPayload } from "@/lib/types";
@@ -15,18 +15,22 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300; // le creazioni GLS + PDF + upload possono richiedere tempo
 
 export async function POST(req: Request) {
-  // La vecchia CF era pubblica (CORS *). Qui invece crea spedizioni reali:
-  // la proteggiamo richiedendo una sessione admin.
-  const session = await getSession();
-  if (!isAdmin(session)) {
-    return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
-  }
-
   let body: Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // La vecchia CF era pubblica (CORS *). Qui invece la maggior parte delle
+  // azioni crea/chiude/elimina spedizioni reali fatturate da GLS: le
+  // proteggiamo richiedendo una sessione admin. "getZplBySped" fa eccezione:
+  // è una lettura (ZPL di una spedizione già creata), usata dall'app Flutter
+  // magazzino per la stampa etichette — il personale di magazzino non è admin.
+  const session = await getSession();
+  const authorized = body.action === "getZplBySped" ? isMagazzino(session) : isAdmin(session);
+  if (!authorized) {
+    return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
 
   // "processMultipleOrders" (creazione bulk etichette) può richiedere molto

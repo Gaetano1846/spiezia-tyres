@@ -11,6 +11,60 @@ export interface CreateRappresentanteInput {
   Password: string;
 }
 
+export interface UtenteProfile {
+  uid: string;
+  email: string | null;
+  display_name: string | null;
+  photo_url: string | null;
+  phone_number: string | null;
+  Ruolo: string | null;
+  CRM: boolean;
+  Sede: string | null;
+  Reparto: string | null;
+  Mansione: string | null;
+  Cliente: boolean;
+  Rappresentante: string | null;
+  Blocco: boolean;
+  PrinterMAC: string | null;
+  created_time: string | null;
+}
+
+/**
+ * Profilo esteso dell'utente autenticato (per client nativi senza accesso
+ * diretto al doc Firestore `users/{uid}`, es. app Flutter magazzino).
+ * Campi non mappati su colonne dedicate (PrinterMAC, Cliente, Blocco,
+ * Rappresentante) vivono in core.utenti.fs_extra — vedi mapping/utenti.mjs.
+ */
+export async function getUtenteProfile(id: string): Promise<UtenteProfile | null> {
+  const db = getDb();
+  if (!db) return null;
+  const { rows } = await db.query(
+    `SELECT id, email, display_name, photo_url, telefono, ruolo, crm, sede_id, reparto_id, mansione_id, fs_extra, created_at
+       FROM core.utenti WHERE id = $1`,
+    [id]
+  );
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  const extra = (r.fs_extra ?? {}) as Record<string, unknown>;
+  return {
+    uid: r.id,
+    email: r.email ?? null,
+    display_name: r.display_name ?? null,
+    photo_url: r.photo_url ?? null,
+    phone_number: r.telefono ?? null,
+    Ruolo: r.ruolo ?? null,
+    CRM: Boolean(r.crm),
+    Sede: r.sede_id ?? null,
+    Reparto: r.reparto_id ?? null,
+    Mansione: r.mansione_id ?? null,
+    Cliente: extra.Cliente === true,
+    Rappresentante: typeof extra.Rappresentante === "string" ? extra.Rappresentante : null,
+    Blocco: extra.Blocco === true,
+    PrinterMAC: typeof extra.PrinterMAC === "string" ? extra.PrinterMAC : null,
+    created_time: r.created_at ? new Date(r.created_at).toISOString() : null,
+  };
+}
+
 /** Crea un account Rappresentante. Ritorna null se l'email esiste già. */
 export async function createRappresentante(
   input: CreateRappresentanteInput

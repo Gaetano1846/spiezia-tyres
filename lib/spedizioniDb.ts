@@ -42,6 +42,31 @@ function rowToSpedizione(r: Record<string, unknown>): SpedizioneApi {
   };
 }
 
+/** Lista spedizioni per sede magazzino — sostituisce querySpedizioniRecord
+ *  (app Flutter, screen Ordini/Old_Ordini) che filtrava per warehouseSede.
+ *  Distinta da listSpedizioni (filtro per data, uso admin). */
+export async function listSpedizioniPerSede(sedeId: string, status?: string, limit = 500): Promise<SpedizioneApi[]> {
+  const db = getDb();
+  if (!db) return [];
+  const params: unknown[] = [sedeId];
+  let statusClause = "";
+  if (status) {
+    params.push(status);
+    statusClause = `AND s.warehouse_status = $${params.length}`;
+  }
+  params.push(limit);
+  const { rows } = await db.query(
+    `SELECT s.*, sede.nome AS sede_nome
+       FROM b2b.spedizioni s
+       LEFT JOIN core.sedi sede ON sede.id = s.warehouse_sede_id
+      WHERE s.warehouse_sede_id = $1 ${statusClause}
+      ORDER BY s.created_at DESC
+      LIMIT $${params.length}`,
+    params
+  );
+  return rows.map(rowToSpedizione);
+}
+
 export async function listSpedizioni(dataDaIso: string, dataAIso: string, limit = 2000): Promise<{ rows: SpedizioneApi[]; capped: boolean }> {
   const db = getDb();
   if (!db) return { rows: [], capped: false };
@@ -301,4 +326,92 @@ export async function finishSpedizioneJob(id: string, input: FinishSpedizioneJob
       input.error ?? null, id,
     ]
   );
+}
+
+// ─── Azioni operatore magazzino (app Flutter "Spiezia Tyres", Fase M) ─────────
+//
+// Mirror esatto della sequenza scritta prima Firestore-diretto da
+// ordini_widget.dart/old_ordini_widget.dart (ApproveTyreWidget.action e il
+// pulsante Annulla): stessa sequenza esatta di scritture, solo il backend
+// cambia (Postgres in transazione invece di updateDoc client-side seriali).
+
+export interface ApprovaArticoloInput {
+  ordineId: string;
+  spedizioneId: string;
+  /** RefPath dell'articolo in core.ordine_articoli (colonna ref_path), es. "Prodotti/<id>". */
+  refPath: string;
+  quantita: number;
+  utenteId: string | null;
+  gabbiaId?: string | null;
+}
+
+/** Approva un articolo (trovato in gabbia) → ordine "Spedito" + spedizione
+ *  warehouseStatus "Spedito" + log movimento magazzino. Stesso comportamento
+ *  dell'originale FlutterFlow: ogni approvazione articolo flippa l'intero
+ *  ordine/spedizione a Spedito (non solo l'ultimo articolo), non è una
+ *  scelta di questa migrazione; l'azione log è testualmente "Ha rimosso"
+ *  nell'originale (mirror esatto, non un'etichetta scelta qui). */
+export async function approvaArticoloSpedizione(input: ApprovaArticoloInput): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE core.ordine_articoli SET fs_extra = fs_extra || '{"trovata":true}'::jsonb
+        WHERE ordine_id = $1 AND ref_path = $2`,
+      [input.ordineId, input.refPath]
+    );
+    await client.query(`UPDATE core.ordini SET stato = 'Spedito', updated_at = now() WHERE id = $1`, [input.ordineId]);
+    await client.query(
+      `UPDATE b2b.spedizioni SET warehouse_status = 'Spedito', updated_at = now() WHERE id = $1`,
+      [input.spedizioneId]
+    );
+    const prodottoId = input.refPath.split("/")[1] ?? null;
+    await client.query(
+      `INSERT INTO b2b.logs_magazzino (id, data, utente_id, azione, quantita, prodotto_id, gabbia_id)
+       VALUES ($1, now(), $2, 'Ha rimosso', $3, $4, $5)`,
+      [newId(), input.utenteId, input.quantita, prodottoId, input.gabbiaId ?? null]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export interface AnnullaSpedizioneInput {
+  spedizioneId: string;
+  ordineId: string;
+  motivo: string;
+  note?: string | null;
+}
+
+/** Annulla una spedizione dal magazzino → warehouseStatus "Annullato" +
+ *  notifica per gli operatori (stesso testo dell'originale Firestore). */
+export async function annullaSpedizioneMagazzino(input: AnnullaSpedizioneInput): Promise<void> {
+  const pool = getDb();
+  if (!pool) throw new Error("Postgres non configurato");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE b2b.spedizioni SET warehouse_status = 'Annullato', motivo_annullamento = $1,
+          note_aggiuntive = $2, updated_at = now() WHERE id = $3`,
+      [input.motivo, input.note ?? null, input.spedizioneId]
+    );
+    await client.query(
+      `INSERT INTO b2b.notifiche (id, testo, ordine_id, spedizione_id, visto, created_at)
+       VALUES ($1, $2, $3, $4, false, now())`,
+      [newId(), `Spedizione ${input.spedizioneId} è stata annullata.`, input.ordineId, input.spedizioneId]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }

@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { clearCookies } from "@/lib/auth";
 import { revokePgSession } from "@/lib/spiezia-auth/session";
 
 export const runtime = "nodejs";
 
-// Revoca la sessione PG (se il cookie è un token sp1_) prima di cancellare i
-// cookie, così il token non resta valido lato server.
+// Revoca la sessione PG prima di cancellare i cookie, così il token non
+// resta valido lato server. Client nativi (app Flutter) non hanno un cookie
+// jar: mandano il token via Authorization: Bearer, stesso ordine di verifica
+// di getSession() (lib/auth.ts).
 async function revokeCurrent() {
+  const authHeader = (await headers()).get("authorization") ?? "";
+  if (authHeader.toLowerCase().startsWith("bearer ")) {
+    await revokePgSession(authHeader.slice(7).trim());
+    return;
+  }
   const store = await cookies();
   await revokePgSession(store.get("spiezia_session")?.value);
 }

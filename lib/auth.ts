@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { timingSafeEqual, createHmac } from "node:crypto";
 import type { SessionPayload, Ruolo } from "@/lib/types";
 import { getPgSession, PG_TOKEN_PREFIX } from "@/lib/spiezia-auth/session";
@@ -20,6 +20,14 @@ function isAdminConfigured(): boolean {
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
+  // ── Bearer token (client nativo senza cookie jar, es. app Flutter magazzino) ──
+  // Se presente, è l'UNICO path considerato: fail-closed, nessun fallback cookie.
+  const authHeader = (await headers()).get("authorization") ?? "";
+  if (authHeader.toLowerCase().startsWith("bearer ")) {
+    const token = authHeader.slice(7).trim();
+    return token.startsWith(PG_TOKEN_PREFIX) ? getPgSession(token) : null;
+  }
+
   const cookieStore = await cookies();
 
   // ── Dev locale: leggi sempre il cookie dev, nessuna verifica Firebase ──────
