@@ -142,10 +142,12 @@ function rowToGabbia(r: Record<string, unknown>, prodottiMap: Map<string, Record
 
 const SELECT_BASE = `SELECT g.*, s.nome AS sede_nome FROM b2b.magazzino g LEFT JOIN core.sedi s ON s.id = g.sede_id`;
 
-export async function listGabbie(): Promise<GabbiaApi[]> {
+export async function listGabbie(sedeId?: string): Promise<GabbiaApi[]> {
   const db = getDb();
   if (!db) return [];
-  const { rows } = await db.query(`${SELECT_BASE} ORDER BY g.codice`);
+  const { rows } = sedeId
+    ? await db.query(`${SELECT_BASE} WHERE g.sede_id = $1 ORDER BY g.codice`, [sedeId])
+    : await db.query(`${SELECT_BASE} ORDER BY g.codice`);
   const prodottiMap = await fetchProdottiInfo(collectProdottoIds(rows));
   return rows.map((r) => rowToGabbia(r, prodottiMap));
 }
@@ -179,50 +181,136 @@ export async function createGabbia(input: CreateGabbiaInput): Promise<GabbiaApi>
   return (await getGabbia(id))!;
 }
 
+export async function updateGabbiaPosizione(id: string, pos: { x: number; y: number; z: number }): Promise<GabbiaApi | null> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+  await db.query(`UPDATE b2b.magazzino SET x = $2, y = $3, z = $4 WHERE id = $1`, [id, pos.x, pos.y, pos.z]);
+  return getGabbia(id);
+}
+
+const OCCUPATO_COLUMN: Record<StockColumn, string> = {
+  stock_nola: "stock_nola_occupato",
+  stock_nola_2: "stock_nola_2_occupato",
+  stock_roma: "stock_roma_occupato",
+  stock_volla: "stock_volla_occupato",
+  stock_portici: "stock_portici_occupato",
+};
+
+/**
+ * Aggiunge (o incrementa) un prodotto in una gabbia + aggiorna in transazione
+ * il contatore stock_*_occupato del prodotto per la sede della gabbia — porta
+ * 1:1 della transazione Firestore `updateGabbia(add:true)` (custom action
+ * Flutter, mai portata separatamente: la logica viveva solo lì).
+ */
 export async function addProdotto(gabbiaId: string, prodottoId: string, quantita: number): Promise<GabbiaApi | null> {
   const db = getDb();
   if (!db) throw new Error("Postgres non configurato");
-  const { rows } = await db.query(`SELECT prodotti, pneumatici_in FROM b2b.magazzino WHERE id = $1`, [gabbiaId]);
-  if (!rows[0]) return null;
-
-  const prodotti: RawLotto[] = rows[0].prodotti ?? [];
-  const pneumaticiIn: RawRef[] = rows[0].pneumatici_in ?? [];
-  const idx = prodotti.findIndex((l) => extractProdottoId(l.Prodotto_Ref) === prodottoId);
-
-  let nextProdotti: RawLotto[];
-  let nextPneumaticiIn = pneumaticiIn;
-  if (idx !== -1) {
-    nextProdotti = prodotti.map((l, i) => (i === idx ? { ...l, Quantita: (l.Quantita ?? 0) + quantita } : l));
-  } else {
-    nextProdotti = [...prodotti, { Quantita: quantita, Prodotto_Ref: { __ref: `Prodotti/${prodottoId}` } }];
-    if (!pneumaticiIn.some((p) => extractProdottoId(p) === prodottoId)) {
-      nextPneumaticiIn = [...pneumaticiIn, { __ref: `Prodotti/${prodottoId}` }];
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `${SELECT_BASE} WHERE g.id = $1 FOR UPDATE OF g`,
+      [gabbiaId]
+    );
+    if (!rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
     }
-  }
 
-  await db.query(
-    `UPDATE b2b.magazzino SET prodotti = $2, pneumatici_in = $3 WHERE id = $1`,
-    [gabbiaId, JSON.stringify(nextProdotti), JSON.stringify(nextPneumaticiIn)]
-  );
+    const prodotti: RawLotto[] = rows[0].prodotti ?? [];
+    const pneumaticiIn: RawRef[] = rows[0].pneumatici_in ?? [];
+    const idx = prodotti.findIndex((l) => extractProdottoId(l.Prodotto_Ref) === prodottoId);
+
+    let nextProdotti: RawLotto[];
+    let nextPneumaticiIn = pneumaticiIn;
+    if (idx !== -1) {
+      nextProdotti = prodotti.map((l, i) => (i === idx ? { ...l, Quantita: (l.Quantita ?? 0) + quantita } : l));
+    } else {
+      nextProdotti = [...prodotti, { Quantita: quantita, Prodotto_Ref: { __ref: `Prodotti/${prodottoId}` } }];
+      if (!pneumaticiIn.some((p) => extractProdottoId(p) === prodottoId)) {
+        nextPneumaticiIn = [...pneumaticiIn, { __ref: `Prodotti/${prodottoId}` }];
+      }
+    }
+
+    await client.query(
+      `UPDATE b2b.magazzino SET prodotti = $2, pneumatici_in = $3 WHERE id = $1`,
+      [gabbiaId, JSON.stringify(nextProdotti), JSON.stringify(nextPneumaticiIn)]
+    );
+
+    const occupatoCol = OCCUPATO_COLUMN[stockColumnForSede((rows[0].sede_nome as string) ?? "—")];
+    await client.query(
+      `UPDATE public.prodotti SET ${occupatoCol} = ${occupatoCol} + $2 WHERE id = $1`,
+      [prodottoId, quantita]
+    );
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   return getGabbia(gabbiaId);
 }
 
-export async function removeProdotto(gabbiaId: string, prodottoId: string): Promise<GabbiaApi | null> {
+/**
+ * Rimuove (o decrementa) un prodotto da una gabbia + aggiorna in transazione
+ * il contatore stock_*_occupato del prodotto per la sede della gabbia — porta
+ * 1:1 delle transazioni Firestore `updateGabbia(add:false)`/`deleteFromGabbia`.
+ */
+export async function removeProdotto(gabbiaId: string, prodottoId: string, quantita?: number): Promise<GabbiaApi | null> {
   const db = getDb();
   if (!db) throw new Error("Postgres non configurato");
-  const { rows } = await db.query(`SELECT prodotti, pneumatici_in FROM b2b.magazzino WHERE id = $1`, [gabbiaId]);
-  if (!rows[0]) return null;
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `${SELECT_BASE} WHERE g.id = $1 FOR UPDATE OF g`,
+      [gabbiaId]
+    );
+    if (!rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
 
-  const prodotti: RawLotto[] = rows[0].prodotti ?? [];
-  const pneumaticiIn: RawRef[] = rows[0].pneumatici_in ?? [];
-  const nextProdotti = prodotti.filter((l) => extractProdottoId(l.Prodotto_Ref) !== prodottoId);
-  const stillReferenced = nextProdotti.some((l) => extractProdottoId(l.Prodotto_Ref) === prodottoId);
-  const nextPneumaticiIn = stillReferenced ? pneumaticiIn : pneumaticiIn.filter((p) => extractProdottoId(p) !== prodottoId);
+    const prodotti: RawLotto[] = rows[0].prodotti ?? [];
+    const pneumaticiIn: RawRef[] = rows[0].pneumatici_in ?? [];
+    const idx = prodotti.findIndex((l) => extractProdottoId(l.Prodotto_Ref) === prodottoId);
+    if (idx === -1) {
+      await client.query("ROLLBACK");
+      return getGabbia(gabbiaId);
+    }
 
-  await db.query(
-    `UPDATE b2b.magazzino SET prodotti = $2, pneumatici_in = $3 WHERE id = $1`,
-    [gabbiaId, JSON.stringify(nextProdotti), JSON.stringify(nextPneumaticiIn)]
-  );
+    const quantitaInGabbia = prodotti[idx].Quantita ?? 0;
+    const rimuovi = quantita ?? quantitaInGabbia;
+
+    let nextProdotti: RawLotto[];
+    let nextPneumaticiIn = pneumaticiIn;
+    if (quantitaInGabbia > rimuovi) {
+      nextProdotti = prodotti.map((l, i) => (i === idx ? { ...l, Quantita: quantitaInGabbia - rimuovi } : l));
+    } else {
+      nextProdotti = prodotti.filter((_, i) => i !== idx);
+      nextPneumaticiIn = pneumaticiIn.filter((p) => extractProdottoId(p) !== prodottoId);
+    }
+
+    await client.query(
+      `UPDATE b2b.magazzino SET prodotti = $2, pneumatici_in = $3 WHERE id = $1`,
+      [gabbiaId, JSON.stringify(nextProdotti), JSON.stringify(nextPneumaticiIn)]
+    );
+
+    const occupatoCol = OCCUPATO_COLUMN[stockColumnForSede((rows[0].sede_nome as string) ?? "—")];
+    await client.query(
+      `UPDATE public.prodotti SET ${occupatoCol} = GREATEST(${occupatoCol} - $2, 0) WHERE id = $1`,
+      [prodottoId, rimuovi]
+    );
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   return getGabbia(gabbiaId);
 }
 

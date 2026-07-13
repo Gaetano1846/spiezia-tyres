@@ -185,6 +185,10 @@ export function pfuEffettivo(hit: Pick<ProdottoHit, "PFU" | "Diametro">): number
 
 export type SearchProdottiParams = {
   query?: string;
+  /** Match esatto per EAN (scanner/barcode, app magazzino) — bypassa i filtri
+   *  di disponibilità/prezzo/categoria: uno scan deve trovare il prodotto
+   *  anche se è a stock zero o è un accessorio, non solo pneumatici in vendita. */
+  ean?: string;
   largezza?: number | string;
   altezza?: number | string;
   diametro?: number | string;

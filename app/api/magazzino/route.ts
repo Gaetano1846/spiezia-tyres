@@ -4,13 +4,14 @@ import { listGabbie, createGabbia } from "@/lib/magazzinoDb";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || !isMagazzino(session)) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
   try {
-    const gabbie = await listGabbie();
+    const sedeId = new URL(req.url).searchParams.get("sedeId") ?? undefined;
+    const gabbie = await listGabbie(sedeId);
     return NextResponse.json({ gabbie });
   } catch (err) {
     console.error("[api/magazzino GET]", err);

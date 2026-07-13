@@ -85,6 +85,7 @@ export async function searchProdottiMeili(
 ): Promise<SearchProdottiResult> {
   const {
     query = "",
+    ean,
     largezza,
     altezza,
     diametro,
@@ -100,6 +101,18 @@ export async function searchProdottiMeili(
 
   // Vincolo di progetto: SEMPRE e SOLO T24=false (escluso il dropship Tyre24).
   const filters: string[] = ["t24 = false"];
+
+  // Match esatto EAN (scanner app magazzino): SOLO t24=false + ean=, nessun
+  // altro filtro — mirror esatto di queryProdottiRecordOnce(EAN==, T24==false)
+  // lato Flutter. Uno scan deve trovare il prodotto anche a stock zero o se
+  // è un accessorio/cerchio, non solo pneumatici disponibili in vendita.
+  if (ean) {
+    filters.push(`ean = ${quote(ean)}`);
+    const res = await getMeili().index(INDEX).search("", { filter: filters.join(" AND "), hitsPerPage: 10 });
+    const r = res as unknown as { hits: MeiliDoc[] };
+    return { hits: r.hits.map(mapHit), nbHits: r.hits.length, nbPages: 1, page: 0 };
+  }
+
   if (soloDisponibili) filters.push("has_stock = true");
 
   // Tab Cerchi / Camere d'aria: stessa logica del Flutter B2B, filtro per la
