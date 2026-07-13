@@ -43,6 +43,9 @@ export interface GabbiaApi {
 export interface GabbiaMatchApi {
   GabbiaId: string;
   Codice: string;
+  X: number | null;
+  Y: number | null;
+  Z: number | null;
   SedeNome: string;
   Quantita: number;
 }
@@ -314,21 +317,32 @@ export async function removeProdotto(gabbiaId: string, prodottoId: string, quant
   return getGabbia(gabbiaId);
 }
 
-/** Cerca le gabbie che contengono un prodotto — sostituisce lo scan client-side dello scanner. */
-export async function cercaGabbiePerProdotto(prodottoId: string): Promise<GabbiaMatchApi[]> {
+/** Cerca le gabbie che contengono un prodotto — sostituisce lo scan client-side dello scanner.
+ *  [sedeId] opzionale: mirror del filtro Sede dell'originale RicercaGabbiaWidget,
+ *  applicato solo quando l'utente è un Magazziniere (vincolato alla propria sede). */
+export async function cercaGabbiePerProdotto(prodottoId: string, sedeId?: string | null): Promise<GabbiaMatchApi[]> {
   const db = getDb();
   if (!db) return [];
+  const params: unknown[] = [`Prodotti/${prodottoId}`];
+  let sedeClause = "";
+  if (sedeId) {
+    params.push(sedeId);
+    sedeClause = `AND g.sede_id = $${params.length}`;
+  }
   const { rows } = await db.query(
-    `SELECT g.id, g.codice, s.nome AS sede_nome, lotto->>'Quantita' AS quantita
+    `SELECT g.id, g.codice, g.x, g.y, g.z, s.nome AS sede_nome, lotto->>'Quantita' AS quantita
        FROM b2b.magazzino g
        LEFT JOIN core.sedi s ON s.id = g.sede_id
        CROSS JOIN LATERAL jsonb_array_elements(coalesce(g.prodotti, '[]'::jsonb)) AS lotto
-      WHERE lotto->'Prodotto_Ref'->>'__ref' = $1`,
-    [`Prodotti/${prodottoId}`]
+      WHERE lotto->'Prodotto_Ref'->>'__ref' = $1 ${sedeClause}`,
+    params
   );
   return rows.map((r) => ({
     GabbiaId: r.id as string,
     Codice: (r.codice as string) ?? "—",
+    X: (r.x as number) ?? null,
+    Y: (r.y as number) ?? null,
+    Z: (r.z as number) ?? null,
     SedeNome: (r.sede_nome as string) ?? "—",
     Quantita: Number(r.quantita ?? 0),
   }));

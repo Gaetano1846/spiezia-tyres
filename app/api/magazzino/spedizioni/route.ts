@@ -15,10 +15,12 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sedeId = searchParams.get("sedeId");
   const status = searchParams.get("status") ?? undefined;
+  const before = searchParams.get("before") ?? undefined;
+  const ascending = searchParams.get("ascending") === "true";
   if (!sedeId) return NextResponse.json({ error: "sedeId obbligatorio" }, { status: 400 });
 
   try {
-    const spedizioni = await listSpedizioniPerSede(sedeId, status);
+    const spedizioni = await listSpedizioniPerSede(sedeId, status, { beforeIso: before, ascending });
     return NextResponse.json({ spedizioni });
   } catch (err) {
     console.error("[api/magazzino/spedizioni GET]", err);

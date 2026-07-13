@@ -11,11 +11,13 @@ export async function GET(req: NextRequest) {
   if (!session || !isMagazzino(session)) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
-  const prodottoId = new URL(req.url).searchParams.get("prodottoId");
+  const { searchParams } = new URL(req.url);
+  const prodottoId = searchParams.get("prodottoId");
+  const sedeId = searchParams.get("sedeId");
   if (!prodottoId) return NextResponse.json({ error: "prodottoId obbligatorio" }, { status: 400 });
 
   try {
-    const gabbie = await cercaGabbiePerProdotto(prodottoId);
+    const gabbie = await cercaGabbiePerProdotto(prodottoId, sedeId);
     return NextResponse.json({ gabbie });
   } catch (err) {
     console.error("[api/magazzino/cerca GET]", err);

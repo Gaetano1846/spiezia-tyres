@@ -42,10 +42,22 @@ function rowToSpedizione(r: Record<string, unknown>): SpedizioneApi {
   };
 }
 
+export interface ListSpedizioniPerSedeOpts {
+  /** Solo spedizioni create prima di questa data — usato da Old_Ordini
+   *  (mirror di `createdAt < previousDayAt2359()` lato Flutter originale). */
+  beforeIso?: string;
+  /** true → ORDER BY createdAt ASC (Old_Ordini mostra le più vecchie prima),
+   *  default false → DESC (Ordini mostra le più recenti prima). */
+  ascending?: boolean;
+  limit?: number;
+}
+
 /** Lista spedizioni per sede magazzino — sostituisce querySpedizioniRecord
- *  (app Flutter, screen Ordini/Old_Ordini) che filtrava per warehouseSede.
+ *  (app Flutter, screen Ordini/Old_Ordini) che filtrava per warehouseSede +
+ *  status "created" (GLS non ancora chiuso) — stesso filtro fisso qui, non è
+ *  un parametro perché questo endpoint esiste solo per queste due schermate.
  *  Distinta da listSpedizioni (filtro per data, uso admin). */
-export async function listSpedizioniPerSede(sedeId: string, status?: string, limit = 500): Promise<SpedizioneApi[]> {
+export async function listSpedizioniPerSede(sedeId: string, status?: string, opts: ListSpedizioniPerSedeOpts = {}): Promise<SpedizioneApi[]> {
   const db = getDb();
   if (!db) return [];
   const params: unknown[] = [sedeId];
@@ -54,13 +66,18 @@ export async function listSpedizioniPerSede(sedeId: string, status?: string, lim
     params.push(status);
     statusClause = `AND s.warehouse_status = $${params.length}`;
   }
-  params.push(limit);
+  let beforeClause = "";
+  if (opts.beforeIso) {
+    params.push(opts.beforeIso);
+    beforeClause = `AND s.created_at < $${params.length}`;
+  }
+  params.push(opts.limit ?? 500);
   const { rows } = await db.query(
     `SELECT s.*, sede.nome AS sede_nome
        FROM b2b.spedizioni s
        LEFT JOIN core.sedi sede ON sede.id = s.warehouse_sede_id
-      WHERE s.warehouse_sede_id = $1 ${statusClause}
-      ORDER BY s.created_at DESC
+      WHERE s.warehouse_sede_id = $1 AND s.status = 'created' ${statusClause} ${beforeClause}
+      ORDER BY s.created_at ${opts.ascending ? "ASC" : "DESC"}
       LIMIT $${params.length}`,
     params
   );
