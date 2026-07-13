@@ -4,7 +4,8 @@
 // Oggi usato solo dallo scan EAN dell'app Flutter magazzino: un lookup
 // puntuale, non una ricerca, quindi niente indice.
 
-import { getDb } from "@/lib/db";
+import { getDb, newId } from "@/lib/db";
+import { stockColumnForSede } from "@/lib/magazzinoDb";
 
 export interface ProdottoFullApi {
   id: string;
@@ -106,4 +107,34 @@ export async function getProdottoById(id: string): Promise<ProdottoFullApi | nul
   if (!db) return null;
   const { rows } = await db.query(`SELECT ${SELECT_COLS} FROM public.prodotti WHERE id = $1 LIMIT 1`, [id]);
   return rows[0] ? rowToProdotto(rows[0]) : null;
+}
+
+export interface CreateProdottoStubInput {
+  ean: string;
+  titolo: string;
+  quantita: number;
+  sedeId: string;
+}
+
+/** Crea un prodotto "stub" (titolo+EAN+stock iniziale in UNA sede, nessun
+ *  prezzo/marca/dimensioni) per lo scan magazzino di un EAN sconosciuto —
+ *  mirror di CreaProdottoWidget (app Flutter). id = ULID generato (nessuno
+ *  SKU reale disponibile a questo punto), t24 sempre false esplicito, source
+ *  distinto ('magazzino-stub') per rintracciare le righe da completare.
+ *  Prezzo assente per design: i job di sync marketplace/CSV escludono i
+ *  prodotti a prezzo zero, quindi uno stub non genera annunci esterni finché
+ *  un admin non lo completa. stockColumnForSede sceglie sempre una delle 5
+ *  colonne stock fisse (mai input diretto), interpolazione sicura. */
+export async function createProdottoStub(input: CreateProdottoStubInput): Promise<ProdottoFullApi> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+  const { rows: sedeRows } = await db.query(`SELECT nome FROM core.sedi WHERE id = $1`, [input.sedeId]);
+  const stockCol = stockColumnForSede((sedeRows[0]?.nome as string) ?? "—");
+  const id = newId();
+  await db.query(
+    `INSERT INTO public.prodotti (id, ean, titolo, ${stockCol}, t24, source)
+     VALUES ($1, $2, $3, $4, false, 'magazzino-stub')`,
+    [id, input.ean, input.titolo, input.quantita]
+  );
+  return (await getProdottoById(id))!;
 }

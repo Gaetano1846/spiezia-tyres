@@ -60,9 +60,9 @@ function extractProdottoId(ref: RawRef): string | null {
 }
 
 const STOCK_COLUMNS = ["stock_nola", "stock_nola_2", "stock_roma", "stock_volla", "stock_portici"] as const;
-type StockColumn = (typeof STOCK_COLUMNS)[number];
+export type StockColumn = (typeof STOCK_COLUMNS)[number];
 
-function stockColumnForSede(sedeNome: string): StockColumn {
+export function stockColumnForSede(sedeNome: string): StockColumn {
   const n = sedeNome.toLowerCase();
   if (n.includes("nola 2") || n.includes("nola2")) return "stock_nola_2";
   if (n.includes("nola")) return "stock_nola";

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getSession, isAdmin } from "@/lib/auth";
+import { getSession, isAdmin, isMagazzino } from "@/lib/auth";
 import { listLookup, createLookup, type LookupKind } from "@/lib/lookupDb";
 
 export const runtime = "nodejs";
@@ -13,10 +13,12 @@ function parseKind(raw: string): LookupKind | null {
 // GET/POST /api/lookup/:kind — Sede/Reparto/Mansione/Servizi/Categoria_Prodotti
 // (Fase 6: sostituisce collection(db,"Sede"|"Reparto"|"Mansione"|"Servizi"|
 // "Categoria_Prodotti") in admin/sedi e admin/catalogo. Il bridge propaga le
-// scritture a Firestore per il CRM FlutterFlow legacy.
+// scritture a Firestore per il CRM FlutterFlow legacy. GET usa isMagazzino
+// (non solo isAdmin): l'app Flutter magazzino legge la lista Sede per il
+// dropdown di CreaGabbiaPosizione — sola lettura, nessun dato sensibile.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ kind: string }> }) {
   const session = await getSession();
-  if (!session || !isAdmin(session)) {
+  if (!session || !isMagazzino(session)) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
   const kind = parseKind((await params).kind);
