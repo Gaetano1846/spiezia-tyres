@@ -16,6 +16,7 @@ export interface LogMagazzinoApi {
   ProdottoId: string | null;
   ProdottoLabel: string | null;
   GabbiaId: string | null;
+  GabbiaCodice: string | null;
   Motivo: string | null;
   SedeId: string | null;
   SedeNome: string | null;
@@ -34,6 +35,7 @@ function rowToLog(r: Record<string, unknown>): LogMagazzinoApi {
     ProdottoId: (r.prodotto_id as string) ?? null,
     ProdottoLabel: marca || modello ? [marca, modello].filter(Boolean).join(" ") : null,
     GabbiaId: (r.gabbia_id as string) ?? null,
+    GabbiaCodice: (r.gabbia_codice as string) ?? null,
     Motivo: (r.motivo as string) ?? null,
     SedeId: (r.sede_id as string) ?? null,
     SedeNome: (r.sede_nome as string) ?? null,
@@ -66,11 +68,13 @@ export async function listLogsMagazzino(filters: ListLogsMagazzinoFilters = {}):
   const limit = filters.limit ?? 200;
   const { rows } = await db.query(
     `SELECT l.*, u.display_name AS utente_nome, sede.nome AS sede_nome,
-            p.marca AS prodotto_marca, p.modello AS prodotto_modello
+            p.marca AS prodotto_marca, p.modello AS prodotto_modello,
+            g.codice AS gabbia_codice
        FROM b2b.logs_magazzino l
        LEFT JOIN core.utenti u ON u.id = l.utente_id
        LEFT JOIN core.sedi sede ON sede.id = l.sede_id
        LEFT JOIN public.prodotti p ON p.id = l.prodotto_id
+       LEFT JOIN b2b.magazzino g ON g.id = l.gabbia_id
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
        ORDER BY l.data DESC NULLS LAST
        LIMIT ${push(limit)}`,
