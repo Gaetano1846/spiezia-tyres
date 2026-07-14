@@ -72,6 +72,11 @@ export interface OrdineListItemApi {
   /** Conteggio articoli — la lista ordini cliente mostra "N articoli" senza
    *  caricare il dettaglio completo di ogni riga. */
   ArticoliCount: number;
+  /** Destinatario dell'indirizzo di spedizione dell'ordine (estratto lato SQL
+   *  da indirizzo_spedizione->>'Destinatario'). Per ordini AdTyres/Prezzo-Gomme
+   *  il ClienteNome risolto è il rivenditore/reseller (billing), non il cliente
+   *  finale — l'admin usa questo campo per mostrare il vero destinatario. */
+  SpedizioneDestinatario: string | null;
 }
 
 export interface OrdineApi extends OrdineListItemApi {
@@ -107,6 +112,7 @@ const LIST_COLS = `o.id, o.numero, o.source, o.stato, o.cliente_id, o.utente_id,
   o.corriere, o.gls_tracking_number,
   coalesce(NULLIF(c.ragione_sociale, ''), c.nome) AS cliente_nome,
   u.display_name AS utente_nome,
+  o.indirizzo_spedizione->>'Destinatario' AS spedizione_destinatario,
   (SELECT count(*) FROM core.ordine_articoli oa WHERE oa.ordine_id = o.id) AS articoli_count`;
 
 const DETAIL_COLS = `${LIST_COLS}, o.sede_id, o.iva, o.pfu, o.sconto_totale, o.contributo_logistico,
@@ -135,6 +141,7 @@ function rowToListItem(r: Record<string, unknown>): OrdineListItemApi {
     Corriere: (r.corriere as string) ?? null,
     GlsTrackingNumber: (r.gls_tracking_number as string) ?? null,
     ArticoliCount: Number(r.articoli_count ?? 0),
+    SpedizioneDestinatario: (r.spedizione_destinatario as string) || null,
   };
 }
 
@@ -238,8 +245,15 @@ export async function listOrdini(filters: ListOrdiniFilters = {}): Promise<Ordin
     if (filters.clienteIds?.length) parts.push(`o.cliente_id = ANY(${push(filters.clienteIds)})`);
     where.push(`(${parts.join(" OR ")})`);
   }
-  if (filters.dataDa) where.push(`coalesce(o.data_ora, o.created_at) >= ${push(filters.dataDa)}`);
-  if (filters.dataA) where.push(`coalesce(o.data_ora, o.created_at) <= ${push(filters.dataA)}`);
+  // dataDa/dataA arrivano come stringhe naive "YYYY-MM-DDTHH:mm:ss" che
+  // rappresentano l'inizio/fine giornata in ora ITALIANA (vedi
+  // app/api/admin/ordini/route.ts). Il pool Postgres ha TimeZone di sessione
+  // UTC, quindi un bind diretto contro una colonna timestamptz le interpreta
+  // come UTC — sfasando il confine di 1-2h (CET/CEST) e facendo "trapelare"
+  // ordini di inizio giornata successiva nel giorno precedente. AT TIME ZONE
+  // le reinterpreta esplicitamente come ora locale Europe/Rome (DST-aware).
+  if (filters.dataDa) where.push(`coalesce(o.data_ora, o.created_at) >= (${push(filters.dataDa)}::timestamp AT TIME ZONE 'Europe/Rome')`);
+  if (filters.dataA) where.push(`coalesce(o.data_ora, o.created_at) <= (${push(filters.dataA)}::timestamp AT TIME ZONE 'Europe/Rome')`);
   if (filters.fonti?.length) where.push(`o.source = ANY(${push(filters.fonti)})`);
   if (filters.stato) where.push(`o.stato = ${push(filters.stato)}`);
   if (filters.q?.trim()) {

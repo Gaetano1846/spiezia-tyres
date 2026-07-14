@@ -82,12 +82,21 @@ function getTodayISO() {
 
 // core.ordini restituisce già ClienteNome/UtenteNome pre-risolti via JOIN
 // (lib/ordiniDb.ts) — niente più batchGetDocs/nomeDaOrdine lato client.
+//
+// AdTyres/Prezzo-Gomme: il ClienteId risolto è il rivenditore/reseller (dati
+// di fatturazione dell'importer), non il cliente finale — per queste fonti
+// mostriamo il Destinatario dell'indirizzo di spedizione al suo posto.
+const FONTI_NOME_DA_SPEDIZIONE = new Set(["AdTyres", "Prezzo-Gomme"]);
+
 function entriesFromApi(rows: OrdineListItemApi[]): OrdineEntry[] {
-  return rows.map((ordine) => ({
-    ordine,
-    clienteNome: ordine.ClienteNome || ordine.UtenteNome || "—",
-    docId: ordine.id,
-  }));
+  return rows.map((ordine) => {
+    const nomeSpedizione = FONTI_NOME_DA_SPEDIZIONE.has(ordine.Source) ? ordine.SpedizioneDestinatario : null;
+    return {
+      ordine,
+      clienteNome: nomeSpedizione || ordine.ClienteNome || ordine.UtenteNome || "—",
+      docId: ordine.id,
+    };
+  });
 }
 
 function formatData(iso: string | null | undefined): string {
