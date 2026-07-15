@@ -5,7 +5,7 @@ import { approvaArticoloSpedizione, annullaSpedizioneMagazzino } from "@/lib/spe
 export const runtime = "nodejs";
 
 type PatchBody =
-  | { action: "approva-articolo"; ordineId: string; refPath: string; quantita: number; gabbiaId?: string }
+  | { action: "approva-articolo"; ordineId: string; refPath?: string; sku?: string; quantita: number; gabbiaId?: string }
   | { action: "annulla"; ordineId: string; motivo: string; note?: string };
 
 // PATCH /api/magazzino/spedizioni/[id] — azioni operatore magazzino (app
@@ -29,13 +29,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     switch (body.action) {
       case "approva-articolo": {
-        if (!body.ordineId || !body.refPath) {
-          return NextResponse.json({ error: "ordineId e refPath obbligatori" }, { status: 400 });
+        if (!body.ordineId || (!body.refPath && !body.sku)) {
+          return NextResponse.json({ error: "ordineId e (sku o refPath) obbligatori" }, { status: 400 });
         }
         await approvaArticoloSpedizione({
           ordineId: body.ordineId,
           spedizioneId: id,
-          refPath: body.refPath,
+          refPath: body.refPath ?? null,
+          sku: body.sku ?? null,
           quantita: Number(body.quantita ?? 0),
           utenteId: session.uid,
           gabbiaId: body.gabbiaId ?? null,

@@ -1,12 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { signOut, updateProfile, sendPasswordResetEmail, onAuthStateChanged } from "firebase/auth";
-import {
-  collection, getDocs, doc, addDoc, setDoc, deleteDoc,
-  limit, query, where, orderBy, type Timestamp,
-} from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { useAuth } from "@/components/layout/AuthProvider";
 import {
   Download, MapPin, User, LogOut,
   Plus, Pencil, ArrowRight, CheckCircle, X, Trash2,
@@ -14,6 +9,7 @@ import {
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
+import type { IndirizzoUtente, IndirizzoInput } from "@/lib/utentiIndirizziDb";
 
 type DownloadItem = {
   ordineId: string;
@@ -24,22 +20,11 @@ type DownloadItem = {
 };
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
+// Indirizzo: ora core.utenti_indirizzi (Postgres) via /api/account/indirizzi,
+// non più users/{uid}/Indirizzo_Fatturazione|Indirizzo_Spedizione (Firestore).
 
-type IndirizzoDoc = {
-  id: string;
-  Nome?: string;
-  Cognome?: string;
-  Azienda?: string;
-  Via?: string;
-  Civico?: string;
-  CAP?: string;
-  Citta?: string;
-  Provincia?: string;
-  Paese?: string;
-  Telefono?: string;
-};
-
-type IndirizzoForm = Omit<IndirizzoDoc, "id">;
+type IndirizzoDoc = IndirizzoUtente;
+type IndirizzoForm = IndirizzoInput;
 
 const EMPTY_FORM: IndirizzoForm = {
   Nome: "", Cognome: "", Azienda: "", Via: "", Civico: "",
@@ -71,11 +56,15 @@ const TABS = [
 
 export default function AccountPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [tab, setTab] = useState("dettagli");
 
-  const [uid, setUid] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [displayName, setDisplayName] = useState<string | null>(null);
+  const uid = user?.uid ?? null;
+  const userEmail = user?.email ?? null;
+  // Override locale: AuthProvider non ri-fetcha il profilo dopo un salvataggio,
+  // quindi riflettiamo il nuovo nome subito senza aspettare un reload.
+  const [displayNameOverride, setDisplayNameOverride] = useState<string | null>(null);
+  const displayName = displayNameOverride ?? user?.displayName ?? null;
 
   const [downloadItems, setDownloadItems] = useState<DownloadItem[]>([]);
   const [loadingDownload, setLoadingDownload] = useState(false);
@@ -100,18 +89,8 @@ export default function AccountPage() {
   const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setUid(user.uid);
-        setUserEmail(user.email);
-        setDisplayName(user.displayName);
-        setEditName(user.displayName ?? "");
-      } else {
-        setUid(null);
-      }
-    });
-    return unsub;
-  }, []);
+    setEditName(displayName ?? "");
+  }, [displayName]);
 
   useEffect(() => {
     if (!uid || tab !== "download") return;
@@ -135,15 +114,15 @@ export default function AccountPage() {
       .finally(() => setLoadingDownload(false));
   }, [uid, tab]);
 
-  async function loadIndirizzi(userUid: string) {
+  async function loadIndirizzi(_userUid: string) {
     setLoadingIndirizzi(true);
     return Promise.all([
-      getDocs(collection(db, "users", userUid, "Indirizzo_Fatturazione")),
-      getDocs(collection(db, "users", userUid, "Indirizzo_Spedizione")),
+      fetch("/api/account/indirizzi?tipo=fatturazione").then((r) => r.json()),
+      fetch("/api/account/indirizzi?tipo=spedizione").then((r) => r.json()),
     ])
-      .then(([snapF, snapS]) => {
-        setIndirizziF(snapF.docs.map((d) => ({ id: d.id, ...d.data() }) as IndirizzoDoc));
-        setIndirizziS(snapS.docs.map((d) => ({ id: d.id, ...d.data() }) as IndirizzoDoc));
+      .then(([{ indirizzi: f }, { indirizzi: s }]: { indirizzi: IndirizzoDoc[] }[]) => {
+        setIndirizziF(f ?? []);
+        setIndirizziS(s ?? []);
       })
       .catch(() => toast.error("Errore nel caricamento degli indirizzi"))
       .finally(() => setLoadingIndirizzi(false));
@@ -160,8 +139,18 @@ export default function AccountPage() {
   }
 
   function openEdit(tipo: "fatturazione" | "spedizione", ind: IndirizzoDoc) {
-    const { id, ...rest } = ind;
-    setForm({ ...EMPTY_FORM, ...rest });
+    setForm({
+      Nome: ind.Nome ?? "",
+      Cognome: ind.Cognome ?? "",
+      Azienda: ind.Azienda ?? "",
+      Via: ind.Via ?? "",
+      Civico: ind.Civico ?? "",
+      CAP: ind.CAP ?? "",
+      Citta: ind.Citta ?? "",
+      Provincia: ind.Provincia ?? "",
+      Paese: ind.Paese ?? "Italia",
+      Telefono: ind.Telefono ?? "",
+    });
     setModal({ open: true, tipo, editing: ind });
   }
 
@@ -177,18 +166,18 @@ export default function AccountPage() {
     }
     setSaving(true);
     try {
-      const subcol = modal.tipo === "fatturazione"
-        ? "Indirizzo_Fatturazione"
-        : "Indirizzo_Spedizione";
-      const payload = Object.fromEntries(
-        Object.entries(form).filter(([, v]) => typeof v === "string" && v.trim() !== "")
-      );
-
-      if (modal.editing) {
-        await setDoc(doc(db, "users", uid, subcol, modal.editing.id), payload);
-      } else {
-        await addDoc(collection(db, "users", uid, subcol), payload);
-      }
+      const res = modal.editing
+        ? await fetch(`/api/account/indirizzi/${modal.editing.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(form),
+          })
+        : await fetch(`/api/account/indirizzi`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...form, tipo: modal.tipo }),
+          });
+      if (!res.ok) throw new Error("save failed");
 
       toast.success(modal.editing ? "Indirizzo aggiornato" : "Indirizzo aggiunto");
       closeModal();
@@ -205,10 +194,8 @@ export default function AccountPage() {
     if (!uid || !modal.editing) return;
     setDeleting(true);
     try {
-      const subcol = modal.tipo === "fatturazione"
-        ? "Indirizzo_Fatturazione"
-        : "Indirizzo_Spedizione";
-      await deleteDoc(doc(db, "users", uid, subcol, modal.editing.id));
+      const res = await fetch(`/api/account/indirizzi/${modal.editing.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("delete failed");
       toast.success("Indirizzo eliminato");
       closeModal();
       await loadIndirizzi(uid);
@@ -220,11 +207,16 @@ export default function AccountPage() {
   }
 
   async function handleSaveName() {
-    if (!auth.currentUser) return;
+    if (!uid) return;
     setSavingName(true);
     try {
-      await updateProfile(auth.currentUser, { displayName: editName });
-      setDisplayName(editName);
+      const res = await fetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ DisplayName: editName }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      setDisplayNameOverride(editName);
       toast.success("Nome aggiornato");
     } catch {
       toast.error("Errore nel salvataggio del nome");
@@ -236,7 +228,12 @@ export default function AccountPage() {
   async function handleResetPassword() {
     if (!userEmail) return;
     try {
-      await sendPasswordResetEmail(auth, userEmail);
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: userEmail }),
+      });
+      if (!res.ok) throw new Error("reset failed");
       setResetSent(true);
       toast.success("Email di reset inviata");
     } catch {
@@ -247,7 +244,6 @@ export default function AccountPage() {
   async function handleSignOut() {
     setSigningOut(true);
     try {
-      await signOut(auth);
       await fetch("/api/auth/logout", { method: "POST" });
       router.push("/login");
     } catch {

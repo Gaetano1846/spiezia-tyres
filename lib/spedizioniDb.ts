@@ -7,6 +7,7 @@
 // Firestore per il CRM Flutter legacy.
 
 import { getDb, newId } from "@/lib/db";
+import { resolveSkuFromFirestoreDocId } from "@/lib/resolveSkuFromFirestore";
 
 export interface SpedizioneApi {
   id: string;
@@ -380,8 +381,13 @@ export async function finishSpedizioneJob(id: string, input: FinishSpedizioneJob
 export interface ApprovaArticoloInput {
   ordineId: string;
   spedizioneId: string;
-  /** RefPath dell'articolo in core.ordine_articoli (colonna ref_path), es. "Prodotti/<id>". */
-  refPath: string;
+  /** RefPath legacy dell'articolo in core.ordine_articoli (colonna ref_path),
+   *  es. "Prodotti/<id>" — client Flutter storici. Preferire `sku` quando
+   *  disponibile (vedi lib/resolveSkuFromFirestore.ts per il perché). */
+  refPath?: string | null;
+  /** SKU (public.prodotti.id / core.ordine_articoli.sku) — identificativo
+   *  preferito, non richiede risoluzione contro Firestore. */
+  sku?: string | null;
   quantita: number;
   utenteId: string | null;
   gabbiaId?: string | null;
@@ -399,17 +405,34 @@ export async function approvaArticoloSpedizione(input: ApprovaArticoloInput): Pr
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
-      `UPDATE core.ordine_articoli SET fs_extra = fs_extra || '{"trovata":true}'::jsonb
-        WHERE ordine_id = $1 AND ref_path = $2`,
-      [input.ordineId, input.refPath]
-    );
+    // Preferisci il match per SKU (client aggiornati); fallback su ref_path
+    // per i client Flutter storici non ancora ripuntati.
+    if (input.sku) {
+      await client.query(
+        `UPDATE core.ordine_articoli SET fs_extra = fs_extra || '{"trovata":true}'::jsonb
+          WHERE ordine_id = $1 AND sku = $2`,
+        [input.ordineId, input.sku]
+      );
+    } else if (input.refPath) {
+      await client.query(
+        `UPDATE core.ordine_articoli SET fs_extra = fs_extra || '{"trovata":true}'::jsonb
+          WHERE ordine_id = $1 AND ref_path = $2`,
+        [input.ordineId, input.refPath]
+      );
+    }
     await client.query(`UPDATE core.ordini SET stato = 'Spedito', updated_at = now() WHERE id = $1`, [input.ordineId]);
     await client.query(
       `UPDATE b2b.spedizioni SET warehouse_status = 'Spedito', updated_at = now() WHERE id = $1`,
       [input.spedizioneId]
     );
-    const prodottoId = input.refPath.split("/")[1] ?? null;
+    // prodotto_id per il log deve essere lo SKU (public.prodotti.id), mai il
+    // frammento di RefPath Firestore — bug preesistente scoperto durante lo
+    // stacco Firebase (rompeva silenziosamente il JOIN in logsMagazzinoDb.ts).
+    let prodottoId: string | null = input.sku ?? null;
+    if (!prodottoId && input.refPath) {
+      const docId = input.refPath.split("/")[1] ?? null;
+      prodottoId = docId ? await resolveSkuFromFirestoreDocId(docId) : null;
+    }
     await client.query(
       `INSERT INTO b2b.logs_magazzino (id, data, utente_id, azione, quantita, prodotto_id, gabbia_id)
        VALUES ($1, now(), $2, 'Ha rimosso', $3, $4, $5)`,

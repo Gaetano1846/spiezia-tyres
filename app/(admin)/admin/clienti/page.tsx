@@ -2,13 +2,9 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  updateDoc,
-  getDoc,
-  doc,
   type Timestamp,
   type DocumentReference,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import {
   Users,
   Search,
@@ -353,9 +349,10 @@ export default function ClientiPage() {
     Promise.all(
       toFetch.map(async (r) => {
         try {
-          const snap = await getDoc(r);
-          if (!snap.exists()) return null;
-          const d = snap.data() as { Fido?: number; Fido_Residuo?: number };
+          // r.id == core.clienti.id (stesso ID preservato dalla Fase 3 di migrazione).
+          const res = await fetch(`/api/clienti/${r.id}`);
+          if (!res.ok) return null;
+          const { cliente: d } = (await res.json()) as { cliente: { Fido?: number; Fido_Residuo?: number } };
           return { path: r.path, fido: Number(d.Fido ?? 0), fidoResiduo: Number(d.Fido_Residuo ?? 0) };
         } catch { return null; }
       })
@@ -403,7 +400,12 @@ export default function ClientiPage() {
     if (!id) return;
     const nuovoStato = !isBloccato(u);
     try {
-      await updateDoc(doc(db, "users", id), { Blocco: nuovoStato });
+      const res = await fetch(`/api/utenti/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ Blocco: nuovoStato }),
+      });
+      if (!res.ok) throw new Error("update failed");
       mutateUsers((prev) => prev.map((x) => (x.docId === id ? { ...x, Blocco: nuovoStato } : x)));
     } catch {
       toast.error("Errore nell'aggiornamento");
@@ -446,12 +448,13 @@ export default function ClientiPage() {
     });
     // Se collegato a un Cliente, carica i dati anagrafici da modificare.
     if (ref) {
-      getDoc(ref)
-        .then((snap) => {
-          const d = (snap.exists() ? snap.data() : {}) as {
-            Ragione_Sociale?: string; Nome?: string; Telefono?: string;
-            Partita_Iva?: string; Metodo_di_Pagamento?: string;
-          };
+      // ref.id == core.clienti.id (stesso ID preservato dalla Fase 3 di migrazione).
+      fetch(`/api/clienti/${ref.id}`)
+        .then((res) => (res.ok ? res.json() : { cliente: {} }))
+        .then(({ cliente: d }: { cliente: {
+          Ragione_Sociale?: string; Nome?: string; Telefono?: string;
+          Partita_Iva?: string; Metodo_di_Pagamento?: string;
+        } }) => {
           setEditUser((prev) =>
             prev && prev.docId === id
               ? {
@@ -480,14 +483,21 @@ export default function ClientiPage() {
     setSaving(true);
     const fidoVal = parseFloat(editUser.Fido) || 0;
     try {
-      // Ruolo / Nome / Rappresentante / Metodo di pagamento / Blocco vivono sul doc users
-      await updateDoc(doc(db, "users", editUser.docId), {
-        Ruolo: editUser.Ruolo,
-        display_name: editUser.Nome.trim(),
-        Rappresentante: editUser.Rappresentante,
-        Metodo_di_Pagamento: editUser.MetodoPagamento.trim(),
-        Blocco: editUser.Bloccato,
+      // Ruolo / Nome / Rappresentante / Metodo di pagamento / Blocco vivono su
+      // core.utenti (fs_extra per i campi senza colonna dedicata) — vedi
+      // lib/utentiDb.ts::updateUtenteAccount.
+      const resAccount = await fetch(`/api/utenti/${editUser.docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          Ruolo: editUser.Ruolo,
+          DisplayName: editUser.Nome.trim(),
+          Rappresentante: editUser.Rappresentante,
+          MetodoPagamento: editUser.MetodoPagamento.trim(),
+          Blocco: editUser.Bloccato,
+        }),
       });
+      if (!resAccount.ok) throw new Error("save account failed");
       // Il fido e l'anagrafica vivono sul doc Clienti se l'utente è collegato.
       // FIX split-brain Fido: prima questo ramo scriveva SOLO su Firestore
       // (updateDoc diretto), ma il gate di blocco checkout legge/scrive
@@ -516,11 +526,15 @@ export default function ClientiPage() {
           [ref.path]: { fido: fidoVal, fidoResiduo: prev[ref.path]?.fidoResiduo ?? 0 },
         }));
       } else {
-        // Utente non collegato a un Cliente: fido salvato come fallback su users
-        // (residuo su Firestore — core.utenti ha anch'esso colonne fido/fido_residuo
-        // e lo stesso trigger di bridge, ma non esiste ancora un endpoint Postgres
-        // per questo caso limite; caso raro, segnalato nel report finale).
-        await updateDoc(doc(db, "users", editUser.docId), { Fido: fidoVal });
+        // Utente non collegato a un Cliente: fido salvato sulla colonna reale
+        // core.utenti.fido (chiude anche questo caso limite — prima era un
+        // fallback solo-Firestore, split-brain rispetto al gate di checkout).
+        const resFido = await fetch(`/api/utenti/${editUser.docId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ Fido: fidoVal }),
+        });
+        if (!resFido.ok) throw new Error("save fido failed");
       }
       mutateUsers((prev) => prev.map((x) => (x.docId === editUser.docId ? {
         ...x,
@@ -548,8 +562,10 @@ export default function ClientiPage() {
     const ref = u.Cliente_Ref;
     if (ref && typeof ref === "object" && "path" in ref) {
       setDetailLoading(true);
-      getDoc(ref)
-        .then((snap) => setDetailCliente((snap.exists() ? snap.data() : {}) as ClienteDetail))
+      // ref.id == core.clienti.id (stesso ID preservato dalla Fase 3 di migrazione).
+      fetch(`/api/clienti/${ref.id}`)
+        .then((res) => (res.ok ? res.json() : { cliente: {} }))
+        .then(({ cliente }: { cliente: ClienteDetail }) => setDetailCliente(cliente ?? {}))
         .catch(() => setDetailCliente({}))
         .finally(() => setDetailLoading(false));
     } else {

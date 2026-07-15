@@ -29,6 +29,7 @@ export interface UtenteProfile {
   PrinterMAC: string | null;
   Fido: number | null;
   Fido_Residuo: number | null;
+  UtentiAvvisati: boolean;
   created_time: string | null;
 }
 
@@ -73,6 +74,7 @@ export async function getUtenteProfile(id: string): Promise<UtenteProfile | null
     PrinterMAC: typeof extra.PrinterMAC === "string" ? extra.PrinterMAC : null,
     Fido: r.fido != null ? Number(r.fido) : null,
     Fido_Residuo: r.fido_residuo != null ? Number(r.fido_residuo) : null,
+    UtentiAvvisati: extra.utentiAvvisati === true,
     created_time: r.created_at ? new Date(r.created_at).toISOString() : null,
   };
 }
@@ -91,6 +93,62 @@ export async function updatePrinterMac(uid: string, printerMac: string): Promise
       WHERE id = $1`,
     [uid, printerMac]
   );
+}
+
+export interface UpdateUtenteAccountInput {
+  Ruolo?: string;
+  DisplayName?: string;
+  Rappresentante?: string;
+  MetodoPagamento?: string;
+  Blocco?: boolean;
+  /** Fido "fallback" quando l'utente non ha un Cliente collegato — quando
+   *  presente c'è già un core.clienti linkato, preferire PATCH /api/clienti/:id. */
+  Fido?: number;
+}
+
+/** Aggiorna i campi account (pagina admin/clienti) che vivono su core.utenti
+ *  — Ruolo/Rappresentante/MetodoPagamento/Blocco in fs_extra (stesso motivo
+ *  di PrinterMAC: non hanno ancora colonne dedicate), Fido sulla colonna
+ *  reale (per utenti senza Cliente collegato, chiude lo split-brain anche
+ *  in questo caso limite). */
+export async function updateUtenteAccount(uid: string, input: UpdateUtenteAccountInput): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+
+  const extraPatches: Record<string, unknown> = {};
+  if (input.Ruolo !== undefined) extraPatches.Ruolo = input.Ruolo;
+  if (input.Rappresentante !== undefined) extraPatches.Rappresentante = input.Rappresentante;
+  if (input.MetodoPagamento !== undefined) extraPatches.Metodo_di_Pagamento = input.MetodoPagamento;
+  if (input.Blocco !== undefined) extraPatches.Blocco = input.Blocco;
+
+  await db.query(
+    `UPDATE core.utenti
+        SET display_name = coalesce($2, display_name),
+            ruolo = coalesce($3, ruolo),
+            fido = coalesce($4, fido),
+            fs_extra = fs_extra || $5::jsonb
+      WHERE id = $1`,
+    [uid, input.DisplayName ?? null, input.Ruolo ?? null, input.Fido ?? null, JSON.stringify(extraPatches)]
+  );
+}
+
+/** Marca il popup "contributo logistico" del carrello come già visto. */
+export async function markUtentiAvvisati(uid: string): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+  await db.query(
+    `UPDATE core.utenti
+        SET fs_extra = jsonb_set(coalesce(fs_extra, '{}'::jsonb), '{utentiAvvisati}', 'true'::jsonb)
+      WHERE id = $1`,
+    [uid]
+  );
+}
+
+/** Aggiorna il nome visualizzato dell'utente (self-service, pagina Account). */
+export async function updateDisplayName(uid: string, displayName: string): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+  await db.query(`UPDATE core.utenti SET display_name = $2 WHERE id = $1`, [uid, displayName]);
 }
 
 /** Crea un account Rappresentante. Ritorna null se l'email esiste già. */

@@ -6,8 +6,6 @@ import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import { useCart } from "@/components/layout/CartProvider";
 import { useAuth } from "@/components/layout/AuthProvider";
-import { doc, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 
 function stagioneBadge(stagione: string) {
   if (stagione === "Estive") return <Badge variant="brand">Estive</Badge>;
@@ -28,7 +26,7 @@ export default function CarrelloPage() {
 
   // Mostra popup contributo logistico la prima volta (utentiAvvisati)
   useEffect(() => {
-    if (!user?.uid || (user as Record<string, unknown>).utentiAvvisati) return;
+    if (!user?.uid || user.utentiAvvisati) return;
     setShowLogisticaPopup(true);
   }, [user]);
 
@@ -36,7 +34,11 @@ export default function CarrelloPage() {
     setShowLogisticaPopup(false);
     if (user?.uid) {
       try {
-        await updateDoc(doc(db, "users", user.uid), { utentiAvvisati: true });
+        await fetch("/api/auth/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ UtentiAvvisati: true }),
+        });
       } catch { /* non bloccante */ }
     }
   }

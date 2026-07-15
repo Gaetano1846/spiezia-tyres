@@ -1,8 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { collection, doc, getDoc, getDocs } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
 import { Check, Package, Loader2, ShoppingBag, AlertTriangle, ChevronDown, Search, X, UserCheck } from "lucide-react";
@@ -412,34 +410,30 @@ export default function CheckoutPage() {
       .finally(() => setClienteAddressesLoading(false));
   }, [clienteSelezionato]);
 
+  // Fido: già disponibile su useAuth() (core.utenti/core.clienti via
+  // /api/auth/profile), non serve più una lettura Firestore dedicata.
+  useEffect(() => {
+    if (user?.Fido_Residuo != null && user.Fido_Residuo < 0) setFidoBlocked(true);
+  }, [user?.Fido_Residuo]);
+
   useEffect(() => {
     if (!user?.uid) return;
-    // Load fido and saved addresses in parallel
-    Promise.all([
-      getDoc(doc(db, "users", user.uid)),
-      getDocs(collection(db, "users", user.uid, "Indirizzo_Fatturazione")),
-    ]).then(([userSnap, addrSnap]) => {
-      if (userSnap.exists()) {
-        const d = userSnap.data() as Record<string, unknown>;
-        if (typeof d.Fido_Residuo === "number" && d.Fido_Residuo < 0) {
-          setFidoBlocked(true);
-        }
-      }
-      const addrs: SavedAddress[] = addrSnap.docs.map((d) => {
-        const a = d.data() as Record<string, string>;
-        return {
-          id: d.id,
+    fetch("/api/account/indirizzi?tipo=fatturazione")
+      .then((res) => res.json())
+      .then(({ indirizzi }: { indirizzi: { id: string; Nome: string | null; Azienda: string | null; Ragione_Sociale?: string | null; Via: string | null; CAP: string | null; Citta: string | null; Provincia: string | null; Partita_Iva?: string | null }[] }) => {
+        const addrs: SavedAddress[] = (indirizzi ?? []).map((a) => ({
+          id: a.id,
           label: a.Nome ?? a.Azienda ?? a.Ragione_Sociale ?? "",
           nome: a.Nome ?? a.Ragione_Sociale ?? a.Azienda ?? "",
           via: a.Via ?? "",
           cap: a.CAP ?? "",
           citta: a.Citta ?? "",
           provincia: a.Provincia ?? "",
-          partitaIva: a.PartitaIVA ?? a.PIVA ?? "",
-        };
-      });
-      setSavedAddresses(addrs);
-    }).catch(() => {});
+          partitaIva: a.Partita_Iva ?? "",
+        }));
+        setSavedAddresses(addrs);
+      })
+      .catch(() => {});
   }, [user?.uid]);
 
   if (items.length === 0) {
