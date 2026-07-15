@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
 import { getClientiAssegnati } from "@/lib/rappresentanteDb";
 import { listOrdini } from "@/lib/ordiniDb";
 
@@ -13,8 +12,8 @@ export const runtime = "nodejs";
 // utente_id == rappresentante), ma anche quelli che il cliente ha piazzato
 // autonomamente (utente_id == cliente) O quelli piazzati da staff per suo
 // conto (cliente_id == la sua anagrafica). Il collegamento cliente→
-// rappresentante vive su users/{uid}.Rappresentante (Firestore, fuori scope
-// di questa migrazione), risolto da getClientiAssegnati.
+// rappresentante vive su core.utenti.fs_extra->>'Rappresentante', risolto da
+// getClientiAssegnati (Postgres).
 //
 // core.ordini è già allineato in tempo reale dal bridge: una singola query
 // Postgres con utente_id/cliente_id = ANY($1) sostituisce le due query
@@ -27,8 +26,7 @@ export async function GET() {
   }
 
   try {
-    const db = adminDb();
-    const clienti = await getClientiAssegnati(db, session.email);
+    const clienti = await getClientiAssegnati(session.email);
     if (clienti.length === 0) return NextResponse.json({ ordini: [], clienti: [] });
 
     const uidToNome = new Map(clienti.map((c) => [c.uid, c.nome]));

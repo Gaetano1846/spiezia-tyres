@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { collection, doc, getDoc, getDocs, query, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentReference } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
@@ -151,8 +151,6 @@ function SearchableClienteDropdown({
   const [searchText, setSearchText] = useState("");
   const [results, setResults] = useState<ClienteSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
-  const [hasMore, setHasMore] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -169,7 +167,10 @@ function SearchableClienteDropdown({
       .catch(() => setRepClienti([]));
   }, [scopeToOwnClients]);
 
-  const fetchClienti = useCallback(async (text: string, after: QueryDocumentSnapshot | null = null) => {
+  // Admin (non scopeToOwnClients): ricerca su TUTTI i clienti via /api/clienti
+  // (Postgres core.clienti) — sostituisce la query diretta
+  // collection(db,"Clienti") + orderBy/startAfter paginata client-side.
+  const fetchClienti = useCallback(async (text: string) => {
     if (scopeToOwnClients) {
       const all = repClienti ?? [];
       const t = text.trim().toLowerCase();
@@ -182,42 +183,16 @@ function SearchableClienteDropdown({
           )
         : all;
       setResults(docs);
-      setHasMore(false);
       setLoading(repClienti === null);
       return;
     }
     setLoading(true);
     try {
-      const col = collection(db, "Clienti");
-      const PAGE = 10;
-      let q;
-      if (text.trim() === "") {
-        q = after
-          ? query(col, orderBy("Ragione_Sociale"), startAfter(after), limit(PAGE))
-          : query(col, orderBy("Ragione_Sociale"), limit(PAGE));
-      } else {
-        // Search client-side among a reasonable subset: fetch up to 200, filter locally
-        q = query(col, orderBy("Ragione_Sociale"), limit(200));
-      }
-      const snap = await getDocs(q);
-      let docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ClienteSearchResult));
-      if (text.trim() !== "") {
-        const t = text.toLowerCase();
-        docs = docs.filter((c) =>
-          (c.Ragione_Sociale || "").toLowerCase().includes(t) ||
-          (c.Nome || "").toLowerCase().includes(t) ||
-          (c.Telefono || "").toLowerCase().includes(t) ||
-          (c.Email || "").toLowerCase().includes(t)
-        );
-      }
-      if (after) {
-        setResults((prev) => [...prev, ...docs]);
-      } else {
-        setResults(docs);
-      }
-      const last = snap.docs[snap.docs.length - 1] ?? null;
-      setLastDoc(last);
-      setHasMore(snap.docs.length === PAGE && text.trim() === "");
+      const params = new URLSearchParams({ limit: "200" });
+      if (text.trim()) params.set("q", text.trim());
+      const res = await fetch(`/api/clienti?${params.toString()}`);
+      const data = (await res.json().catch(() => null)) as { clienti?: ClienteSearchResult[] } | null;
+      setResults(data?.clienti ?? []);
     } catch {
       // silently fail
     } finally {
@@ -230,7 +205,7 @@ function SearchableClienteDropdown({
     if (!open) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      fetchClienti(searchText, null);
+      fetchClienti(searchText);
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -241,7 +216,6 @@ function SearchableClienteDropdown({
   function handleOpen() {
     setOpen(true);
     setSearchText("");
-    setLastDoc(null);
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
@@ -365,17 +339,6 @@ function SearchableClienteDropdown({
                 </div>
               </button>
             ))}
-            {hasMore && (
-              <button
-                type="button"
-                onClick={() => fetchClienti(searchText, lastDoc)}
-                disabled={loading}
-                className="w-full py-2 text-xs font-semibold"
-                style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}
-              >
-                {loading ? <Loader2 size={14} className="animate-spin mx-auto" /> : "Carica altri…"}
-              </button>
-            )}
           </div>
         </div>
       )}

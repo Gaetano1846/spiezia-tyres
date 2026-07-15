@@ -30,7 +30,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const db = adminDb();
 
     if (session.Ruolo !== "Admin") {
-      const assegnati = await getClientiAssegnati(db, session.email);
+      const assegnati = await getClientiAssegnati(session.email);
       const autorizzato = assegnati.some((c) => c.clienteRefId === id);
       if (!autorizzato) {
         return NextResponse.json({ error: "Non sei autorizzato a visualizzare questo cliente" }, { status: 403 });

@@ -21,6 +21,8 @@ export interface SpedizioneApi {
   MagazzinoLabel: string;
   Status: string | null;
   WarehouseStatus: string | null;
+  MotivoAnnullamento: string | null;
+  NoteAggiuntive: string | null;
   CreatedAt: string | null;
 }
 
@@ -38,6 +40,8 @@ function rowToSpedizione(r: Record<string, unknown>): SpedizioneApi {
     MagazzinoLabel: (r.sede_nome as string) ?? "—",
     Status: (r.status as string) ?? null,
     WarehouseStatus: (r.warehouse_status as string) ?? null,
+    MotivoAnnullamento: (r.motivo_annullamento as string) ?? null,
+    NoteAggiuntive: (r.note_aggiuntive as string) ?? null,
     CreatedAt: r.created_at ? (r.created_at as Date).toISOString() : null,
   };
 }
@@ -97,6 +101,27 @@ export async function listSpedizioni(dataDaIso: string, dataAIso: string, limit 
     [dataDaIso, dataAIso, limit]
   );
   return { rows: rows.map(rowToSpedizione), capped: rows.length >= limit };
+}
+
+/** Spedizioni di UN ordine — sostituisce l'onSnapshot Firestore filtrato per
+ *  orderReference (modale "Spedizioni" nella lista ordini admin). A differenza
+ *  di listSpedizioni (filtro per data), qui non c'è range: un ordine può
+ *  essere stato spedito/ri-spedito in date diverse dalla sua creazione. Il
+ *  chiamante fa polling periodico su questa funzione mentre il modale è
+ *  aperto (nessuna infra WebSocket/SSE in questo repo — stesso pattern già
+ *  usato da SpedizioniJobsWidget per i job GLS bulk). */
+export async function listSpedizioniByOrdine(ordineId: string): Promise<SpedizioneApi[]> {
+  const db = getDb();
+  if (!db) return [];
+  const { rows } = await db.query(
+    `SELECT s.*, sede.nome AS sede_nome
+       FROM b2b.spedizioni s
+       LEFT JOIN core.sedi sede ON sede.id = s.warehouse_sede_id
+      WHERE s.ordine_id = $1
+      ORDER BY s.created_at DESC`,
+    [ordineId]
+  );
+  return rows.map(rowToSpedizione);
 }
 
 export interface SpedizioniKpi {

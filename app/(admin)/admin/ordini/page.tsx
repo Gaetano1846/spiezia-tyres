@@ -1,10 +1,6 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import {
-  collection, query, orderBy, where, onSnapshot, doc,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Search, X, Eye, Truck, Download, Check, MapPin, RefreshCw, Package2, CalendarDays, ChevronDown, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import CalendarRangePicker from "@/components/ui/CalendarRangePicker";
@@ -14,6 +10,7 @@ import toast from "react-hot-toast";
 import { trackGlsJob } from "@/lib/gls/jobTracking";
 import type { OrdineStato } from "@/lib/types";
 import type { OrdineListItemApi } from "@/lib/ordiniDb";
+import type { SpedizioneApi } from "@/lib/spedizioniDb";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -137,22 +134,53 @@ const WAREHOUSE_STATUS_STYLE: Record<string, { bg: string; text: string }> = {
   "Annullato":       { bg: "#FEE2E2", text: "#991B1B" },
 };
 
+function apiToLocalSpedizione(s: SpedizioneApi): Spedizione {
+  return {
+    id: s.id,
+    Corriere: s.Corriere ?? undefined,
+    parcelId: s.ParcelId ?? undefined,
+    destinationName: s.DestinationName ?? undefined,
+    warehouseStatus: s.WarehouseStatus ?? undefined,
+    contractIndex: s.ContractIndex ?? undefined,
+    motivoAnnullamento: s.MotivoAnnullamento ?? undefined,
+    noteAggiuntive: s.NoteAggiuntive ?? undefined,
+  };
+}
+
+// Polling periodico invece dell'onSnapshot Firestore realtime: Ordini/
+// Spedizioni sono già migrati a Postgres (Fase 6h, /api/spedizioni), che non
+// ha infra WebSocket/SSE — stesso pattern già usato da SpedizioniJobsWidget
+// per i job GLS bulk. 7s è un compromesso tra freschezza percepita e carico:
+// il modale mostra spedizioni già create (lo stato cambia raramente mentre è
+// aperto), a differenza del job GLS che il widget segue mentre è "running".
+const SPEDIZIONI_POLL_MS = 7000;
+
 function SpedizioneModal({ docId, orderId, onClose }: { docId: string; orderId: string; onClose: () => void }) {
   const [spedizioni, setSpedizioni] = useState<Spedizione[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const ref = doc(db, "Ordini", docId);
-    const q = query(
-      collection(db, "Spedizioni"),
-      where("orderReference", "==", ref),
-      orderBy("createdAt", "desc"),
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setSpedizioni(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Spedizione)));
-      setLoading(false);
-    }, () => setLoading(false));
-    return unsub;
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const res = await fetch(`/api/spedizioni?ordineId=${encodeURIComponent(docId)}`);
+        const data = await res.json().catch(() => null) as { spedizioni?: SpedizioneApi[] } | null;
+        if (cancelled) return;
+        setSpedizioni((data?.spedizioni ?? []).map(apiToLocalSpedizione));
+      } catch {
+        // silenzioso: il prossimo poll riprova
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    const interval = setInterval(load, SPEDIZIONI_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [docId]);
 
   const SEDE = ["Nola", "Roma"];

@@ -3,8 +3,6 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Search } from "lucide-react";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
 
@@ -23,7 +21,7 @@ const STAGIONI = [
   { key: "Invernali",  icon: "❄️", label: "Invernali" },
 ] as const;
 
-type PromoImg = { id: string; Url?: string; URL?: string; Immagine?: string; Ordine?: number; Attivo?: boolean };
+type PromoImg = { id: string; Url?: string };
 
 export default function HomePage() {
   const router = useRouter();
@@ -35,15 +33,13 @@ export default function HomePage() {
   const [stagioni,       setStagioni]       = useState<string[]>([]);
   const [promo,          setPromo]          = useState<PromoImg[]>([]);
 
+  // /api/banner?active=true sostituisce la collection(db,"Promo_Immagini")
+  // diretta — Postgres (b2b.banners) è già la fonte autoritativa (Fase 6),
+  // filtro Attivo e ordinamento per Ordine già applicati server-side.
   useEffect(() => {
-    getDocs(collection(db, "Promo_Immagini"))
-      .then((snap) => {
-        const items = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as PromoImg))
-          .filter((p) => p.Attivo !== false)          // mostra tutti salvo Attivo==false esplicito
-          .sort((a, b) => (a.Ordine ?? 0) - (b.Ordine ?? 0));
-        setPromo(items);
-      })
+    fetch("/api/banner?active=true")
+      .then((r) => r.json())
+      .then((data: { banners?: PromoImg[] }) => setPromo(data.banners ?? []))
       .catch(() => {});
   }, []);
 
@@ -172,7 +168,7 @@ export default function HomePage() {
               style={{ gap: 25, scrollbarWidth: "thin", scrollbarColor: "#FFC803 rgba(255,255,255,0.2)" }}
             >
               {promo.map((p) => {
-                const src = p.Url ?? p.URL ?? p.Immagine;
+                const src = p.Url;
                 if (!src) return null;
                 return (
                   <div
