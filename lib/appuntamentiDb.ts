@@ -1,10 +1,9 @@
-// Accesso Postgres al dominio Appuntamenti (Fase 6 — cutover app→Postgres).
+// Accesso Postgres al dominio Appuntamenti (Fase 6 — cutover app→Postgres;
+// Fase 7 — estende listAppuntamenti con filtri clienteId/from/to per il
+// cutover di dashboard CRM e scheda cliente, che leggevano Appuntamenti
+// direttamente da Firestore).
 // b2b.appuntamenti è ora la fonte autoritativa per le scritture: il bridge le
 // propaga a Firestore, così il CRM FlutterFlow legacy continua a vederle.
-//
-// Le pagine di lista/dashboard/scheda-cliente restano volutamente su lettura
-// Firestore diretta (già corretto: il bridge tiene i riferimenti allineati) —
-// solo le pagine di lista/creazione/modifica CRM sono cutover qui.
 
 import { getDb, newId } from "@/lib/db";
 
@@ -54,10 +53,35 @@ const SELECT_BASE = `
     LEFT JOIN core.clienti c ON c.id = a.cliente_id
     LEFT JOIN core.sedi s ON s.id = a.sede_id`;
 
-export async function listAppuntamenti(limit = 200): Promise<AppuntamentoApi[]> {
+export interface ListAppuntamentiOptions {
+  limit?: number;
+  /** Filtra per cliente (scheda cliente CRM). */
+  clienteId?: string;
+  /** Range inclusivo su data_ora, ISO string — usato dalla dashboard per "oggi". */
+  from?: string;
+  to?: string;
+}
+
+export async function listAppuntamenti(opts: ListAppuntamentiOptions = {}): Promise<AppuntamentoApi[]> {
   const db = getDb();
   if (!db) return [];
-  const { rows } = await db.query(`${SELECT_BASE} ORDER BY a.data_ora DESC NULLS LAST LIMIT $1`, [limit]);
+  const { limit = 200, clienteId, from, to } = opts;
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (clienteId) { params.push(clienteId); conditions.push(`a.cliente_id = $${params.length}`); }
+  if (from)      { params.push(from);      conditions.push(`a.data_ora >= $${params.length}`); }
+  if (to)        { params.push(to);        conditions.push(`a.data_ora <= $${params.length}`); }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  params.push(limit);
+  // Un range di date (dashboard "oggi") mostra la giornata in ordine cronologico;
+  // la lista CRM/scheda-cliente resta più-recente-prima (comportamento invariato).
+  const order = from || to ? "ASC" : "DESC";
+  const { rows } = await db.query(
+    `${SELECT_BASE} ${where} ORDER BY a.data_ora ${order} NULLS LAST LIMIT $${params.length}`,
+    params
+  );
   return rows.map(rowToAppuntamento);
 }
 

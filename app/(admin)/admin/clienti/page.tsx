@@ -488,23 +488,38 @@ export default function ClientiPage() {
         Metodo_di_Pagamento: editUser.MetodoPagamento.trim(),
         Blocco: editUser.Bloccato,
       });
-      // Il fido e l'anagrafica vivono sul doc Clienti se l'utente è collegato
+      // Il fido e l'anagrafica vivono sul doc Clienti se l'utente è collegato.
+      // FIX split-brain Fido: prima questo ramo scriveva SOLO su Firestore
+      // (updateDoc diretto), ma il gate di blocco checkout legge/scrive
+      // core.clienti.fido/fido_residuo su Postgres (lib/clientiDb.ts) — un
+      // fido aggiornato qui non arrivava mai al valore usato realmente per
+      // bloccare/sbloccare gli ordini. Ora passa da PATCH /api/clienti/:id
+      // (già esistente, Postgres-autoritativo); il bridge esistente propaga
+      // automaticamente a Firestore per la UI CRM FlutterFlow legacy.
       if (editUser.clienteRef) {
         const ref = editUser.clienteRef;
-        await updateDoc(ref, {
-          Fido: fidoVal,
-          Ragione_Sociale: editUser.ragioneSociale.trim(),
-          Nome: editUser.clienteNome.trim(),
-          Telefono: editUser.telefono.trim(),
-          Partita_Iva: editUser.partitaIva.trim(),
-          Metodo_di_Pagamento: editUser.MetodoPagamento.trim(),
+        const res = await fetch(`/api/clienti/${ref.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            Fido: fidoVal,
+            Ragione_Sociale: editUser.ragioneSociale.trim(),
+            Nome: editUser.clienteNome.trim(),
+            Telefono: editUser.telefono.trim(),
+            Partita_Iva: editUser.partitaIva.trim(),
+            Metodo_di_Pagamento: editUser.MetodoPagamento.trim(),
+          }),
         });
+        if (!res.ok) throw new Error("save cliente failed");
         setClientiFido((prev) => ({
           ...prev,
           [ref.path]: { fido: fidoVal, fidoResiduo: prev[ref.path]?.fidoResiduo ?? 0 },
         }));
       } else {
         // Utente non collegato a un Cliente: fido salvato come fallback su users
+        // (residuo su Firestore — core.utenti ha anch'esso colonne fido/fido_residuo
+        // e lo stesso trigger di bridge, ma non esiste ancora un endpoint Postgres
+        // per questo caso limite; caso raro, segnalato nel report finale).
         await updateDoc(doc(db, "users", editUser.docId), { Fido: fidoVal });
       }
       mutateUsers((prev) => prev.map((x) => (x.docId === editUser.docId ? {

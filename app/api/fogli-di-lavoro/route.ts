@@ -4,13 +4,16 @@ import { listFogli, createFoglio } from "@/lib/fogliDb";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || !isCRM(session)) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
+  const { searchParams } = new URL(req.url);
+  const clienteId = searchParams.get("clienteId") ?? undefined;
+  const limit = Math.min(Number(searchParams.get("limit")) || 300, 1000);
   try {
-    const fogli = await listFogli(300);
+    const fogli = await listFogli({ limit, clienteId });
     return NextResponse.json({ fogli });
   } catch (err) {
     console.error("[api/fogli-di-lavoro GET]", err);

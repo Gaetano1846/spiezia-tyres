@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   collection, collectionGroup, query, where, getDocs, getDoc,
-  getCountFromServer, limit, updateDoc, doc,
+  limit, updateDoc, doc,
   Timestamp, type DocumentReference,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -13,17 +13,12 @@ import Badge from "@/components/ui/Badge";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import { useAuth } from "@/components/layout/AuthProvider";
-import type { Appuntamento } from "@/lib/types";
+import type { AppuntamentoApi } from "@/lib/appuntamentiDb";
 
 const statoVariant: Record<string, "success" | "brand" | "neutral"> = {
   Completato:  "success",
   "In corso":  "brand",
   Programmato: "neutral",
-};
-
-type AppEntry = {
-  app: Appuntamento;
-  clienteNome: string;
 };
 
 type PromemoriaItem = {
@@ -45,11 +40,13 @@ async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Reco
   return map;
 }
 
-function formatOra(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+/** Appuntamenti: DataOra ora arriva come ISO string da /api/appuntamenti (Postgres). */
+function formatOra(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Promemoria: Data resta un Timestamp Firestore (dominio non migrato — vedi nota in fetchAll). */
 function formatData(ts: Timestamp | null | undefined): string {
   if (!ts?.toDate) return "—";
   return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short" });
@@ -65,7 +62,7 @@ type KPIs = {
 export default function DashboardPage() {
   const { user } = useAuth();
   const [kpis, setKpis]             = useState<KPIs | null>(null);
-  const [appOggi, setAppOggi]       = useState<AppEntry[]>([]);
+  const [appOggi, setAppOggi]       = useState<AppuntamentoApi[]>([]);
   const [promemoria, setPromemoria] = useState<PromemoriaItem[]>([]);
   const [loading, setLoading]       = useState(true);
   const [markingId, setMarkingId]   = useState<string | null>(null);
@@ -74,19 +71,21 @@ export default function DashboardPage() {
 
   const fetchAll = useCallback(async (uid: string) => {
     const now        = new Date();
-    const startOfDay = Timestamp.fromDate(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0));
-    const endOfDay   = Timestamp.fromDate(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59));
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
     try {
-      const [clientiSnap, appSnap, prevSnap, fogliSnap, promemoriaSnap] = await Promise.all([
-        getCountFromServer(collection(db, "Clienti")),
-        getDocs(query(
-          collection(db, "Appuntamenti"),
-          where("DataOra", ">=", startOfDay),
-          where("DataOra", "<=", endOfDay),
-        )),
+      // Clienti/Appuntamenti/Foglio_di_Lavoro: Postgres via API (Fase 7 — prima
+      // leggevano Firestore direttamente). Preventivi (collectionGroup) e
+      // Promemoria (sotto-collezione users/{uid}/Promemoria) restano
+      // volontariamente su Firestore: dominio Preventivi fuori scope di questa
+      // fase (altro workstream), Promemoria non ha ancora uno schema Postgres
+      // dedicato — vedi nota più sotto.
+      const [clientiRes, appRes, prevSnap, fogliRes, promemoriaSnap] = await Promise.all([
+        fetch(`/api/clienti?limit=1`),
+        fetch(`/api/appuntamenti?from=${encodeURIComponent(startOfDay.toISOString())}&to=${encodeURIComponent(endOfDay.toISOString())}`),
         getDocs(query(collectionGroup(db, "Preventivo"), limit(500))),
-        getDocs(query(collection(db, "Foglio_di_Lavoro"), limit(1000))),
+        fetch(`/api/fogli-di-lavoro?limit=1000`),
         getDocs(query(
           // I promemoria CRM vengono creati dalla scheda cliente in questo store
           // condiviso (campo "Completata"). La dashboard mostra quelli ancora aperti.
@@ -96,24 +95,13 @@ export default function DashboardPage() {
         )),
       ]);
 
-      const apps = appSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as Appuntamento))
-        .sort((a, b) => {
-          const ta = (a.DataOra as Timestamp)?.seconds ?? 0;
-          const tb = (b.DataOra as Timestamp)?.seconds ?? 0;
-          return ta - tb;
-        });
+      if (!clientiRes.ok) throw new Error(`clienti ${clientiRes.status}`);
+      if (!appRes.ok) throw new Error(`appuntamenti ${appRes.status}`);
+      if (!fogliRes.ok) throw new Error(`fogli ${fogliRes.status}`);
 
-      const clienteRefs = apps.map((a) => a.Cliente).filter(Boolean) as DocumentReference[];
-      const clientiMap  = await batchGetDocs(clienteRefs);
-
-      const resolved: AppEntry[] = apps.map((app) => {
-        const c = app.Cliente ? clientiMap.get(app.Cliente.path) : undefined;
-        const clienteNome = c
-          ? ((c.Azienda && c.Ragione_Sociale) ? (c.Ragione_Sociale as string) : ((c.Nome as string)?.trim() || "—"))
-          : "—";
-        return { app, clienteNome };
-      });
+      const { total: clientiCount } = (await clientiRes.json()) as { total?: number };
+      const { appuntamenti: apps } = (await appRes.json()) as { appuntamenti: AppuntamentoApi[] };
+      const { fogli } = (await fogliRes.json()) as { fogli: Array<{ Stato: string }> };
 
       // "Aperti" = non ancora accettati né rifiutati. I preventivi nascono
       // con Stato "In attesa" (e flag Accettato=false), quindi non basta
@@ -125,11 +113,7 @@ export default function DashboardPage() {
         return !["Accettato", "Rifiutato"].includes(stato);
       }).length;
 
-      const fogliAttivi = fogliSnap.docs.filter((d) => {
-        const data = d.data();
-        if (data.Stato) return data.Stato !== "Completato" && data.Stato !== "Chiuso";
-        return !data.Ora_Fine;
-      }).length;
+      const fogliAttivi = fogli.filter((f) => f.Stato !== "Completato" && f.Stato !== "Chiuso").length;
 
       // Promemoria: raw docs, resolve cliente nomi in batch
       const promRaw: PromemoriaItem[] = promemoriaSnap.docs.map((d) => ({
@@ -154,18 +138,18 @@ export default function DashboardPage() {
       }));
 
       // Filter: mostra solo quelli con Data <= oggi (o senza data)
-      const todayTs = Timestamp.fromDate(endOfDay.toDate());
+      const todayTs = Timestamp.fromDate(endOfDay);
       const promoFiltrati = promWithCliente
         .filter((p) => !p.Data || p.Data.seconds <= todayTs.seconds)
         .sort((a, b) => (a.Data?.seconds ?? 0) - (b.Data?.seconds ?? 0));
 
       setKpis({
-        clientiCount:     clientiSnap.data().count,
+        clientiCount:     clientiCount ?? 0,
         appOggiCount:     apps.length,
         prevApertiCount:  prevAperti,
         fogliAttiviCount: fogliAttivi,
       });
-      setAppOggi(resolved);
+      setAppOggi(apps);
       setPromemoria(promoFiltrati);
     } catch (e) {
       console.error(e);
@@ -270,7 +254,7 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="space-y-1">
-                {appOggi.map(({ app, clienteNome }) => {
+                {appOggi.map((app) => {
                   const servizioNome = app.Servizi?.map((s) => s.Titolo).join(", ") ?? "—";
                   return (
                     <div
@@ -280,12 +264,12 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-1.5 w-14 flex-shrink-0" style={{ color: "var(--text-muted)" }}>
                         <Clock size={13} />
                         <span className="text-xs font-medium" style={{ fontFamily: "var(--font-montserrat)" }}>
-                          {formatOra(app.DataOra as Timestamp)}
+                          {formatOra(app.DataOra)}
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold truncate" style={{ fontFamily: "var(--font-montserrat)" }}>
-                          {clienteNome}
+                          {app.ClienteNome}
                         </p>
                         <p className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>
                           {servizioNome}
