@@ -2,10 +2,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  type Timestamp,
-  type DocumentReference,
-} from "firebase/firestore";
-import {
   Users,
   Search,
   CreditCard,
@@ -25,20 +21,20 @@ import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
 import InfiniteScrollSentinel from "@/components/ui/InfiniteScrollSentinel";
 import toast from "react-hot-toast";
-import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
+import { useUtentiInfiniteList, type UtenteListItem } from "@/hooks/useUtentiInfiniteList";
 
 type UserDoc = {
-  docId: string;  // always the Firestore document ID — used as React key
+  docId: string;  // core.utenti.id — usato come React key
   uid?: string;
-  // Nomi reali dei campi nei doc "users" (schema FlutterFlow, snake_case)
+  // Campi derivati da core.utenti (Postgres) — vedi hooks/useUtentiInfiniteList.
   display_name?: string;
   email?: string;
   Ruolo?: string;
   Rappresentante?: string;
   Metodo_di_Pagamento?: string;
-  last_active_time?: Timestamp | string;  // doc legacy: alcuni sono stringa ISO invece di Timestamp
+  last_active_time?: string;  // ISO string (core.utenti.last_login)
   Blocco?: boolean;
-  Cliente_Ref?: DocumentReference;  // riferimento al doc Clienti (dove vive il fido reale)
+  Cliente_Ref?: string;  // core.clienti.id collegato (dove vive il fido reale)
   Fido?: number;        // eventuale fido denormalizzato su users (fallback)
   Fido_Residuo?: number;
   // Alias legacy mantenuti come fallback (alcuni doc storici potrebbero usarli)
@@ -46,7 +42,7 @@ type UserDoc = {
   Cognome?: string;
   displayName?: string;
   Email?: string;
-  lastLogin?: Timestamp | string;
+  lastLogin?: string;
   Bloccato?: boolean;
 };
 
@@ -54,19 +50,13 @@ function formatEuro(n: number) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-// Alcuni doc legacy hanno last_active_time/lastLogin scritti come stringa ISO
-// invece di un Firestore Timestamp (dato esterno, boundary non affidabile —
-// normalizza entrambi i formati invece di assumere .toMillis() esista).
-function toMillis(ts: Timestamp | string | undefined | null): number | null {
+function toMillis(ts: string | undefined | null): number | null {
   if (!ts) return null;
-  if (typeof ts === "string") {
-    const ms = Date.parse(ts);
-    return Number.isNaN(ms) ? null : ms;
-  }
-  return ts.toMillis();
+  const ms = Date.parse(ts);
+  return Number.isNaN(ms) ? null : ms;
 }
 
-function relativeTime(ts?: Timestamp | string): string {
+function relativeTime(ts?: string): string {
   const start = toMillis(ts);
   if (start === null) return "—";
   const ms = Date.now() - start;
@@ -141,7 +131,7 @@ type EditState = {
   MetodoPagamento: string;    // users.Metodo_di_Pagamento
   Fido: string;
   Bloccato: boolean;
-  clienteRef: DocumentReference | null;  // dove scrivere il fido / dati anagrafici (Clienti se collegato)
+  clienteRef: string | null;  // core.clienti.id — dove scrivere il fido / dati anagrafici (Clienti se collegato)
   // ── Campi del documento "Clienti" collegato (se presente) ──
   hasCliente: boolean;
   clienteLoading: boolean;
@@ -285,11 +275,21 @@ export default function ClientiPage() {
     reload: reloadUsers,
     mutate: mutateUsers,
     epoch: usersEpoch,
-  } = useFirestoreInfiniteList<UserDoc>({
-    collectionPath: "users",
-    orderByField: "email",
+  } = useUtentiInfiniteList<UserDoc>({
     pageSize: 100,
-    mapDoc: useCallback((id, data) => ({ ...data, docId: id }) as UserDoc, []),
+    mapItem: useCallback((u: UtenteListItem): UserDoc => ({
+      docId: u.id,
+      email: u.email ?? undefined,
+      display_name: u.displayName ?? undefined,
+      Ruolo: u.ruolo ?? undefined,
+      Rappresentante: u.rappresentante ?? undefined,
+      Metodo_di_Pagamento: u.metodoPagamento ?? undefined,
+      Blocco: u.blocco,
+      Cliente_Ref: u.clienteId ?? undefined,
+      Fido: u.fido,
+      Fido_Residuo: u.fidoResiduo,
+      last_active_time: u.lastLogin ?? undefined,
+    }), []),
   });
   const [search, setSearch] = useState("");
   const [filtroRuolo, setFiltroRuolo] = useState("Tutti");
@@ -316,14 +316,14 @@ export default function ClientiPage() {
     });
   }
 
-  // Fido risolto dai doc Clienti collegati via Cliente_Ref — mappa path-Clienti → fido
+  // Fido risolto dai Clienti collegati via Cliente_Ref (core.clienti.id) → fido
   const [clientiFido, setClientiFido] = useState<Record<string, { fido: number; fidoResiduo: number }>>({});
 
   // Fido effettivo di un utente: dal Clienti collegato se disponibile, altrimenti fallback su users.Fido
   function fidoForUser(u: UserDoc): number {
     const ref = u.Cliente_Ref;
-    if (ref && typeof ref === "object" && "path" in ref) {
-      const entry = clientiFido[ref.path];
+    if (ref) {
+      const entry = clientiFido[ref];
       if (entry) return entry.fido;
     }
     return u.Fido ?? 0;
@@ -336,31 +336,29 @@ export default function ClientiPage() {
     if (search.trim()) loadAll();
   }, [search, loadAll, usersEpoch]);
 
-  // Risolve i doc Clienti referenziati (Cliente_Ref) per recuperare il fido reale
+  // Risolve i Clienti referenziati (Cliente_Ref = core.clienti.id) per recuperare il fido reale
   useEffect(() => {
-    const refs = new Map<string, DocumentReference>();
+    const ids = new Set<string>();
     for (const u of users) {
-      const r = u.Cliente_Ref;
-      if (r && typeof r === "object" && "path" in r) refs.set(r.path, r);
+      if (u.Cliente_Ref) ids.add(u.Cliente_Ref);
     }
-    const toFetch = [...refs.values()].filter((r) => !(r.path in clientiFido));
+    const toFetch = [...ids].filter((id) => !(id in clientiFido));
     if (toFetch.length === 0) return;
     let cancelled = false;
     Promise.all(
-      toFetch.map(async (r) => {
+      toFetch.map(async (id) => {
         try {
-          // r.id == core.clienti.id (stesso ID preservato dalla Fase 3 di migrazione).
-          const res = await fetch(`/api/clienti/${r.id}`);
+          const res = await fetch(`/api/clienti/${id}`);
           if (!res.ok) return null;
           const { cliente: d } = (await res.json()) as { cliente: { Fido?: number; Fido_Residuo?: number } };
-          return { path: r.path, fido: Number(d.Fido ?? 0), fidoResiduo: Number(d.Fido_Residuo ?? 0) };
+          return { id, fido: Number(d.Fido ?? 0), fidoResiduo: Number(d.Fido_Residuo ?? 0) };
         } catch { return null; }
       })
     ).then((results) => {
       if (cancelled) return;
       setClientiFido((prev) => {
         const next = { ...prev };
-        for (const res of results) if (res) next[res.path] = { fido: res.fido, fidoResiduo: res.fidoResiduo };
+        for (const res of results) if (res) next[res.id] = { fido: res.fido, fidoResiduo: res.fidoResiduo };
         return next;
       });
     });
@@ -448,8 +446,7 @@ export default function ClientiPage() {
     });
     // Se collegato a un Cliente, carica i dati anagrafici da modificare.
     if (ref) {
-      // ref.id == core.clienti.id (stesso ID preservato dalla Fase 3 di migrazione).
-      fetch(`/api/clienti/${ref.id}`)
+      fetch(`/api/clienti/${ref}`)
         .then((res) => (res.ok ? res.json() : { cliente: {} }))
         .then(({ cliente: d }: { cliente: {
           Ragione_Sociale?: string; Nome?: string; Telefono?: string;
@@ -508,7 +505,7 @@ export default function ClientiPage() {
       // automaticamente a Firestore per la UI CRM FlutterFlow legacy.
       if (editUser.clienteRef) {
         const ref = editUser.clienteRef;
-        const res = await fetch(`/api/clienti/${ref.id}`, {
+        const res = await fetch(`/api/clienti/${ref}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -523,7 +520,7 @@ export default function ClientiPage() {
         if (!res.ok) throw new Error("save cliente failed");
         setClientiFido((prev) => ({
           ...prev,
-          [ref.path]: { fido: fidoVal, fidoResiduo: prev[ref.path]?.fidoResiduo ?? 0 },
+          [ref]: { fido: fidoVal, fidoResiduo: prev[ref]?.fidoResiduo ?? 0 },
         }));
       } else {
         // Utente non collegato a un Cliente: fido salvato sulla colonna reale
@@ -560,10 +557,9 @@ export default function ClientiPage() {
     setDetailUser(u);
     setDetailCliente(null);
     const ref = u.Cliente_Ref;
-    if (ref && typeof ref === "object" && "path" in ref) {
+    if (ref) {
       setDetailLoading(true);
-      // ref.id == core.clienti.id (stesso ID preservato dalla Fase 3 di migrazione).
-      fetch(`/api/clienti/${ref.id}`)
+      fetch(`/api/clienti/${ref}`)
         .then((res) => (res.ok ? res.json() : { cliente: {} }))
         .then(({ cliente }: { cliente: ClienteDetail }) => setDetailCliente(cliente ?? {}))
         .catch(() => setDetailCliente({}))
@@ -627,9 +623,8 @@ export default function ClientiPage() {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Errore nella creazione del cliente");
       toast.success("Cliente creato nell'anagrafica");
-      // Se è stata impostata una password, il bridge scrive un nuovo doc "users"
-      // su Firestore in modo asincrono — un reload subito dopo potrebbe non
-      // vederlo ancora, ma è comunque meglio del nulla (best-effort).
+      // Se è stata impostata una password, l'account viene creato in core.utenti
+      // nella stessa richiesta: il reload lo vede subito (niente più bridge asincrono).
       if (nc.Password.trim()) reloadUsers();
       setNewCliente(null);
     } catch (e) {
@@ -664,7 +659,6 @@ export default function ClientiPage() {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Errore nella creazione del rappresentante");
       toast.success("Rappresentante creato");
-      // Bridge asincrono verso Firestore — best-effort, vedi saveNewCliente sopra.
       reloadUsers();
       setNewRapp(null);
     } catch (e) {

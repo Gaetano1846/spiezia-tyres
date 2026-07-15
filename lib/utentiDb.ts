@@ -132,6 +132,77 @@ export async function updateUtenteAccount(uid: string, input: UpdateUtenteAccoun
   );
 }
 
+export interface UtenteListItem {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  ruolo: string | null;
+  rappresentante: string | null;
+  metodoPagamento: string | null;
+  blocco: boolean;
+  fido: number;
+  fidoResiduo: number;
+  lastLogin: string | null;
+  /** core.clienti.id collegato (via core.clienti.utente_id), se presente. */
+  clienteId: string | null;
+}
+
+export interface ListUtentiParams {
+  search?: string;
+  ruolo?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Lista paginata di core.utenti per la pagina admin/clienti — sostituisce
+ * useFirestoreInfiniteList(collectionPath:"users"), che leggeva Firestore
+ * direttamente dal browser via Firebase Web SDK. Rappresentante/MetodoPagamento/
+ * Blocco vivono in fs_extra (vedi updateUtenteAccount sopra); clienteId risolve
+ * l'anagrafica Clienti collegata via core.clienti.utente_id, stesso pattern di
+ * getClientiAssegnati (lib/rappresentanteDb.ts).
+ */
+export async function listUtenti(params: ListUtentiParams = {}): Promise<UtenteListItem[]> {
+  const db = getDb();
+  if (!db) return [];
+
+  const search = params.search?.trim() || null;
+  const ruolo = params.ruolo?.trim() || null;
+  const limit = Math.min(Math.max(params.limit ?? 100, 1), 500);
+  const offset = Math.max(params.offset ?? 0, 0);
+
+  const { rows } = await db.query(
+    `SELECT u.id, u.email, u.display_name, u.ruolo, u.fido, u.fido_residuo, u.last_login,
+            u.fs_extra->>'Rappresentante' AS rappresentante,
+            u.fs_extra->>'Metodo_di_Pagamento' AS metodo_pagamento,
+            coalesce((u.fs_extra->>'Blocco')::boolean, false) AS blocco,
+            c.id AS cliente_id
+       FROM core.utenti u
+       LEFT JOIN core.clienti c ON c.utente_id = u.id
+      WHERE ($1::text IS NULL OR
+             (coalesce(u.display_name, '') || ' ' || coalesce(u.email::text, '') || ' ' || coalesce(u.ruolo, ''))
+             ILIKE $1)
+        AND ($2::text IS NULL OR u.ruolo = $2)
+      ORDER BY u.email ASC NULLS LAST, u.id ASC
+      LIMIT $3 OFFSET $4`,
+    [search ? `%${search}%` : null, ruolo, limit, offset]
+  );
+
+  return rows.map((r) => ({
+    id: r.id as string,
+    email: (r.email as string) ?? null,
+    displayName: (r.display_name as string) ?? null,
+    ruolo: (r.ruolo as string) ?? null,
+    rappresentante: (r.rappresentante as string) ?? null,
+    metodoPagamento: (r.metodo_pagamento as string) ?? null,
+    blocco: Boolean(r.blocco),
+    fido: r.fido != null ? Number(r.fido) : 0,
+    fidoResiduo: r.fido_residuo != null ? Number(r.fido_residuo) : 0,
+    lastLogin: r.last_login ? new Date(r.last_login as string).toISOString() : null,
+    clienteId: (r.cliente_id as string) ?? null,
+  }));
+}
+
 /** Marca il popup "contributo logistico" del carrello come già visto. */
 export async function markUtentiAvvisati(uid: string): Promise<void> {
   const db = getDb();
