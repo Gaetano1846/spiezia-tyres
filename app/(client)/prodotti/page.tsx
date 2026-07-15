@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind, ZoomIn, Info } from "lucide-react";
-import { doc, getDoc, collection, getDocs } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useCart } from "@/components/layout/CartProvider";
 import { useAuth } from "@/components/layout/AuthProvider";
@@ -250,20 +250,29 @@ export default function ProdottiPage() {
       setNbPages(r.nbPages);
       setPage(r.page);
 
-      // Arricchisci con dati Firestore (prezzi, stock, PFU)
-      const firestoreDocs = await Promise.all(
-        r.hits.map((hit) => getDoc(doc(db, "Prodotti", hit.objectID)))
-      );
-      const enriched: ProdottoHit[] = r.hits.map((hit, i) => {
-        const fsDoc = firestoreDocs[i];
-        if (!fsDoc.exists()) return hit;
-        const fsData = fsDoc.data() as Record<string, unknown>;
+      // Arricchisci con campi non presenti nell'indice Meili (Foto, Stock_OCP —
+      // Label non ha equivalente Postgres, gap noto e accettato da prima di
+      // questa migrazione, vedi tyre24PgWrite.js). Batch da Postgres invece di
+      // Firestore, stesso endpoint del carrello.
+      const batchRes = await fetch("/api/prodotti/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: r.hits.map((hit) => hit.objectID) }),
+      });
+      const batchById = new Map<string, Record<string, unknown>>();
+      if (batchRes.ok) {
+        const { prodotti } = await batchRes.json();
+        for (const p of prodotti as Record<string, unknown>[]) batchById.set(String(p.id), p);
+      }
+      const enriched: ProdottoHit[] = r.hits.map((hit) => {
+        const pgData = batchById.get(hit.objectID);
+        if (!pgData) return hit;
         const merged: Record<string, unknown> = { ...hit };
-        for (const [k, v] of Object.entries(fsData)) {
+        for (const [k, v] of Object.entries(pgData)) {
           // I prezzi (tutti i tier + Prezzo_Acquisto) arrivano SOLO dall'hit già
-          // strippato per ruolo lato server: NON reintrodurli dal doc Firestore
-          // grezzo, altrimenti il browser vedrebbe Prezzo_Acquisto e tutti i
-          // tier non pertinenti al ruolo (vanifica lo stripPrices della route).
+          // strippato per ruolo lato server: NON reintrodurli dalla riga
+          // Postgres grezza, altrimenti il browser vedrebbe Prezzo_Acquisto e
+          // tutti i tier non pertinenti al ruolo (vanifica lo stripPrices della route).
           if (k.startsWith("Prezzo")) continue;
           if (v !== null && v !== undefined) merged[k] = v;
         }

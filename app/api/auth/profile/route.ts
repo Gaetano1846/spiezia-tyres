@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getUtenteProfile } from "@/lib/utentiDb";
+import { getUtenteProfile, updatePrinterMac } from "@/lib/utentiDb";
 
 export const runtime = "nodejs";
 
@@ -13,6 +13,28 @@ export const runtime = "nodejs";
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
+
+  const profile = await getUtenteProfile(session.uid);
+  if (!profile) return NextResponse.json({ error: "Utente non trovato" }, { status: 404 });
+
+  return NextResponse.json(profile);
+}
+
+// PATCH /api/auth/profile — self-service update di un singolo campo del
+// proprio profilo. Per ora solo PrinterMAC (selezione stampante Zebra dal
+// side menu dell'app Flutter magazzino); nessun altro campo è scrivibile
+// qui apposta (Ruolo/Sede/Blocco restano gestione admin).
+export async function PATCH(req: NextRequest) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
+
+  const body = await req.json().catch(() => null);
+  const printerMac = body?.PrinterMAC;
+  if (typeof printerMac !== "string") {
+    return NextResponse.json({ error: "PrinterMAC mancante o non valido" }, { status: 400 });
+  }
+
+  await updatePrinterMac(session.uid, printerMac);
 
   const profile = await getUtenteProfile(session.uid);
   if (!profile) return NextResponse.json({ error: "Utente non trovato" }, { status: 404 });

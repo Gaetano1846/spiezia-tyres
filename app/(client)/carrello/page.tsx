@@ -6,7 +6,7 @@ import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import { useCart } from "@/components/layout/CartProvider";
 import { useAuth } from "@/components/layout/AuthProvider";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 function stagioneBadge(stagione: string) {
@@ -44,21 +44,33 @@ export default function CarrelloPage() {
   // Stock check: riduce qty se lo stock è diminuito dal momento dell'aggiunta
   useEffect(() => {
     if (items.length === 0) return;
-    items.forEach(async (item) => {
+    (async () => {
       try {
-        const snap = await getDoc(doc(db, "Prodotti", item.id));
-        if (!snap.exists()) return;
-        const d = snap.data() as Record<string, number>;
-        const currentStock =
-          (d.Stock_Nola ?? 0) + (d.Stock_Nola_2 ?? 0) + (d.Stock_Volla ?? 0) +
-          (d.Stock_Roma ?? 0) + (d.Stock_Portici ?? 0) + (d.Stock_OCP ?? 0);
-        if (currentStock > 0 && item.quantita > currentStock) {
-          update(item.id, currentStock);
+        const res = await fetch("/api/prodotti/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: items.map((i) => i.id) }),
+        });
+        if (!res.ok) return;
+        const { prodotti } = await res.json();
+        const byId = new Map((prodotti as Record<string, number>[]).map((p) => [p.id as unknown as string, p]));
+        for (const item of items) {
+          const d = byId.get(item.id);
+          if (!d) continue;
+          const currentStock =
+            (d.Stock_Nola ?? 0) + (d.Stock_Nola_2 ?? 0) + (d.Stock_Volla ?? 0) +
+            (d.Stock_Roma ?? 0) + (d.Stock_Portici ?? 0) + (d.Stock_OCP ?? 0);
+          if (currentStock > 0 && item.quantita > currentStock) {
+            update(item.id, currentStock);
+          }
         }
       } catch { /* ignora */ }
-    });
+    })();
+  // Dipende da items.length (non []): il carrello si idrata da localStorage
+  // dopo il primo render (CartProvider parte da items:[]) — con [] questo
+  // effetto girava una volta a carrello ancora vuoto e non ripartiva mai più.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [items.length]);
 
   const haSconto = totalsConSconto.scontoTotale > 0;
 

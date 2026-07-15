@@ -98,6 +98,10 @@ export interface OrdineApi extends OrdineListItemApi {
   PdfUrl: string | null;
   Note: string | null;
   MotivoAnnullamento: string | null;
+  /** Paese Tyre24 ("it"/estero) — colonna dedicata, scritta dagli importer
+   *  Tyre24 (tyre24PgWrite.js). Usato da lib/marketplace/sdk.js per lo
+   *  shipping_company_id Alzura, non esposto prima di questa migrazione. */
+  T24Country: string | null;
   /** Campi non mappati a colonne dedicate (marketplace id, SpeseExtra quando
    *  arriva come array, ecc.) — mai persi, vedi mapping/ordini.mjs nel repo
    *  bridge. Le pagine di dettaglio leggono da qui i campi "ambigui". */
@@ -118,7 +122,7 @@ const LIST_COLS = `o.id, o.numero, o.source, o.stato, o.cliente_id, o.utente_id,
 const DETAIL_COLS = `${LIST_COLS}, o.sede_id, o.iva, o.pfu, o.sconto_totale, o.contributo_logistico,
   o.pagamento, o.indirizzo_fatturazione, o.indirizzo_spedizione, o.colli, o.peso,
   o.gls_pdf_url, o.external_order_id, o.gls_contract_index,
-  o.pdf_url, o.note, o.motivo_annullamento, o.fs_extra`;
+  o.pdf_url, o.note, o.motivo_annullamento, o.t24_country, o.fs_extra`;
 
 function isoOrNull(v: unknown): string | null {
   if (!v) return null;
@@ -164,6 +168,7 @@ function rowToOrdine(r: Record<string, unknown>): OrdineApi {
     PdfUrl: (r.pdf_url as string) ?? null,
     Note: (r.note as string) ?? null,
     MotivoAnnullamento: (r.motivo_annullamento as string) ?? null,
+    T24Country: (r.t24_country as string) ?? null,
     FsExtra: (r.fs_extra as Record<string, unknown>) ?? {},
     Articoli: [],
     Cronologia: [],

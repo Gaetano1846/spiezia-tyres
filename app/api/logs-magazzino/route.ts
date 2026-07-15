@@ -4,9 +4,11 @@ import { listLogsMagazzino, appendLogMagazzino } from "@/lib/logsMagazzinoDb";
 
 export const runtime = "nodejs";
 
-// GET /api/logs-magazzino?dataDa=&dataA=&azione=&prodottoId= — sostituisce
-// PagedListView Firestore (screen Logs) + ricerca per prodotto (app Flutter
-// magazzino). Gated isMagazzino: il personale di magazzino non è admin.
+// GET /api/logs-magazzino?dataDa=&dataA=&azione=&prodottoId=&sedeId=&limit=&offset=
+// — sostituisce PagedListView Firestore (screen Logs) + ricerca per prodotto
+// (app Flutter magazzino), e serve anche la pagina admin "Log Magazzino"
+// (isMagazzino include gia' il ruolo admin, vedi lib/auth.ts). limit/offset
+// e sedeId sono usati solo lato admin — l'app Flutter non li invia mai.
 export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || !isMagazzino(session)) {
@@ -14,13 +16,18 @@ export async function GET(req: NextRequest) {
   }
   const { searchParams } = new URL(req.url);
   try {
-    const logs = await listLogsMagazzino({
+    const limitParam = searchParams.get("limit");
+    const offsetParam = searchParams.get("offset");
+    const { logs, hasMore } = await listLogsMagazzino({
       dataDa: searchParams.get("dataDa") ?? undefined,
       dataA: searchParams.get("dataA") ?? undefined,
       azione: searchParams.get("azione") ?? undefined,
       prodottoId: searchParams.get("prodottoId") ?? undefined,
+      sedeId: searchParams.get("sedeId") ?? undefined,
+      limit: limitParam ? Number(limitParam) : undefined,
+      offset: offsetParam ? Number(offsetParam) : undefined,
     });
-    return NextResponse.json({ logs });
+    return NextResponse.json({ logs, hasMore });
   } catch (err) {
     console.error("[api/logs-magazzino GET]", err);
     return NextResponse.json({ error: "Errore nel caricamento" }, { status: 500 });

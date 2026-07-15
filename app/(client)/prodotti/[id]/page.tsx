@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { useCart } from "@/components/layout/CartProvider";
 import { ArrowLeft, Plus, Minus, ShoppingCart, Package, CheckCircle } from "lucide-react";
@@ -43,6 +41,49 @@ type RawProdotto = {
   Prezzo_T24?: number;
   Prezzo_Acquisto?: number;
 };
+
+// Shape restituita da /api/prodotti/:id/pubblico (ProdottoFullApi, Postgres) →
+// RawProdotto (nomi storici Firestore già usati da questo componente).
+type ApiProdotto = {
+  Titolo: string | null; Marca: string | null; Modello: string | null;
+  Larghezza: number | null; Altezza: number | null; Diametro: number | null;
+  Indice_Carico: string | null; Indice_Velocita: string | null;
+  Stagione: string | null; Categoria: string | null; PFU: number | null;
+  EAN: string | null; Immagine: string | null; Foto: string | null; Descrizione: string | null;
+  Stock_Nola: number; Stock_Nola_2: number; Stock_Volla: number; Stock_Roma: number;
+  Stock_Portici: number; Stock_OCP: number; Stock_T24: number;
+  Prezzo_Gommista: number | null; Prezzo_Grossista: number | null; Prezzo_Privato: number | null;
+};
+
+function apiToRaw(p: ApiProdotto): RawProdotto {
+  return {
+    Nome: p.Titolo ?? undefined,
+    Marca: p.Marca ?? undefined,
+    Modello: p.Modello ?? undefined,
+    Larghezza: p.Larghezza ?? undefined,
+    Altezza: p.Altezza ?? undefined,
+    Diametro: p.Diametro ?? undefined,
+    Indice_carico: p.Indice_Carico ?? undefined,
+    Codice_velocita: p.Indice_Velocita ?? undefined,
+    Stagione: p.Stagione ?? undefined,
+    Categoria: p.Categoria ?? undefined,
+    PFU: p.PFU ?? undefined,
+    EAN: p.EAN ?? undefined,
+    Immagine: p.Immagine ?? undefined,
+    Foto: p.Foto ?? undefined,
+    Descrizione: p.Descrizione ?? undefined,
+    Stock_Nola: p.Stock_Nola,
+    Stock_Nola_2: p.Stock_Nola_2,
+    Stock_Volla: p.Stock_Volla,
+    Stock_Roma: p.Stock_Roma,
+    Stock_Portici: p.Stock_Portici,
+    Stock_OCP: p.Stock_OCP,
+    Stock_T24: p.Stock_T24,
+    Prezzo_Gommista: p.Prezzo_Gommista ?? undefined,
+    Prezzo_Grossista: p.Prezzo_Grossista ?? undefined,
+    Prezzo_Privato: p.Prezzo_Privato ?? undefined,
+  };
+}
 
 const STOCK_DEPOSITI = [
   { key: "Stock_Nola",     label: "Nola" },
@@ -90,9 +131,10 @@ export default function ProdottoDetailPage() {
     async function load() {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, "Prodotti", id));
-        if (snap.exists()) {
-          setProdotto(snap.data() as RawProdotto);
+        const res = await fetch(`/api/prodotti/${id}/pubblico`);
+        if (res.ok) {
+          const { prodotto: p } = await res.json();
+          setProdotto(apiToRaw(p as ApiProdotto));
         } else {
           toast.error("Prodotto non trovato");
         }

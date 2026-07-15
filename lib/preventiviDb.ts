@@ -3,10 +3,13 @@
 // propaga a Firestore (Clienti/{clienteId}/Preventivo/{id}), così il CRM
 // FlutterFlow legacy continua a vederle.
 //
-// "Converti in Ordine" (handleConvertToOrder nella pagina di dettaglio) resta
-// VOLUTAMENTE Firestore diretto — crea un documento in Ordini, dominio
-// esplicitamente escluso da questa migrazione. Il bridge propaga comunque i
-// campi Convertito/OrdineId che quella funzione scrive, verso fs_extra qui.
+// "Converti in Ordine" via API (app/api/preventivi/[clienteId]/[id]/converti)
+// scrive l'ordine direttamente su Postgres (createOrdine) e ora anche il
+// flag Convertito/OrdineId qui sotto via markPreventivoConvertito — nessun
+// giro per Firestore per questo path. Un eventuale handleConvertToOrder
+// client-side legacy (FlutterFlow), se ancora vivo, scriverebbe Firestore
+// direttamente e verrebbe propagato qui dal bridge come prima; non toccato
+// da questa migrazione.
 //
 // Servizi/Totale/Iva/DataScadenza (scritti solo dalla pagina di modifica, mai
 // popolati nei 123 preventivi reali campionati) non hanno colonne dedicate:
@@ -189,5 +192,15 @@ export async function updatePreventivoPdf(clienteId: string, id: string, pdfUrl:
   const db = getDb();
   if (!db) throw new Error("Postgres non configurato");
   await db.query(`UPDATE b2b.preventivi SET pdf_url = $3 WHERE id = $1 AND cliente_id = $2`, [id, clienteId, pdfUrl]);
+  return getPreventivo(clienteId, id);
+}
+
+export async function markPreventivoConvertito(clienteId: string, id: string, ordineId: string): Promise<PreventivoApi | null> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+  await db.query(
+    `UPDATE b2b.preventivi SET fs_extra = fs_extra || $3::jsonb WHERE id = $1 AND cliente_id = $2`,
+    [id, clienteId, JSON.stringify({ Convertito: true, OrdineId: ordineId })]
+  );
   return getPreventivo(clienteId, id);
 }

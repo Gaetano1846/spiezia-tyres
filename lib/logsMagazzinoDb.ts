@@ -47,14 +47,23 @@ export interface ListLogsMagazzinoFilters {
   dataA?: string;
   azione?: string;
   prodottoId?: string;
+  sedeId?: string;
   limit?: number;
+  offset?: number;
+}
+
+export interface ListLogsMagazzinoResult {
+  logs: LogMagazzinoApi[];
+  hasMore: boolean;
 }
 
 /** Lista log magazzino con filtri — sostituisce PagedListView Firestore
- *  (screen Logs) e la ricerca per prodotto (queryLogsMagazzinoRecordOnce). */
-export async function listLogsMagazzino(filters: ListLogsMagazzinoFilters = {}): Promise<LogMagazzinoApi[]> {
+ *  (screen Logs) e la ricerca per prodotto (queryLogsMagazzinoRecordOnce).
+ *  `hasMore` indica se ci sono altre righe oltre a `limit` (per paginazione
+ *  "carica altri" nella pagina admin — la query Flutter ignora il campo). */
+export async function listLogsMagazzino(filters: ListLogsMagazzinoFilters = {}): Promise<ListLogsMagazzinoResult> {
   const db = getDb();
-  if (!db) return [];
+  if (!db) return { logs: [], hasMore: false };
 
   const where: string[] = [];
   const params: unknown[] = [];
@@ -64,8 +73,10 @@ export async function listLogsMagazzino(filters: ListLogsMagazzinoFilters = {}):
   if (filters.dataA) where.push(`l.data <= ${push(filters.dataA)}`);
   if (filters.azione) where.push(`l.azione = ${push(filters.azione)}`);
   if (filters.prodottoId) where.push(`l.prodotto_id = ${push(filters.prodottoId)}`);
+  if (filters.sedeId) where.push(`l.sede_id = ${push(filters.sedeId)}`);
 
   const limit = filters.limit ?? 200;
+  const offset = filters.offset ?? 0;
   const { rows } = await db.query(
     `SELECT l.*, u.display_name AS utente_nome, sede.nome AS sede_nome,
             p.marca AS prodotto_marca, p.modello AS prodotto_modello,
@@ -77,10 +88,11 @@ export async function listLogsMagazzino(filters: ListLogsMagazzinoFilters = {}):
        LEFT JOIN b2b.magazzino g ON g.id = l.gabbia_id
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
        ORDER BY l.data DESC NULLS LAST
-       LIMIT ${push(limit)}`,
+       LIMIT ${push(limit + 1)} OFFSET ${push(offset)}`,
     params
   );
-  return rows.map(rowToLog);
+  const hasMore = rows.length > limit;
+  return { logs: rows.slice(0, limit).map(rowToLog), hasMore };
 }
 
 export interface AppendLogMagazzinoInput {

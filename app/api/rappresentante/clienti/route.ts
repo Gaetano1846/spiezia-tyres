@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
 import { getClientiAssegnati } from "@/lib/rappresentanteDb";
+import { getCliente } from "@/lib/clientiDb";
 
 export const runtime = "nodejs";
 
@@ -10,23 +11,10 @@ export const runtime = "nodejs";
 // Anagrafiche Clienti (Fido incluso) dei clienti assegnati al rappresentante
 // loggato — usato dal picker "Seleziona cliente" del checkout ("ordina per
 // conto di"), che prima cercava su TUTTA la collezione Clienti indipendentemente
-// da chi fosse loggato. SERVER-SIDE via Admin SDK: solo i clienti con un
-// Cliente_Ref collegato hanno senso qui (serve l'anagrafica Clienti per
-// creare l'ordine, non basta l'account di login).
-
-function sanitize(data: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(data)) {
-    if (v && typeof v === "object" && "id" in v && "path" in v) {
-      out[k] = (v as FirebaseFirestore.DocumentReference).id;
-    } else if (v && typeof v === "object" && typeof (v as FirebaseFirestore.Timestamp).toMillis === "function") {
-      out[k] = (v as FirebaseFirestore.Timestamp).toMillis();
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
-}
+// da chi fosse loggato. L'anagrafica ora viene da core.clienti (getCliente,
+// fonte autoritativa dalla Fase 3) — resta su Firestore solo l'assegnazione
+// cliente↔rappresentante (getClientiAssegnati, users.Rappresentante),
+// dominio non ancora migrato.
 
 export async function GET() {
   const session = await getSession();
@@ -44,10 +32,7 @@ export async function GET() {
       return NextResponse.json({ clienti: [] });
     }
 
-    const snaps = await Promise.all(clienteRefIds.map((id) => db.doc(`Clienti/${id}`).get()));
-    const clienti = snaps
-      .filter((s) => s.exists)
-      .map((s) => ({ id: s.id, ...sanitize(s.data() as Record<string, unknown>) }));
+    const clienti = (await Promise.all(clienteRefIds.map(getCliente))).filter(Boolean);
 
     return NextResponse.json({ clienti });
   } catch (err) {

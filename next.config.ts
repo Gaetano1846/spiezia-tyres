@@ -5,6 +5,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // ssh2 (via ssh2-sftp-client, importer AdTyres) carica un binding nativo
+  // (crypto/build/Release/sshcrypto.node): Turbopack non riesce a bundlarlo
+  // in un chunk ESM ("asset is not placeable in ESM chunks"). Va richiesto
+  // a runtime da node_modules, non bundlato — stesso motivo per cui pacchetti
+  // come sharp/bcrypt vanno esclusi dal bundle server.
+  serverExternalPackages: ["ssh2", "ssh2-sftp-client"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "**.tyre-shopping.com" },

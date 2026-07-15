@@ -65,6 +65,22 @@ export async function getUtenteProfile(id: string): Promise<UtenteProfile | null
   };
 }
 
+/**
+ * Aggiorna il MAC della stampante Zebra assegnata all'utente (selezionata
+ * dal magazziniere nel side menu dell'app Flutter). Vive in fs_extra come
+ * gli altri campi non colonnari — merge via jsonb_set, non tocca il resto.
+ */
+export async function updatePrinterMac(uid: string, printerMac: string): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+  await db.query(
+    `UPDATE core.utenti
+        SET fs_extra = jsonb_set(coalesce(fs_extra, '{}'::jsonb), '{PrinterMAC}', to_jsonb($2::text))
+      WHERE id = $1`,
+    [uid, printerMac]
+  );
+}
+
 /** Crea un account Rappresentante. Ritorna null se l'email esiste già. */
 export async function createRappresentante(
   input: CreateRappresentanteInput

@@ -13,6 +13,7 @@
 
 import { getDb, newId } from "@/lib/db";
 import QRCode from "qrcode";
+import { resolveSkuFromFirestoreDocId } from "@/lib/resolveSkuFromFirestore";
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -59,6 +60,24 @@ function extractProdottoId(ref: RawRef): string | null {
   return path.split("/")[1] ?? null;
 }
 
+// I lotti già presenti in una gabbia sono quasi tutti dati storici migrati
+// da Firestore: il loro Prodotto_Ref.__ref porta ancora il vecchio doc ID
+// Firestore, mentre prodottoId qui arriva sempre come SKU (vedi
+// lib/prodottiDb.ts::getProdottoById — stesso problema, stessa soluzione).
+// Un confronto diretto per stringa fa fallire il match SEMPRE per i lotti
+// storici, causando righe duplicate invece di sommare la quantità. Risolve
+// ogni id "ambiguo" al suo SKU canonico via Firestore prima di confrontare.
+async function findLottoIndexBySku(rawIds: (string | null)[], prodottoId: string): Promise<number> {
+  const resolved = await Promise.all(
+    rawIds.map(async (rawId) => {
+      if (!rawId) return null;
+      if (rawId === prodottoId) return rawId;
+      return resolveSkuFromFirestoreDocId(rawId);
+    })
+  );
+  return resolved.findIndex((sku) => sku === prodottoId);
+}
+
 const STOCK_COLUMNS = ["stock_nola", "stock_nola_2", "stock_roma", "stock_volla", "stock_portici"] as const;
 export type StockColumn = (typeof STOCK_COLUMNS)[number];
 
@@ -72,19 +91,47 @@ export function stockColumnForSede(sedeNome: string): StockColumn {
   return "stock_nola";
 }
 
-function collectProdottoIds(rows: Record<string, unknown>[]): string[] {
-  const ids = new Set<string>();
+// Cache in-memory id Firestore storico -> SKU risolto: il mapping è statico
+// (un lotto storico non cambia SKU nel tempo), evita di rifare lo stesso
+// lookup Firestore ad ogni GET /api/magazzino — chiamata ad ogni apertura
+// della schermata Magazzino, spesso più volte nella stessa sessione utente.
+const firestoreSkuCache = new Map<string, string | null>();
+async function resolveSkuCached(rawId: string): Promise<string | null> {
+  if (firestoreSkuCache.has(rawId)) return firestoreSkuCache.get(rawId)!;
+  const sku = await resolveSkuFromFirestoreDocId(rawId);
+  firestoreSkuCache.set(rawId, sku);
+  return sku;
+}
+
+// Stesso problema di findLottoIndexBySku sopra, ma per il path di lettura:
+// i lotti storici migrati da Firestore portano ancora il vecchio doc ID in
+// Prodotto_Ref.__ref. Risolve ogni id raccolto al suo SKU canonico PRIMA di
+// interrogare public.prodotti (altrimenti la query non trova nulla per i
+// lotti storici, Marca/Modello/Misura restano null) e prima di restituirlo
+// al client (altrimenti il filtro-prodotto della griglia Magazzino non
+// trova mai nessuna gabbia per i lotti storici — bug produzione 2026-07-14).
+// Fallback rawId stesso se la risoluzione fallisce: i lotti creati DOPO il
+// fix di addProdotto/removeProdotto portano già lo SKU vero in __ref, un
+// lookup Firestore su quell'id non troverebbe nulla (giustamente).
+async function collectAndResolveProdottoIds(rows: Record<string, unknown>[]): Promise<Map<string, string>> {
+  const rawIds = new Set<string>();
   for (const r of rows) {
     for (const l of (r.prodotti as RawLotto[]) ?? []) {
       const id = extractProdottoId(l.Prodotto_Ref);
-      if (id) ids.add(id);
+      if (id) rawIds.add(id);
     }
     for (const p of (r.pneumatici_in as RawRef[]) ?? []) {
       const id = extractProdottoId(p);
-      if (id) ids.add(id);
+      if (id) rawIds.add(id);
     }
   }
-  return [...ids];
+  const entries = await Promise.all(
+    [...rawIds].map(async (rawId) => {
+      const sku = await resolveSkuCached(rawId);
+      return [rawId, sku ?? rawId] as const;
+    })
+  );
+  return new Map(entries);
 }
 
 async function fetchProdottiInfo(ids: string[]): Promise<Map<string, Record<string, unknown>>> {
@@ -99,13 +146,18 @@ async function fetchProdottiInfo(ids: string[]): Promise<Map<string, Record<stri
   return new Map(rows.map((r) => [r.id as string, r]));
 }
 
-function rowToGabbia(r: Record<string, unknown>, prodottiMap: Map<string, Record<string, unknown>>): GabbiaApi {
+function rowToGabbia(
+  r: Record<string, unknown>,
+  prodottiMap: Map<string, Record<string, unknown>>,
+  skuById: Map<string, string>
+): GabbiaApi {
   const sedeNome = (r.sede_nome as string) ?? "—";
   const stockCol = stockColumnForSede(sedeNome);
   const rawProdotti = (r.prodotti as RawLotto[]) ?? [];
 
   const prodotti: LottoApi[] = rawProdotti.map((l) => {
-    const pid = extractProdottoId(l.Prodotto_Ref);
+    const rawId = extractProdottoId(l.Prodotto_Ref);
+    const pid = rawId ? skuById.get(rawId) ?? rawId : null;
     const info = pid ? prodottiMap.get(pid) : undefined;
     return {
       ProdottoId: pid ?? "",
@@ -120,7 +172,8 @@ function rowToGabbia(r: Record<string, unknown>, prodottiMap: Map<string, Record
 
   const pneumaticiIn = ((r.pneumatici_in as RawRef[]) ?? [])
     .map(extractProdottoId)
-    .filter((x): x is string => !!x);
+    .filter((x): x is string => !!x)
+    .map((rawId) => skuById.get(rawId) ?? rawId);
 
   // Stesso fallback della pagina originale: somma i lotti se `Prodotti`
   // esiste (anche vuoto → 0), altrimenti conta i riferimenti diretti.
@@ -151,8 +204,9 @@ export async function listGabbie(sedeId?: string): Promise<GabbiaApi[]> {
   const { rows } = sedeId
     ? await db.query(`${SELECT_BASE} WHERE g.sede_id = $1 ORDER BY g.codice`, [sedeId])
     : await db.query(`${SELECT_BASE} ORDER BY g.codice`);
-  const prodottiMap = await fetchProdottiInfo(collectProdottoIds(rows));
-  return rows.map((r) => rowToGabbia(r, prodottiMap));
+  const skuById = await collectAndResolveProdottoIds(rows);
+  const prodottiMap = await fetchProdottiInfo([...new Set(skuById.values())]);
+  return rows.map((r) => rowToGabbia(r, prodottiMap, skuById));
 }
 
 export async function getGabbia(id: string): Promise<GabbiaApi | null> {
@@ -160,8 +214,9 @@ export async function getGabbia(id: string): Promise<GabbiaApi | null> {
   if (!db) return null;
   const { rows } = await db.query(`${SELECT_BASE} WHERE g.id = $1`, [id]);
   if (!rows[0]) return null;
-  const prodottiMap = await fetchProdottiInfo(collectProdottoIds(rows));
-  return rowToGabbia(rows[0], prodottiMap);
+  const skuById = await collectAndResolveProdottoIds(rows);
+  const prodottiMap = await fetchProdottiInfo([...new Set(skuById.values())]);
+  return rowToGabbia(rows[0], prodottiMap, skuById);
 }
 
 export interface CreateGabbiaInput {
@@ -222,7 +277,7 @@ export async function addProdotto(gabbiaId: string, prodottoId: string, quantita
 
     const prodotti: RawLotto[] = rows[0].prodotti ?? [];
     const pneumaticiIn: RawRef[] = rows[0].pneumatici_in ?? [];
-    const idx = prodotti.findIndex((l) => extractProdottoId(l.Prodotto_Ref) === prodottoId);
+    const idx = await findLottoIndexBySku(prodotti.map((l) => extractProdottoId(l.Prodotto_Ref)), prodottoId);
 
     let nextProdotti: RawLotto[];
     let nextPneumaticiIn = pneumaticiIn;
@@ -230,7 +285,8 @@ export async function addProdotto(gabbiaId: string, prodottoId: string, quantita
       nextProdotti = prodotti.map((l, i) => (i === idx ? { ...l, Quantita: (l.Quantita ?? 0) + quantita } : l));
     } else {
       nextProdotti = [...prodotti, { Quantita: quantita, Prodotto_Ref: { __ref: `Prodotti/${prodottoId}` } }];
-      if (!pneumaticiIn.some((p) => extractProdottoId(p) === prodottoId)) {
+      const pneumaticoIdx = await findLottoIndexBySku(pneumaticiIn.map(extractProdottoId), prodottoId);
+      if (pneumaticoIdx === -1) {
         nextPneumaticiIn = [...pneumaticiIn, { __ref: `Prodotti/${prodottoId}` }];
       }
     }
@@ -278,7 +334,7 @@ export async function removeProdotto(gabbiaId: string, prodottoId: string, quant
 
     const prodotti: RawLotto[] = rows[0].prodotti ?? [];
     const pneumaticiIn: RawRef[] = rows[0].pneumatici_in ?? [];
-    const idx = prodotti.findIndex((l) => extractProdottoId(l.Prodotto_Ref) === prodottoId);
+    const idx = await findLottoIndexBySku(prodotti.map((l) => extractProdottoId(l.Prodotto_Ref)), prodottoId);
     if (idx === -1) {
       await client.query("ROLLBACK");
       return getGabbia(gabbiaId);
@@ -293,7 +349,8 @@ export async function removeProdotto(gabbiaId: string, prodottoId: string, quant
       nextProdotti = prodotti.map((l, i) => (i === idx ? { ...l, Quantita: quantitaInGabbia - rimuovi } : l));
     } else {
       nextProdotti = prodotti.filter((_, i) => i !== idx);
-      nextPneumaticiIn = pneumaticiIn.filter((p) => extractProdottoId(p) !== prodottoId);
+      const pneumaticoIdx = await findLottoIndexBySku(pneumaticiIn.map(extractProdottoId), prodottoId);
+      nextPneumaticiIn = pneumaticoIdx === -1 ? pneumaticiIn : pneumaticiIn.filter((_, i) => i !== pneumaticoIdx);
     }
 
     await client.query(

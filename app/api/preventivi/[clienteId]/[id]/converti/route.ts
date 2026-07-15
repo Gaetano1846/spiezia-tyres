@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession, isCRM } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
-import { getPreventivo } from "@/lib/preventiviDb";
+import { getPreventivo, markPreventivoConvertito } from "@/lib/preventiviDb";
 import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
+import { newId } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -13,12 +14,10 @@ export const runtime = "nodejs";
 // stesso pattern del checkout (vedi app/api/checkout/ordine/route.ts) — la
 // lettura del dettaglio ordine (CRM, già Postgres dalla Fase 1) deve stare
 // sullo stesso sistema della scrittura per evitare un gap di lag cross-bridge
-// subito dopo la conversione. Il flag Convertito/OrdineId sul Preventivo
-// resta su Firestore (dominio Preventivi non in scope di questa migrazione),
-// scritto SERVER-SIDE via Admin SDK per lo stesso motivo di sempre: un
-// operatore autenticato solo via Postgres (auth VPS-native) non ha un token
-// Firebase Auth valido, quindi la scrittura client-side fallirebbe sempre con
-// permission-denied.
+// subito dopo la conversione. Il flag Convertito/OrdineId sul Preventivo è
+// ora scritto anch'esso su Postgres (markPreventivoConvertito) — il residuo
+// Firestore di questa route resta solo il contatore Ordine (vedi sotto),
+// dominio Counters non ancora in scope.
 
 type ServizioDisplay = { titolo: string; prezzo: number; quantita: number };
 
@@ -87,7 +86,13 @@ export async function POST(
       resolvePersonaId("clienti", clienteId),
     ]);
 
+    // externalOrderId = id — stesso motivo/pattern del checkout (vedi
+    // app/api/checkout/ordine/route.ts): senza, "Crea GLS" fallisce per
+    // qualsiasi ordine nato da conversione preventivo.
+    const orderId = newId();
     const { id: ordineId } = await createOrdine({
+      id: orderId,
+      externalOrderId: orderId,
       numero,
       numeroDisplay: numeroOrdine,
       source: "B2B",
@@ -112,10 +117,7 @@ export async function POST(
       })),
     });
 
-    await db.doc(`Clienti/${clienteId}/Preventivo/${id}`).update({
-      Convertito: true,
-      OrdineId: ordineId,
-    });
+    await markPreventivoConvertito(clienteId, id, ordineId);
 
     return NextResponse.json({ id: ordineId, numero: numeroOrdine });
   } catch (err) {

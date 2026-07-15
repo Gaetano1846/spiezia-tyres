@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
-  collection, query, getDocs, doc,
-  addDoc, updateDoc, writeBatch, where, arrayUnion,
+  collection, doc,
+  addDoc, updateDoc, arrayUnion,
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "@/lib/firebase";
@@ -146,19 +146,17 @@ export default function DisegniPage() {
         await updateDoc(modelloRef, updatePayload);
 
         if (nome !== oldNome) {
-          const prodSnap = await getDocs(
-            query(collection(db, "Prodotti"), where("Modello", "==", oldNome))
-          );
-          const chunks: typeof prodSnap.docs[] = [];
-          for (let i = 0; i < prodSnap.docs.length; i += 400) {
-            chunks.push(prodSnap.docs.slice(i, i + 400));
+          const res = await fetch("/api/admin/disegni/rinomina-prodotti", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ oldNome, nome }),
+          });
+          if (res.ok) {
+            const { count } = await res.json();
+            toast.success(`Disegno aggiornato · ${count} prodotti aggiornati`);
+          } else {
+            toast.error("Disegno rinominato, ma l'aggiornamento dei prodotti collegati è fallito — riprova o segnala l'errore");
           }
-          for (const chunk of chunks) {
-            const batch = writeBatch(db);
-            chunk.forEach((pd) => batch.update(pd.ref, { Modello: nome }));
-            await batch.commit();
-          }
-          toast.success(`Disegno aggiornato · ${prodSnap.docs.length} prodotti aggiornati`);
         } else {
           toast.success("Disegno aggiornato");
         }

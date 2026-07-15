@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { adminDb } from "@/lib/firebase-admin";
 import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
 import { checkAndDecrementFido, refundFido } from "@/lib/clientiDb";
+import { newId } from "@/lib/db";
 
 // Creazione ordine — SERVER-SIDE (bypassa le Firestore Security Rules, che
 // richiedono `request.auth != null`; con l'auth VPS-native un cliente con
@@ -172,7 +173,15 @@ export async function POST(req: Request) {
       forClient ? resolvePersonaId("clienti", body.clienteId) : Promise.resolve(null),
     ]);
 
+    // externalOrderId = id (stesso pattern di lib/importers/tyre24PgWrite.js):
+    // è il campo "BDA" letto da lib/gls/sdk.js per creare la spedizione GLS —
+    // senza, "Crea GLS" fallisce con "missing the ID field required for BDA"
+    // per QUALSIASI ordine nato da checkout (gap mai notato finché non si è
+    // provato a spedire un ordine B2B nativo invece che uno importato).
+    const orderId = newId();
     const { id } = await createOrdine({
+      id: orderId,
+      externalOrderId: orderId,
       numero,
       numeroDisplay,
       source: "B2B",
