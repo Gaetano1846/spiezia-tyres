@@ -4,6 +4,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
 import { checkAndDecrementFido, refundFido } from "@/lib/clientiDb";
 import { newId } from "@/lib/db";
+import { nextCounterServer } from "@/lib/countersDb";
 
 // Creazione ordine — SERVER-SIDE (bypassa le Firestore Security Rules, che
 // richiedono `request.auth != null`; con l'auth VPS-native un cliente con
@@ -18,10 +19,13 @@ import { newId } from "@/lib/db";
 // sullo STESSO sistema — chiude la finestra di lag lettura-dopo-scrittura
 // che si sarebbe aperta lasciando la scrittura su Firestore.
 //
-// Il numero ordine RESTA allocato da Firestore Counters/{sedeId} (invariato):
-// il CRM Flutter legacy crea ancora ordini con numerazione propria e
-// Counters è l'unico punto di serializzazione condiviso — vedi
-// lib/counters.ts. Solo la RIGA fisica dell'ordine si sposta su Postgres.
+// Il numero ordine è allocato tramite lib/countersDb.ts::nextCounterServer,
+// la stessa logica/flag di lib/counters.ts (NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND)
+// ma chiamata direttamente (niente self-fetch, impossibile da un Route
+// Handler con URL relativo). Di default (flag spento) alloca ancora da
+// Firestore Counters/{sedeId} — invariato finché il CRM Flutter legacy crea
+// ordini con numerazione propria e quel documento resta l'unico punto di
+// serializzazione condiviso.
 
 interface AddressPayload {
   nome: string; via: string; cap: string; citta: string; provincia: string; partitaIva: string;
@@ -147,18 +151,9 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Il numero ordine resta allocato dalla transazione Firestore Counters —
-    // il CRM Flutter legacy crea ancora ordini con numerazione propria e
-    // questo è l'unico punto di serializzazione condiviso (vedi commento in
-    // testa al file).
-    const counterRef = db.doc(`Counters/${sedeId}`);
-    const numero = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(counterRef);
-      const current = snap.exists ? ((snap.data() as Record<string, number>).Ordine ?? 0) : 0;
-      const next = current + 1;
-      tx.set(counterRef, { Ordine: next }, { merge: true });
-      return next;
-    });
+    // Allocazione centralizzata (vedi commento in testa al file) — stesso
+    // punto di serializzazione condiviso con il CRM Flutter legacy.
+    const numero = await nextCounterServer("Ordine", sedeId);
     const numeroDisplay = formatNumeroOrdine(numero);
     // core.ordini ha FK (NOT VALID sulle righe storiche, ma applicate su ogni
     // nuovo insert) verso sedi/utenti/clienti — "main" (fallback lato client
