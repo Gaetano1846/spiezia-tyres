@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Search, Plus, Eye, Wrench, X, FileDown, Clock, ChevronDown, Pencil, Printer, Car, User } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -52,23 +50,24 @@ export default function FogliDiLavoroPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Carica operatori (utenti CRM, ancora su Firestore) e tutti i fogli (Postgres)
+  // Carica operatori (core.utenti, Fase 7) e tutti i fogli (Postgres)
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
-        const [usersSnap, res] = await Promise.all([
-          getDocs(collection(db, "users")),
+        const [opRes, res] = await Promise.all([
+          fetch("/api/operatori"),
           fetch("/api/fogli-di-lavoro"),
         ]);
 
-        const ops: OperatoreOption[] = usersSnap.docs
-          .filter((d) => d.data().CRM === true || d.data().Ruolo === "Admin")
-          .map((d) => ({
-            uid:  d.id,
-            nome: (d.data().displayName as string) || (d.data().email as string) || d.id,
+        if (!opRes.ok) throw new Error(String(opRes.status));
+        const { operatori: opList } = await opRes.json();
+        const ops: OperatoreOption[] = (opList ?? [])
+          .map((o: { id: string; displayName?: string; email?: string }) => ({
+            uid:  o.id,
+            nome: o.displayName || o.email || o.id,
           }))
-          .sort((a, b) => a.nome.localeCompare(b.nome));
+          .sort((a: OperatoreOption, b: OperatoreOption) => a.nome.localeCompare(b.nome));
         setOperatori(ops);
 
         if (!res.ok) throw new Error(String(res.status));

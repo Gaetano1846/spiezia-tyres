@@ -4,13 +4,18 @@ import { listAppuntamenti, createAppuntamento } from "@/lib/appuntamentiDb";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || !isCRM(session)) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
+  const { searchParams } = new URL(req.url);
+  const clienteId = searchParams.get("clienteId") ?? undefined;
+  const from = searchParams.get("from") ?? undefined;
+  const to = searchParams.get("to") ?? undefined;
+  const limit = Math.min(Number(searchParams.get("limit")) || 200, 1000);
   try {
-    const appuntamenti = await listAppuntamenti(200);
+    const appuntamenti = await listAppuntamenti({ limit, clienteId, from, to });
     return NextResponse.json({ appuntamenti });
   } catch (err) {
     console.error("[api/appuntamenti GET]", err);

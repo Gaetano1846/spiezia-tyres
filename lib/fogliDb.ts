@@ -1,4 +1,6 @@
-// Accesso Postgres al dominio Fogli di Lavoro (Fase 6 — cutover app→Postgres).
+// Accesso Postgres al dominio Fogli di Lavoro (Fase 6 — cutover app→Postgres;
+// Fase 7 — estende listFogli con filtro clienteId per il cutover della scheda
+// cliente CRM, che leggeva Foglio_di_Lavoro direttamente da Firestore).
 // b2b.fogli_di_lavoro è ora la fonte autoritativa per le scritture: il bridge
 // le propaga a Firestore, così il CRM FlutterFlow legacy continua a vederle.
 //
@@ -93,12 +95,23 @@ const SELECT_BASE = `
     LEFT JOIN b2b.veicoli v ON v.id = f.veicolo_id
     LEFT JOIN core.sedi s ON s.id = f.sede_id`;
 
-export async function listFogli(limit = 300): Promise<FoglioApi[]> {
+export interface ListFogliOptions {
+  limit?: number;
+  /** Filtra per cliente (scheda cliente CRM — Fase 7). */
+  clienteId?: string;
+}
+
+export async function listFogli(opts: number | ListFogliOptions = {}): Promise<FoglioApi[]> {
   const db = getDb();
   if (!db) return [];
+  // Retro-compatibilità: alcuni chiamanti passano ancora un numero (limit) posizionale.
+  const { limit = 300, clienteId } = typeof opts === "number" ? { limit: opts, clienteId: undefined } : opts;
+
+  const where = clienteId ? `WHERE f.cliente_id = $1` : "";
+  const params: unknown[] = clienteId ? [clienteId, limit] : [limit];
   const { rows } = await db.query(
-    `${SELECT_BASE} ORDER BY coalesce(f.data_ora, f.data_creazione) DESC NULLS LAST LIMIT $1`,
-    [limit]
+    `${SELECT_BASE} ${where} ORDER BY coalesce(f.data_ora, f.data_creazione) DESC NULLS LAST LIMIT $${params.length}`,
+    params
   );
   return rows.map(rowToFoglio);
 }

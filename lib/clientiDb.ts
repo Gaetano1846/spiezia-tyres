@@ -193,7 +193,7 @@ export async function createCliente(input: CreateClienteInput): Promise<ClienteA
 export interface UpdateClienteInput {
   Nome?: string; Ragione_Sociale?: string; Azienda?: boolean; Email?: string; Telefono?: string;
   Via?: string; Citta?: string; CAP?: string; Codice_Fiscale?: string; Partita_Iva?: string;
-  PEC?: string; Fido?: number; Fido_Residuo?: number; Note?: string;
+  PEC?: string; Fido?: number; Fido_Residuo?: number; Note?: string; Metodo_di_Pagamento?: string;
 }
 
 export async function updateCliente(id: string, input: UpdateClienteInput): Promise<ClienteApi | null> {
@@ -206,14 +206,22 @@ export async function updateCliente(id: string, input: UpdateClienteInput): Prom
        via = coalesce($7, via), citta = coalesce($8, citta), cap = coalesce($9, cap),
        codice_fiscale = coalesce($10, codice_fiscale), partita_iva = coalesce($11, partita_iva),
        pec = coalesce($12, pec), fido = coalesce($13, fido), fido_residuo = coalesce($14, fido_residuo),
-       note = coalesce($15, note)
+       note = coalesce($15, note), metodo_pagamento = coalesce($16, metodo_pagamento)
      WHERE id = $1
      RETURNING ${CLIENTE_COLS}`,
     [id, input.Nome, input.Ragione_Sociale, input.Azienda, input.Email, input.Telefono,
      input.Via, input.Citta, input.CAP, input.Codice_Fiscale, input.Partita_Iva,
-     input.PEC, input.Fido, input.Fido_Residuo, input.Note]
+     input.PEC, input.Fido, input.Fido_Residuo, input.Note, input.Metodo_di_Pagamento]
   );
   return rows[0] ? rowToCliente(rows[0]) : null;
+}
+
+/** Conteggio totale clienti (KPI dashboard CRM — sostituisce getCountFromServer Firestore). */
+export async function countClienti(): Promise<number> {
+  const db = getDb();
+  if (!db) return 0;
+  const { rows } = await db.query(`SELECT count(*)::int AS n FROM core.clienti`);
+  return rows[0]?.n ?? 0;
 }
 
 // ─── Veicoli ──────────────────────────────────────────────────────────────────

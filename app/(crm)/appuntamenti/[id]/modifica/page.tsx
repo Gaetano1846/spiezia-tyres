@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { ArrowLeft, Search, Plus, X } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -52,10 +50,10 @@ export default function ModificaAppuntamentoPage() {
 
   useEffect(() => {
     const fetchAll = async () => {
-      const [appRes, sedeJson, usersSnap] = await Promise.all([
+      const [appRes, sedeJson, opJson] = await Promise.all([
         fetch(`/api/appuntamenti/${id}`),
         fetch("/api/lookup/sede").then((r) => r.json()),
-        getDocs(query(collection(db, "users"), orderBy("Nome"))),
+        fetch("/api/operatori").then((r) => r.json()),
       ]);
 
       if (!appRes.ok) {
@@ -64,12 +62,9 @@ export default function ModificaAppuntamentoPage() {
         return;
       }
       const { appuntamento: app } = await appRes.json() as { appuntamento: AppuntamentoApi };
-      const allOps = usersSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as OperatoreItem & { CRM?: boolean }))
-        .filter((u) => u.CRM === true);
 
       setSedi(sedeJson.items ?? []);
-      setOperatori(allOps);
+      setOperatori(opJson.operatori ?? []);
 
       setStato(app.Stato ?? "Programmato");
       if (app.Note) setNote(app.Note);

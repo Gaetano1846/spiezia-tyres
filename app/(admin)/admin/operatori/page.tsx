@@ -1,16 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  collection, query, where, getDocs, getDoc,
-  updateDoc, addDoc, doc, type DocumentReference,
-} from "firebase/firestore";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { db, auth } from "@/lib/firebase";
 import { Search, Plus, Pencil, X, Check, Loader2, User, Mail } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
 import type { Ruolo } from "@/lib/types";
+import type { OperatoreApi } from "@/lib/operatoriDb";
+import type { SimpleEntity } from "@/lib/lookupDb";
 
 const RUOLI_CRM: Ruolo[] = ["Admin", "Magazziniere", "Impiegato"];
 
@@ -22,9 +18,9 @@ type Operatore = {
   displayName?: string;
   Ruolo: Ruolo;
   CRM: boolean;
-  SedeRef?: DocumentReference | null;
-  MansionRef?: DocumentReference | null;
-  RepartoRef?: DocumentReference | null;
+  SedeId?: string | null;
+  MansioneId?: string | null;
+  RepartoId?: string | null;
   SedeNome?: string;
   MansioneNome?: string;
   RepartoNome?: string;
@@ -45,6 +41,26 @@ const FORM_DEFAULT: FormState = {
   Ruolo: "Impiegato", sedeId: "", mansioneId: "", repartoId: "",
 };
 
+function toRefInfo(items: SimpleEntity[]): RefInfo[] {
+  return items.map((i) => ({ id: i.id, nome: i.Nome }));
+}
+
+function toOperatore(o: OperatoreApi): Operatore {
+  return {
+    uid: o.id,
+    email: o.email,
+    displayName: o.displayName,
+    Ruolo: (o.Ruolo ?? "Impiegato") as Ruolo,
+    CRM: o.CRM,
+    SedeId: o.SedeId,
+    MansioneId: o.MansioneId,
+    RepartoId: o.RepartoId,
+    SedeNome: o.SedeNome,
+    MansioneNome: o.MansioneNome,
+    RepartoNome: o.RepartoNome,
+  };
+}
+
 export default function OperatoriPage() {
   const [operatori, setOperatori] = useState<Operatore[]>([]);
   const [sedi,      setSedi]      = useState<RefInfo[]>([]);
@@ -58,61 +74,28 @@ export default function OperatoriPage() {
   const [form,        setForm]        = useState<FormState>(FORM_DEFAULT);
   const [saving,      setSaving]      = useState(false);
 
+  // Operatori: core.utenti (crm=true/Admin) via /api/operatori (Fase 7).
+  // Sede/Mansione/Reparto: già su Postgres da fase precedente, via /api/lookup/:kind.
   async function loadAll() {
     setLoading(true);
     try {
-      const [opSnap, sedeSnap, mansSnap, repSnap] = await Promise.all([
-        getDocs(query(collection(db, "users"), where("CRM", "==", true))),
-        getDocs(collection(db, "Sede")),
-        getDocs(collection(db, "Mansione")),
-        getDocs(collection(db, "Reparto")),
+      const [opRes, sedeRes, mansRes, repRes] = await Promise.all([
+        fetch("/api/operatori"),
+        fetch("/api/lookup/sede"),
+        fetch("/api/lookup/mansione"),
+        fetch("/api/lookup/reparto"),
       ]);
+      if (!opRes.ok) throw new Error(String(opRes.status));
 
-      const sedeList: RefInfo[] = sedeSnap.docs.map((d) => ({ id: d.id, nome: String(d.data().Nome ?? d.id) }));
-      const mansList: RefInfo[] = mansSnap.docs.map((d) => ({ id: d.id, nome: String(d.data().Nome ?? d.id) }));
-      const repList:  RefInfo[] = repSnap.docs.map((d)  => ({ id: d.id, nome: String(d.data().Nome ?? d.id) }));
+      const { operatori: opList } = (await opRes.json()) as { operatori: OperatoreApi[] };
+      const { items: sedeItems } = (await sedeRes.json()) as { items: SimpleEntity[] };
+      const { items: mansItems } = (await mansRes.json()) as { items: SimpleEntity[] };
+      const { items: repItems } = (await repRes.json()) as { items: SimpleEntity[] };
 
-      setSedi(sedeList);
-      setMansioni(mansList);
-      setReparti(repList);
-
-      const ops: Operatore[] = await Promise.all(
-        opSnap.docs.map(async (d) => {
-          const data = d.data();
-          const sedeRef   = data.Sede     as DocumentReference | undefined;
-          const mansRef   = data.Mansione as DocumentReference | undefined;
-          const repRef    = data.Reparto  as DocumentReference | undefined;
-
-          const resolve = async (ref?: DocumentReference) => {
-            if (!ref) return undefined;
-            const s = await getDoc(ref);
-            return s.exists() ? String(s.data()?.Nome ?? "") : undefined;
-          };
-
-          const [sedeNome, mansioneNome, repartoNome] = await Promise.all([
-            resolve(sedeRef), resolve(mansRef), resolve(repRef),
-          ]);
-
-          return {
-            uid:          d.id,
-            email:        String(data.email ?? ""),
-            // Campo reale users: display_name (snake_case); displayName legacy come fallback
-            displayName:  (data.display_name ?? data.displayName)
-                            ? String(data.display_name ?? data.displayName)
-                            : undefined,
-            Ruolo:        (data.Ruolo ?? "Impiegato") as Ruolo,
-            CRM:          Boolean(data.CRM),
-            SedeRef:      sedeRef ?? null,
-            MansionRef:   mansRef ?? null,
-            RepartoRef:   repRef  ?? null,
-            SedeNome:     sedeNome,
-            MansioneNome: mansioneNome,
-            RepartoNome:  repartoNome,
-          };
-        })
-      );
-
-      setOperatori(ops);
+      setSedi(toRefInfo(sedeItems ?? []));
+      setMansioni(toRefInfo(mansItems ?? []));
+      setReparti(toRefInfo(repItems ?? []));
+      setOperatori((opList ?? []).map(toOperatore));
     } catch {
       toast.error("Errore nel caricamento operatori");
     } finally {
@@ -129,9 +112,9 @@ export default function OperatoriPage() {
       email:       op.email,
       password:    "",
       Ruolo:       op.Ruolo,
-      sedeId:      op.SedeRef?.id ?? "",
-      mansioneId:  op.MansionRef?.id ?? "",
-      repartoId:   op.RepartoRef?.id ?? "",
+      sedeId:      op.SedeId ?? "",
+      mansioneId:  op.MansioneId ?? "",
+      repartoId:   op.RepartoId ?? "",
     });
     setShowModal(true);
   }
@@ -155,38 +138,43 @@ export default function OperatoriPage() {
     setSaving(true);
 
     try {
-      const payload: Record<string, unknown> = {
-        display_name: form.displayName.trim(),
-        Ruolo:       form.Ruolo,
-        CRM:         true,
-        Sede:        form.sedeId     ? doc(db, "Sede",     form.sedeId)     : null,
-        Mansione:    form.mansioneId ? doc(db, "Mansione", form.mansioneId) : null,
-        Reparto:     form.repartoId  ? doc(db, "Reparto",  form.repartoId)  : null,
-      };
-
       if (editUid) {
-        await updateDoc(doc(db, "users", editUid), payload);
+        const res = await fetch(`/api/operatori/${editUid}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            displayName: form.displayName.trim(),
+            ruolo: form.Ruolo,
+            sedeId: form.sedeId,
+            mansioneId: form.mansioneId,
+            repartoId: form.repartoId,
+          }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
         toast.success("Operatore aggiornato");
       } else {
-        // Crea account Firebase Auth + documento users
-        const cred = await createUserWithEmailAndPassword(auth, form.email.trim(), form.password);
-        await addDoc(collection(db, "users"), {
-          ...payload,
-          uid:   cred.user.uid,
-          email: form.email.trim(),
+        const res = await fetch("/api/operatori", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            displayName: form.displayName.trim(),
+            email: form.email.trim(),
+            password: form.password,
+            ruolo: form.Ruolo,
+            sedeId: form.sedeId,
+            mansioneId: form.mansioneId,
+            repartoId: form.repartoId,
+          }),
         });
+        if (res.status === 409) { toast.error("Email già in uso"); setSaving(false); return; }
+        if (!res.ok) throw new Error(String(res.status));
         toast.success("Operatore creato");
       }
 
       closeModal();
       await loadAll();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Errore";
-      if (msg.includes("email-already-in-use")) {
-        toast.error("Email già in uso");
-      } else {
-        toast.error("Errore nel salvataggio");
-      }
+    } catch {
+      toast.error("Errore nel salvataggio");
     } finally {
       setSaving(false);
     }

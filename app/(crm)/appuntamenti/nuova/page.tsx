@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { collection, query, getDocs, orderBy } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { ArrowLeft, Search, Plus, X } from "lucide-react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -50,13 +48,10 @@ export default function NuovoAppuntamentoPage() {
   useEffect(() => {
     Promise.all([
       fetch("/api/lookup/sede").then((r) => r.json()),
-      getDocs(query(collection(db, "users"), orderBy("Nome"))),
-    ]).then(([sedeJson, usersSnap]) => {
+      fetch("/api/operatori").then((r) => r.json()),
+    ]).then(([sedeJson, opJson]) => {
       setSedi(sedeJson.items ?? []);
-      const ops = usersSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as OperatoreItem & { CRM?: boolean }))
-        .filter((u) => u.CRM === true);
-      setOperatori(ops);
+      setOperatori(opJson.operatori ?? []);
     });
   }, []);
 
