@@ -79,8 +79,24 @@ export interface OrdineListItemApi {
   SpedizioneDestinatario: string | null;
 }
 
+/** Anagrafica minima del "proprietario" dell'ordine, risolta via JOIN nella
+ *  STESSA query del dettaglio — sostituisce i getDoc(Cliente/Utente) diretti
+ *  Firestore che la pagina admin/ordini/[id] faceva lato client. isCliente
+ *  distingue un'anagrafica business (core.clienti) da un semplice account di
+ *  login senza anagrafica collegata (core.utenti) — usato per mostrare o no
+ *  il link "Scheda cliente". */
+export interface OrdineClienteInfoApi {
+  id: string;
+  nome: string;
+  email: string | null;
+  telefono: string | null;
+  partitaIVA: string | null;
+  isCliente: boolean;
+}
+
 export interface OrdineApi extends OrdineListItemApi {
   SedeId: string | null;
+  ClienteInfo: OrdineClienteInfoApi | null;
   IVA: number | null;
   PFU: number | null;
   ScontoTotale: number | null;
@@ -122,7 +138,9 @@ const LIST_COLS = `o.id, o.numero, o.source, o.stato, o.cliente_id, o.utente_id,
 const DETAIL_COLS = `${LIST_COLS}, o.sede_id, o.iva, o.pfu, o.sconto_totale, o.contributo_logistico,
   o.pagamento, o.indirizzo_fatturazione, o.indirizzo_spedizione, o.colli, o.peso,
   o.gls_pdf_url, o.external_order_id, o.gls_contract_index,
-  o.pdf_url, o.note, o.motivo_annullamento, o.t24_country, o.fs_extra`;
+  o.pdf_url, o.note, o.motivo_annullamento, o.t24_country, o.fs_extra,
+  c.email AS cliente_email, c.telefono AS cliente_telefono, c.partita_iva AS cliente_partita_iva,
+  u.email::text AS utente_email`;
 
 function isoOrNull(v: unknown): string | null {
   if (!v) return null;
@@ -149,10 +167,38 @@ function rowToListItem(r: Record<string, unknown>): OrdineListItemApi {
   };
 }
 
+function rowToClienteInfo(r: Record<string, unknown>): OrdineClienteInfoApi | null {
+  const clienteId = (r.cliente_id as string) ?? null;
+  const utenteId = (r.utente_id as string) ?? null;
+  if (clienteId) {
+    return {
+      id: clienteId,
+      // cliente_nome è già coalesce(ragione_sociale, nome) — vedi LIST_COLS.
+      nome: (r.cliente_nome as string) || "—",
+      email: (r.cliente_email as string) ?? null,
+      telefono: (r.cliente_telefono as string) ?? null,
+      partitaIVA: (r.cliente_partita_iva as string) ?? null,
+      isCliente: true,
+    };
+  }
+  if (utenteId) {
+    return {
+      id: utenteId,
+      nome: (r.utente_nome as string) || (r.utente_email as string) || "—",
+      email: (r.utente_email as string) ?? null,
+      telefono: null,
+      partitaIVA: null,
+      isCliente: false,
+    };
+  }
+  return null;
+}
+
 function rowToOrdine(r: Record<string, unknown>): OrdineApi {
   return {
     ...rowToListItem(r),
     SedeId: (r.sede_id as string) ?? null,
+    ClienteInfo: rowToClienteInfo(r),
     IVA: r.iva != null ? Number(r.iva) : null,
     PFU: r.pfu != null ? Number(r.pfu) : null,
     ScontoTotale: r.sconto_totale != null ? Number(r.sconto_totale) : null,
@@ -319,6 +365,169 @@ export async function getOrdine(id: string): Promise<OrdineApi | null> {
   ordine.Cronologia = cronologia.rows.map(rowToCronologiaEntry);
   ordine.NoteInterne = noteInterne.rows.map(rowToNoteInterna);
   return ordine;
+}
+
+// ─── Report fatturato/vendite (ex app/api/admin/report, Firestore→Postgres) ──
+//
+// L'aggregazione girava prima su Ordini (Firestore), paginando fino a 100.000
+// righe lato Node e sommando in JS — core.ordini è già popolata (bridge live,
+// 24k+ ordini/12 canali) e un GROUP BY SQL fa lo stesso lavoro server-side,
+// senza ceiling di sicurezza (l'aggregazione non serializza mai le righe
+// intere verso l'app, quindi non esiste più un limite "oltre il quale il
+// report può essere incompleto" — vedi campo truncated, sempre false ora).
+//
+// Stessi due problemi di modello dati del vecchio route, gestiti qui:
+//  · Data: coalesce(data_ora, created_at) — stesso pattern di listOrdini/
+//    countOrdini (data_ora è già coalesce(DataOra, DataCreazione, CreatedAt)
+//    scritto dal bridge, sostituisce la doppia query Firestore su DataOra
+//    E DataCreazione con merge per id).
+//  · Articoli: core.ordine_articoli ha già sku/titolo/marca/ref_path
+//    normalizzati (vedi ArticoloOrdineApi) — niente più la doppia forma
+//    checkout-B2B/importer che il vecchio route normalizzava in JS.
+
+const REPORT_CANCELLED_STATI = ["Annullato", "Out of Stock", "Cancellato Tyre24", "Cancellato Cliente"];
+
+export interface ReportFilters {
+  from: Date;
+  to: Date;
+  fonti?: string[];
+}
+
+export interface ReportBySourceApi {
+  source: string;
+  count: number;
+  revenue: number;
+  avgOrderValue: number;
+}
+
+export type ReportTimePointApi = { date: string } & Record<string, string | number>;
+
+export interface ReportTopProdottoApi {
+  label: string;
+  quantita: number;
+  fatturato: number;
+}
+
+export interface ReportAggregatoApi {
+  count: number;
+  revenue: number;
+  avgOrderValue: number;
+  cancelledCount: number;
+  bySource: ReportBySourceApi[];
+  sources: string[];
+  timeSeries: ReportTimePointApi[];
+  topProdotti: ReportTopProdottoApi[];
+  /** Sempre false: l'aggregazione SQL non ha più un ceiling di sicurezza
+   *  (vedi commento sopra) — il campo resta per compatibilità col frontend. */
+  truncated: boolean;
+}
+
+const EMPTY_REPORT: ReportAggregatoApi = {
+  count: 0, revenue: 0, avgOrderValue: 0, cancelledCount: 0,
+  bySource: [], sources: [], timeSeries: [], topProdotti: [], truncated: false,
+};
+
+/** Report aggregato ordini (conteggio, fatturato, valore medio, andamento nel
+ *  tempo per fonte, prodotti più venduti) per periodo e fonti opzionali —
+ *  sostituisce l'aggregazione Firestore paginata di app/api/admin/report. */
+export async function getReportAggregato(filters: ReportFilters): Promise<ReportAggregatoApi> {
+  const db = getDb();
+  if (!db) return EMPTY_REPORT;
+
+  const fonti = filters.fonti?.length ? filters.fonti : null;
+  const sourceClause = fonti ? "AND o.source = ANY($4)" : "";
+  // $1=from $2=to $3=stati cancellati $4=fonti (solo se presente) — stessi
+  // parametri posizionali condivisi dalle tre query sotto.
+  const baseParams: unknown[] = [filters.from, filters.to, REPORT_CANCELLED_STATI];
+  if (fonti) baseParams.push(fonti);
+
+  const [bySourceRes, timeSeriesRes, topProdottiRes] = await Promise.all([
+    db.query(
+      `SELECT o.source,
+              count(*) FILTER (WHERE NOT (o.stato = ANY($3))) AS valid_count,
+              coalesce(sum(o.totale) FILTER (WHERE NOT (o.stato = ANY($3))), 0) AS valid_revenue,
+              count(*) FILTER (WHERE o.stato = ANY($3)) AS cancelled_count
+         FROM core.ordini o
+        WHERE coalesce(o.data_ora, o.created_at) BETWEEN $1 AND $2 ${sourceClause}
+        GROUP BY o.source`,
+      baseParams
+    ),
+    // Fatturato per fonte per giorno (solo ordini validi) — giorno = data
+    // UTC (AT TIME ZONE 'UTC'), stesso criterio di ts.toISOString().slice(0,10)
+    // usato dal vecchio route Firestore.
+    db.query(
+      `SELECT (coalesce(o.data_ora, o.created_at) AT TIME ZONE 'UTC')::date AS day,
+              o.source, sum(o.totale) AS revenue
+         FROM core.ordini o
+        WHERE coalesce(o.data_ora, o.created_at) BETWEEN $1 AND $2 ${sourceClause}
+          AND NOT (o.stato = ANY($3))
+        GROUP BY day, o.source`,
+      baseParams
+    ),
+    db.query(
+      `SELECT key, max(label) AS label, sum(quantita) AS quantita, sum(fatturato) AS fatturato
+         FROM (
+           SELECT coalesce(NULLIF(oa.sku, ''), oa.ref_path, NULLIF(oa.titolo, ''), 'sconosciuto') AS key,
+                  CASE WHEN NULLIF(oa.marca, '') IS NOT NULL AND NULLIF(oa.titolo, '') IS NOT NULL
+                       THEN oa.marca || ' ' || oa.titolo
+                       ELSE coalesce(NULLIF(oa.titolo, ''), NULLIF(oa.sku, ''), 'Sconosciuto') END AS label,
+                  oa.quantita AS quantita,
+                  coalesce(oa.tot_riga, oa.prezzo_unitario * oa.quantita, 0) AS fatturato
+             FROM core.ordine_articoli oa
+             JOIN core.ordini o ON o.id = oa.ordine_id
+            WHERE coalesce(o.data_ora, o.created_at) BETWEEN $1 AND $2 ${sourceClause}
+              AND NOT (o.stato = ANY($3))
+         ) t
+        GROUP BY key
+        ORDER BY sum(quantita) DESC
+        LIMIT 15`,
+      baseParams
+    ),
+  ]);
+
+  const bySourceMap = new Map<string, { count: number; revenue: number }>();
+  let cancelledCount = 0;
+  for (const r of bySourceRes.rows) {
+    const source = (r.source as string)?.trim() || "Altro";
+    bySourceMap.set(source, { count: Number(r.valid_count ?? 0), revenue: Number(r.valid_revenue ?? 0) });
+    cancelledCount += Number(r.cancelled_count ?? 0);
+  }
+  const bySource = [...bySourceMap.entries()]
+    .map(([source, s]) => ({ source, count: s.count, revenue: s.revenue, avgOrderValue: s.count > 0 ? s.revenue / s.count : 0 }))
+    .sort((a, b) => b.revenue - a.revenue);
+  const sources = bySource.map((s) => s.source);
+  const count = bySource.reduce((sum, s) => sum + s.count, 0);
+  const revenue = bySource.reduce((sum, s) => sum + s.revenue, 0);
+  const avgOrderValue = count > 0 ? revenue / count : 0;
+
+  const byDaySourceMap = new Map<string, Map<string, number>>();
+  for (const r of timeSeriesRes.rows) {
+    const day = r.day ? (r.day as Date).toISOString().slice(0, 10) : "sconosciuto";
+    const source = (r.source as string)?.trim() || "Altro";
+    const daySources = byDaySourceMap.get(day) ?? new Map<string, number>();
+    daySources.set(source, (daySources.get(source) ?? 0) + Number(r.revenue ?? 0));
+    byDaySourceMap.set(day, daySources);
+  }
+  // Un punto per OGNI giorno del periodo (non solo i giorni con vendite) —
+  // stesso motivo del vecchio route: altrimenti un giorno senza ordini sparisce
+  // dall'array e il grafico a spaziatura categorica salta come se il tempo
+  // tra due punti adiacenti non fosse mai passato.
+  const timeSeries: ReportTimePointApi[] = [];
+  for (let d = new Date(filters.from); d <= filters.to; d.setDate(d.getDate() + 1)) {
+    const dayKey = d.toISOString().slice(0, 10);
+    const daySources = byDaySourceMap.get(dayKey);
+    const row: ReportTimePointApi = { date: dayKey };
+    for (const source of sources) row[source] = daySources?.get(source) ?? 0;
+    timeSeries.push(row);
+  }
+
+  const topProdotti: ReportTopProdottoApi[] = topProdottiRes.rows.map((r) => ({
+    label: (r.label as string) || "Sconosciuto",
+    quantita: Number(r.quantita ?? 0),
+    fatturato: Number(r.fatturato ?? 0),
+  }));
+
+  return { count, revenue, avgOrderValue, cancelledCount, bySource, sources, timeSeries, topProdotti, truncated: false };
 }
 
 /** Conteggio + totale fatturato per una lista di filtri (KPI leggere, senza

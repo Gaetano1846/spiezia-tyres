@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
 import { getClientiAssegnati } from "@/lib/rappresentanteDb";
 import { getOrdine } from "@/lib/ordiniDb";
 
@@ -29,8 +28,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!ordine) return NextResponse.json({ error: "Ordine non trovato" }, { status: 404 });
 
     if (session.Ruolo !== "Admin") {
-      const db = adminDb();
-      const clienti = await getClientiAssegnati(db, session.email);
+      const clienti = await getClientiAssegnati(session.email);
       const clienteUids = new Set(clienti.map((c) => c.uid));
       const clienteRefIds = new Set(clienti.filter((c) => c.clienteRefId).map((c) => c.clienteRefId as string));
       const autorizzato =

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
 import { getClientiAssegnati } from "@/lib/rappresentanteDb";
 import { getCliente } from "@/lib/clientiDb";
 
@@ -11,10 +10,9 @@ export const runtime = "nodejs";
 // Anagrafiche Clienti (Fido incluso) dei clienti assegnati al rappresentante
 // loggato — usato dal picker "Seleziona cliente" del checkout ("ordina per
 // conto di"), che prima cercava su TUTTA la collezione Clienti indipendentemente
-// da chi fosse loggato. L'anagrafica ora viene da core.clienti (getCliente,
-// fonte autoritativa dalla Fase 3) — resta su Firestore solo l'assegnazione
-// cliente↔rappresentante (getClientiAssegnati, users.Rappresentante),
-// dominio non ancora migrato.
+// da chi fosse loggato. Sia l'anagrafica (getCliente) sia l'assegnazione
+// cliente↔rappresentante (getClientiAssegnati) vengono ora da Postgres
+// (core.clienti / core.utenti.fs_extra->>'Rappresentante').
 
 export async function GET() {
   const session = await getSession();
@@ -24,8 +22,7 @@ export async function GET() {
   }
 
   try {
-    const db = adminDb();
-    const assegnati = await getClientiAssegnati(db, session.email);
+    const assegnati = await getClientiAssegnati(session.email);
     const clienteRefIds = assegnati.filter((c) => c.clienteRefId).map((c) => c.clienteRefId as string);
 
     if (clienteRefIds.length === 0) {

@@ -72,8 +72,6 @@ function apiToLocalOrdine(o: OrdineApi): Ordine {
   return {
     id: o.id,
     Numero: o.Numero ?? undefined,
-    Utente: (o.UtenteId ? doc(db, "users", o.UtenteId) : undefined) as DocumentReference,
-    Cliente: o.ClienteId ? doc(db, "Clienti", o.ClienteId) : undefined,
     Source: o.Source,
     Stato: o.Stato,
     Articoli: articoli,
@@ -107,6 +105,7 @@ type ClienteInfo = {
   email?: string;
   telefono?: string;
   partitaIVA?: string;
+  isCliente: boolean;
 };
 
 const statoVariant: Record<string, "success" | "brand" | "warning" | "error" | "neutral"> = {
@@ -393,26 +392,19 @@ export default function OrdineAdminDetailPage() {
           });
         }
 
-        const ref = o.Cliente ?? o.Utente;
-        if (ref) {
-          const cSnap = await getDoc(ref);
-          if (cSnap.exists()) {
-            const d = cSnap.data();
-            // Nome cliente: Ragione Sociale (azienda) → Nome+Cognome / Nome → fallback.
-            // NB: "Azienda" sul doc Clienti è un BOOLEANO, non il nome — non usarlo come etichetta.
-            const nome = o.Cliente
-              ? (String(d.Ragione_Sociale || "").trim() ||
-                 `${d.Nome ?? ""} ${d.Cognome ?? ""}`.trim() ||
-                 String(d.Nome || "").trim() || "—")
-              : (String(d.displayName || d.email || "—"));
-            setClienteInfo({
-              id:          cSnap.id,
-              nome,
-              email:      String(d.Email ?? d.email ?? ""),
-              telefono:   String(d.Telefono ?? ""),
-              partitaIVA: String(d.Partita_Iva ?? d.PartitaIVA ?? ""),
-            });
-          }
+        // Cliente/Utente: già risolti server-side nella STESSA query Postgres
+        // di getOrdine() (JOIN core.clienti/core.utenti, vedi ClienteInfo in
+        // lib/ordiniDb.ts) — niente più getDoc diretto su Clienti/users.
+        if (data.ordine.ClienteInfo) {
+          const ci = data.ordine.ClienteInfo;
+          setClienteInfo({
+            id:          ci.id,
+            nome:        ci.nome,
+            email:       ci.email ?? undefined,
+            telefono:    ci.telefono ?? undefined,
+            partitaIVA:  ci.partitaIVA ?? undefined,
+            isCliente:   ci.isCliente,
+          });
         }
       } catch (e) {
         toast.error("Errore nel caricamento ordine");
@@ -1151,7 +1143,7 @@ export default function OrdineAdminDetailPage() {
                 {clienteInfo.email    && <p style={{ color: "var(--text-secondary)" }}>{clienteInfo.email}</p>}
                 {clienteInfo.telefono && <p style={{ color: "var(--text-secondary)" }}>{clienteInfo.telefono}</p>}
                 {clienteInfo.partitaIVA && <p className="text-xs" style={{ color: "var(--text-muted)" }}>P.IVA {clienteInfo.partitaIVA}</p>}
-                {ordine.Cliente && (
+                {clienteInfo.isCliente && (
                   <Link
                     href={`/admin/clienti/${clienteInfo.id}`}
                     className="inline-flex items-center gap-1 text-xs font-semibold mt-2"
