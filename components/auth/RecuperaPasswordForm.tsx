@@ -1,7 +1,5 @@
 "use client";
 import { useState } from "react";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "@/lib/firebase";
 import toast from "react-hot-toast";
 import { Loader2, ArrowLeft } from "lucide-react";
 import Link from "next/link";
@@ -15,7 +13,12 @@ export default function RecuperaPasswordForm() {
     e.preventDefault();
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, email);
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) throw new Error("reset failed");
       setSent(true);
     } catch {
       toast.error("Email non trovata o errore nell'invio");
