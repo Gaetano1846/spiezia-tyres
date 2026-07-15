@@ -1,10 +1,6 @@
 "use client";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { FirebaseError } from "firebase/app";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
 import toast from "react-hot-toast";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
@@ -21,47 +17,20 @@ export default function LoginForm() {
     e.preventDefault();
     setLoading(true);
     try {
-      // L'auth autoritativa del nuovo B2B è su Postgres (VPS). Il login Firebase
-      // qui è BEST-EFFORT: serve solo a ottenere un idToken per il fallback lato
-      // server e ad aggiornare lastLogin. I clienti creati con password solo su
-      // Postgres NON hanno un account Firebase → il signIn fallisce ma il login
-      // deve comunque riuscire via il path PG.
-      let credential: Awaited<ReturnType<typeof signInWithEmailAndPassword>> | null = null;
-      try {
-        credential = await signInWithEmailAndPassword(auth, email, password);
-      } catch (fbErr) {
-        if (fbErr instanceof FirebaseError) console.warn("[auth] Firebase signIn non riuscito, proseguo su Postgres:", fbErr.code);
-      }
+      // Auth VPS-native — unico backend: core.auth_credentials/core.sessions
+      // (vedi app/api/auth/login/route.ts). Nessun Firebase Auth lato client.
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-      // Il server prova PRIMA Postgres (email+password); l'idToken (se c'è) è solo
-      // la rete di sicurezza. Se abbiamo l'idToken ritentiamo con token rigenerato.
-      let res: Response | null = null;
-      const maxAttempts = credential ? 3 : 1;
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const idToken = credential ? await credential.user.getIdToken(attempt > 0) : undefined;
-        res = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken, email, password }),
-        });
-        if (res.ok) break;
-        if (res.status === 400 || res.status === 403) break;
-        if (attempt < maxAttempts - 1) await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
-      }
-
-      if (!res || !res.ok) {
-        const data = res ? await res.json().catch(() => ({})) : {};
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         throw new Error((data as { error?: string }).error ?? "Email o password errati");
       }
 
       const { Ruolo, CRM } = await res.json();
-
-      // Aggiorna lastLogin su Firestore solo per utenti con account Firebase (storici)
-      if (credential) {
-        try {
-          await updateDoc(doc(db, "users", credential.user.uid), { lastLogin: serverTimestamp() });
-        } catch { /* non bloccare il login se il doc non esiste */ }
-      }
 
       // Solo redirect relativi same-origin: un valore esterno (es. ?redirect=https://evil…)
       // verrebbe altrimenti usato per phishing dopo un login legittimo.
@@ -76,31 +45,7 @@ export default function LoginForm() {
         CRM ? "/dashboard" : "/";
       router.replace(safeRedirect ?? rolePath);
     } catch (err: unknown) {
-      if (err instanceof FirebaseError) console.error("[auth]", err.code, err.message);
-      let msg = "Email o password errati";
-      if (err instanceof FirebaseError) {
-        switch (err.code) {
-          case "auth/invalid-credential":
-          case "auth/wrong-password":
-          case "auth/user-not-found":
-          case "auth/invalid-email":
-            msg = "Email o password errati";
-            break;
-          case "auth/user-disabled":
-            msg = "Account disabilitato. Contatta l'amministratore.";
-            break;
-          case "auth/too-many-requests":
-            msg = "Troppi tentativi. Riprova tra qualche minuto.";
-            break;
-          case "auth/network-request-failed":
-            msg = "Errore di rete. Controlla la connessione.";
-            break;
-          default:
-            msg = `Errore di autenticazione (${err.code})`;
-        }
-      } else if (err instanceof Error) {
-        msg = err.message;
-      }
+      const msg = err instanceof Error ? err.message : "Email o password errati";
       toast.error(msg);
     } finally {
       setLoading(false);

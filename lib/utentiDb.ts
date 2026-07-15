@@ -20,18 +20,23 @@ export interface UtenteProfile {
   Ruolo: string | null;
   CRM: boolean;
   Sede: string | null;
+  SedeNome: string | null;
   Reparto: string | null;
   Mansione: string | null;
   Cliente: boolean;
   Rappresentante: string | null;
   Blocco: boolean;
   PrinterMAC: string | null;
+  Fido: number | null;
+  Fido_Residuo: number | null;
   created_time: string | null;
 }
 
 /**
- * Profilo esteso dell'utente autenticato (per client nativi senza accesso
- * diretto al doc Firestore `users/{uid}`, es. app Flutter magazzino).
+ * Profilo esteso dell'utente autenticato — fonte unica lato client per
+ * AuthProvider (niente più letture dirette a Firestore/onAuthStateChanged,
+ * vedi components/layout/AuthProvider.tsx) e per client nativi senza accesso
+ * diretto al doc Firestore `users/{uid}` (es. app Flutter magazzino).
  * Campi non mappati su colonne dedicate (PrinterMAC, Cliente, Blocco,
  * Rappresentante) vivono in core.utenti.fs_extra — vedi mapping/utenti.mjs.
  */
@@ -39,8 +44,12 @@ export async function getUtenteProfile(id: string): Promise<UtenteProfile | null
   const db = getDb();
   if (!db) return null;
   const { rows } = await db.query(
-    `SELECT id, email, display_name, photo_url, telefono, ruolo, crm, sede_id, reparto_id, mansione_id, fs_extra, created_at
-       FROM core.utenti WHERE id = $1`,
+    `SELECT u.id, u.email, u.display_name, u.photo_url, u.telefono, u.ruolo, u.crm,
+            u.sede_id, s.nome AS sede_nome, u.reparto_id, u.mansione_id, u.fido,
+            u.fido_residuo, u.fs_extra, u.created_at
+       FROM core.utenti u
+       LEFT JOIN core.sedi s ON s.id = u.sede_id
+      WHERE u.id = $1`,
     [id]
   );
   if (rows.length === 0) return null;
@@ -55,12 +64,15 @@ export async function getUtenteProfile(id: string): Promise<UtenteProfile | null
     Ruolo: r.ruolo ?? null,
     CRM: Boolean(r.crm),
     Sede: r.sede_id ?? null,
+    SedeNome: r.sede_nome ?? null,
     Reparto: r.reparto_id ?? null,
     Mansione: r.mansione_id ?? null,
     Cliente: extra.Cliente === true,
     Rappresentante: typeof extra.Rappresentante === "string" ? extra.Rappresentante : null,
     Blocco: extra.Blocco === true,
     PrinterMAC: typeof extra.PrinterMAC === "string" ? extra.PrinterMAC : null,
+    Fido: r.fido != null ? Number(r.fido) : null,
+    Fido_Residuo: r.fido_residuo != null ? Number(r.fido_residuo) : null,
     created_time: r.created_at ? new Date(r.created_at).toISOString() : null,
   };
 }

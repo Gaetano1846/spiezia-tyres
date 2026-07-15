@@ -15,10 +15,6 @@ function normalizeRuolo(raw: unknown): Ruolo {
   return (s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()) as Ruolo;
 }
 
-function isAdminConfigured(): boolean {
-  return !!(process.env.FIREBASE_ADMIN_CLIENT_EMAIL && process.env.FIREBASE_ADMIN_PRIVATE_KEY);
-}
-
 export async function getSession(): Promise<SessionPayload | null> {
   // ── Bearer token (client nativo senza cookie jar, es. app Flutter magazzino) ──
   // Se presente, è l'UNICO path considerato: fail-closed, nessun fallback cookie.
@@ -47,29 +43,12 @@ export async function getSession(): Promise<SessionPayload | null> {
   const session = cookieStore.get(SESSION_COOKIE)?.value;
   if (!session) return null;
 
-  // ── Auth VPS-native: token di sessione Postgres (prefisso sp1_) ───────────
-  // È il path autoritativo del nuovo B2B. Il fallback Firebase sotto serve solo
-  // per le sessioni legacy (cookie Firebase ancora validi) durante la transizione.
-  if (session.startsWith(PG_TOKEN_PREFIX)) {
-    return getPgSession(session);
-  }
-
-  // ── Fallback: session cookie Firebase (sessioni legacy) ───────────────────
-  try {
-    const { adminAuth, adminDb } = await import("@/lib/firebase-admin");
-    const decoded = await adminAuth().verifySessionCookie(session, true);
-    const userDoc = await adminDb().collection("users").doc(decoded.uid).get();
-    if (!userDoc.exists) return null;
-    const data = userDoc.data()!;
-    return {
-      uid: decoded.uid,
-      email: decoded.email ?? "",
-      Ruolo: normalizeRuolo(data.Ruolo),
-      CRM: Boolean(data.CRM),
-    };
-  } catch {
-    return null;
-  }
+  // ── Auth VPS-native: unico backend, token di sessione Postgres (prefisso sp1_) ──
+  // Il fallback Firebase (cookie legacy) è stato rimosso dopo aver verificato che
+  // nessun utente reale dipende più solo da Firebase Auth (credenziali scrypt/
+  // argon2id backfillate su core.auth_credentials per l'intera base storica).
+  if (!session.startsWith(PG_TOKEN_PREFIX)) return null;
+  return getPgSession(session);
 }
 
 export function isAdmin(s: SessionPayload | null): boolean {

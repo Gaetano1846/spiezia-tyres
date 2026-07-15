@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession, isCRM } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
 import { getPreventivo, markPreventivoConvertito } from "@/lib/preventiviDb";
 import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
 import { newId } from "@/lib/db";
+import { nextCounterServer } from "@/lib/countersDb";
 
 export const runtime = "nodejs";
 
@@ -15,9 +15,11 @@ export const runtime = "nodejs";
 // lettura del dettaglio ordine (CRM, già Postgres dalla Fase 1) deve stare
 // sullo stesso sistema della scrittura per evitare un gap di lag cross-bridge
 // subito dopo la conversione. Il flag Convertito/OrdineId sul Preventivo è
-// ora scritto anch'esso su Postgres (markPreventivoConvertito) — il residuo
-// Firestore di questa route resta solo il contatore Ordine (vedi sotto),
-// dominio Counters non ancora in scope.
+// ora scritto anch'esso su Postgres (markPreventivoConvertito). Il numero
+// ordine è allocato tramite lib/countersDb.ts::nextCounterServer, stessa
+// logica/flag centralizzata di lib/counters.ts (NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND) —
+// di default (flag spento) resta su Firestore Counters/{sedeId}, l'unico
+// punto di serializzazione condiviso col CRM Flutter legacy.
 
 type ServizioDisplay = { titolo: string; prezzo: number; quantita: number };
 
@@ -66,16 +68,8 @@ export async function POST(
     const iva = imponibile * 0.22;
     const totale = imponibile + iva;
 
-    const db = adminDb();
     const sedeId = preventivo.SedeId ?? "main";
-    const counterRef = db.doc(`Counters/${sedeId}`);
-    const numero = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(counterRef);
-      const current = snap.exists ? ((snap.data() as Record<string, number>).Ordine ?? 0) : 0;
-      const next = current + 1;
-      tx.set(counterRef, { Ordine: next }, { merge: true });
-      return next;
-    });
+    const numero = await nextCounterServer("Ordine", sedeId);
     const year = new Date().getFullYear();
     const numeroOrdine = `ORD-${year}-${String(numero).padStart(5, "0")}`;
     // Stessa cautela FK del checkout (vedi commento in
