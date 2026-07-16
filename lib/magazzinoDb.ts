@@ -377,32 +377,49 @@ export async function removeProdotto(gabbiaId: string, prodottoId: string, quant
 /** Cerca le gabbie che contengono un prodotto — sostituisce lo scan client-side dello scanner.
  *  [sedeId] opzionale: mirror del filtro Sede dell'originale RicercaGabbiaWidget,
  *  applicato solo quando l'utente è un Magazziniere (vincolato alla propria sede). */
+// Stesso problema documentato sopra per collectAndResolveProdottoIds: i lotti
+// storici migrati da Firestore portano ancora il vecchio doc ID Firestore in
+// Prodotto_Ref.__ref, non lo SKU. Un confronto diretto SQL-side (WHERE __ref
+// = 'Prodotti/<sku>') non trova MAI un match per quei lotti — la query gira
+// pulita e torna 0 righe, indistinguibile da "non in stock" lato client
+// (bug produzione, icona lente "cerca gabbia" in Ordini/Old_Ordini). Risolve
+// ogni ref candidato al suo SKU canonico in JS prima di confrontare, stesso
+// pattern già usato da listGabbie/rowToGabbia.
 export async function cercaGabbiePerProdotto(prodottoId: string, sedeId?: string | null): Promise<GabbiaMatchApi[]> {
   const db = getDb();
   if (!db) return [];
-  const params: unknown[] = [`Prodotti/${prodottoId}`];
+  const params: unknown[] = [];
   let sedeClause = "";
   if (sedeId) {
     params.push(sedeId);
-    sedeClause = `AND g.sede_id = $${params.length}`;
+    sedeClause = `WHERE g.sede_id = $1`;
   }
   const { rows } = await db.query(
-    `SELECT g.id, g.codice, g.x, g.y, g.z, s.nome AS sede_nome, lotto->>'Quantita' AS quantita
+    `SELECT g.id, g.codice, g.x, g.y, g.z, s.nome AS sede_nome, g.prodotti
        FROM b2b.magazzino g
        LEFT JOIN core.sedi s ON s.id = g.sede_id
-       CROSS JOIN LATERAL jsonb_array_elements(coalesce(g.prodotti, '[]'::jsonb)) AS lotto
-      WHERE lotto->'Prodotto_Ref'->>'__ref' = $1 ${sedeClause}`,
+       ${sedeClause}`,
     params
   );
-  return rows.map((r) => ({
-    GabbiaId: r.id as string,
-    Codice: (r.codice as string) ?? "—",
-    X: (r.x as number) ?? null,
-    Y: (r.y as number) ?? null,
-    Z: (r.z as number) ?? null,
-    SedeNome: (r.sede_nome as string) ?? "—",
-    Quantita: Number(r.quantita ?? 0),
-  }));
+  const skuById = await collectAndResolveProdottoIds(rows);
+  const matches: GabbiaMatchApi[] = [];
+  for (const r of rows) {
+    for (const lotto of (r.prodotti as RawLotto[]) ?? []) {
+      const rawId = extractProdottoId(lotto.Prodotto_Ref);
+      const resolvedSku = rawId ? skuById.get(rawId) ?? rawId : null;
+      if (resolvedSku !== prodottoId) continue;
+      matches.push({
+        GabbiaId: r.id as string,
+        Codice: (r.codice as string) ?? "—",
+        X: (r.x as number) ?? null,
+        Y: (r.y as number) ?? null,
+        Z: (r.z as number) ?? null,
+        SedeNome: (r.sede_nome as string) ?? "—",
+        Quantita: Number(lotto.Quantita ?? 0),
+      });
+    }
+  }
+  return matches;
 }
 
 // ─── QR code — port 1:1 della Cloud Function `GenerateQR` (entry point reale
