@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  collection, collectionGroup, query, where, getDocs, getDoc,
-  limit, updateDoc, doc,
-  Timestamp, type DocumentReference,
+  collectionGroup, query, getDocs,
+  limit,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Calendar, Users, FileText, Wrench, Clock, Bell, CheckCircle2 } from "lucide-react";
@@ -14,6 +13,7 @@ import Link from "next/link";
 import toast from "react-hot-toast";
 import { useAuth } from "@/components/layout/AuthProvider";
 import type { AppuntamentoApi } from "@/lib/appuntamentiDb";
+import type { PromemoriaApi } from "@/lib/promemoriaDb";
 
 const statoVariant: Record<string, "success" | "brand" | "neutral"> = {
   Completato:  "success",
@@ -21,35 +21,17 @@ const statoVariant: Record<string, "success" | "brand" | "neutral"> = {
   Programmato: "neutral",
 };
 
-type PromemoriaItem = {
-  id: string;
-  Titolo: string;
-  Data?: Timestamp;
-  ClienteRef?: DocumentReference;
-  clienteNome?: string;
-};
-
-async function batchGetDocs(refs: DocumentReference[]): Promise<Map<string, Record<string, unknown>>> {
-  if (refs.length === 0) return new Map();
-  const unique = [...new Map(refs.map((r) => [r.path, r])).values()];
-  const snaps = await Promise.all(unique.map((r) => getDoc(r)));
-  const map = new Map<string, Record<string, unknown>>();
-  snaps.forEach((s) => {
-    if (s.exists()) map.set(s.ref.path, { id: s.id, ...s.data() } as Record<string, unknown>);
-  });
-  return map;
-}
-
 /** Appuntamenti: DataOra ora arriva come ISO string da /api/appuntamenti (Postgres). */
 function formatOra(iso: string | null | undefined): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Promemoria: Data resta un Timestamp Firestore (dominio non migrato — vedi nota in fetchAll). */
-function formatData(ts: Timestamp | null | undefined): string {
-  if (!ts?.toDate) return "—";
-  return ts.toDate().toLocaleDateString("it-IT", { day: "2-digit", month: "short" });
+/** Promemoria: DataScadenza arriva come ISO string da /api/promemoria (Postgres). */
+function formatData(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("it-IT", { day: "2-digit", month: "short" });
 }
 
 type KPIs = {
@@ -63,7 +45,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const [kpis, setKpis]             = useState<KPIs | null>(null);
   const [appOggi, setAppOggi]       = useState<AppuntamentoApi[]>([]);
-  const [promemoria, setPromemoria] = useState<PromemoriaItem[]>([]);
+  const [promemoria, setPromemoria] = useState<PromemoriaApi[]>([]);
   const [loading, setLoading]       = useState(true);
   const [markingId, setMarkingId]   = useState<string | null>(null);
 
@@ -75,33 +57,30 @@ export default function DashboardPage() {
     const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
     try {
-      // Clienti/Appuntamenti/Foglio_di_Lavoro: Postgres via API (Fase 7 — prima
-      // leggevano Firestore direttamente). Preventivi (collectionGroup) e
-      // Promemoria (sotto-collezione users/{uid}/Promemoria) restano
-      // volontariamente su Firestore: dominio Preventivi fuori scope di questa
-      // fase (altro workstream), Promemoria non ha ancora uno schema Postgres
-      // dedicato — vedi nota più sotto.
-      const [clientiRes, appRes, prevSnap, fogliRes, promemoriaSnap] = await Promise.all([
+      // Clienti/Appuntamenti/Foglio_di_Lavoro/Promemoria: Postgres via API
+      // (Fase 7 per Appuntamenti/Fogli; Promemoria chiuso dopo — b2b.promemoria
+      // esisteva già ma non era mai stato agganciato a nessuna route).
+      // Preventivi (collectionGroup) resta volontariamente su Firestore,
+      // fuori scope di questa fase (altro workstream).
+      const [clientiRes, appRes, prevSnap, fogliRes, promemoriaRes] = await Promise.all([
         fetch(`/api/clienti?limit=1`),
         fetch(`/api/appuntamenti?from=${encodeURIComponent(startOfDay.toISOString())}&to=${encodeURIComponent(endOfDay.toISOString())}`),
         getDocs(query(collectionGroup(db, "Preventivo"), limit(500))),
         fetch(`/api/fogli-di-lavoro?limit=1000`),
-        getDocs(query(
-          // I promemoria CRM vengono creati dalla scheda cliente in questo store
-          // condiviso (campo "Completata"). La dashboard mostra quelli ancora aperti.
-          collection(db, "users", "promemoria_crm", "Promemoria"),
-          where("Completata", "==", false),
-          limit(50),
-        )),
+        // I promemoria CRM ancora aperti — la dashboard filtra ulteriormente
+        // per data (solo quelli già in scadenza/scaduti) lato client, come prima.
+        fetch(`/api/promemoria?completata=false&limit=50`),
       ]);
 
       if (!clientiRes.ok) throw new Error(`clienti ${clientiRes.status}`);
       if (!appRes.ok) throw new Error(`appuntamenti ${appRes.status}`);
       if (!fogliRes.ok) throw new Error(`fogli ${fogliRes.status}`);
+      if (!promemoriaRes.ok) throw new Error(`promemoria ${promemoriaRes.status}`);
 
       const { total: clientiCount } = (await clientiRes.json()) as { total?: number };
       const { appuntamenti: apps } = (await appRes.json()) as { appuntamenti: AppuntamentoApi[] };
       const { fogli } = (await fogliRes.json()) as { fogli: Array<{ Stato: string }> };
+      const { promemoria: promRaw } = (await promemoriaRes.json()) as { promemoria: PromemoriaApi[] };
 
       // "Aperti" = non ancora accettati né rifiutati. I preventivi nascono
       // con Stato "In attesa" (e flag Accettato=false), quindi non basta
@@ -115,33 +94,10 @@ export default function DashboardPage() {
 
       const fogliAttivi = fogli.filter((f) => f.Stato !== "Completato" && f.Stato !== "Chiuso").length;
 
-      // Promemoria: raw docs, resolve cliente nomi in batch
-      const promRaw: PromemoriaItem[] = promemoriaSnap.docs.map((d) => ({
-        id: d.id,
-        // La scheda cliente salva il titolo in "Nome" e la data in "Data_Scadenza".
-        Titolo: (d.data().Nome ?? d.data().Titolo ?? "Promemoria") as string,
-        Data: (d.data().Data_Scadenza ?? d.data().Data) as Timestamp | undefined,
-        ClienteRef: d.data().Cliente as DocumentReference | undefined,
-      }));
-
-      const clienteRefsPromo = promRaw.map((p) => p.ClienteRef).filter(Boolean) as DocumentReference[];
-      const clientiMapPromo = await batchGetDocs(clienteRefsPromo);
-
-      const promWithCliente: PromemoriaItem[] = promRaw.map((p) => ({
-        ...p,
-        clienteNome: p.ClienteRef
-          ? (() => {
-              const c = clientiMapPromo.get(p.ClienteRef!.path);
-              return c ? ((c.Ragione_Sociale ?? c.Nome ?? "") as string) : undefined;
-            })()
-          : undefined,
-      }));
-
-      // Filter: mostra solo quelli con Data <= oggi (o senza data)
-      const todayTs = Timestamp.fromDate(endOfDay);
-      const promoFiltrati = promWithCliente
-        .filter((p) => !p.Data || p.Data.seconds <= todayTs.seconds)
-        .sort((a, b) => (a.Data?.seconds ?? 0) - (b.Data?.seconds ?? 0));
+      // Filter: mostra solo quelli con DataScadenza <= oggi (o senza data) —
+      // già ordinati asc/nulls-last lato server (ORDER BY data ASC NULLS LAST).
+      const endOfDayIso = endOfDay.toISOString();
+      const promoFiltrati = promRaw.filter((p) => !p.DataScadenza || p.DataScadenza <= endOfDayIso);
 
       setKpis({
         clientiCount:     clientiCount ?? 0,
@@ -167,7 +123,12 @@ export default function DashboardPage() {
     if (!user?.uid || markingId) return;
     setMarkingId(promemoriaId);
     try {
-      await updateDoc(doc(db, "users", "promemoria_crm", "Promemoria", promemoriaId), { Completata: true });
+      const res = await fetch(`/api/promemoria/${promemoriaId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ completata: true }),
+      });
+      if (!res.ok) throw new Error("update failed");
       setPromemoria((prev) => prev.filter((p) => p.id !== promemoriaId));
       toast.success("Promemoria completato");
     } catch {
@@ -325,17 +286,17 @@ export default function DashboardPage() {
                   >
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
-                        {p.Titolo}
+                        {p.Nome}
                       </p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        {p.Data && (
+                        {p.DataScadenza && (
                           <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-                            {formatData(p.Data)}
+                            {formatData(p.DataScadenza)}
                           </span>
                         )}
-                        {p.clienteNome && (
+                        {p.ClienteNome && p.ClienteNome !== "—" && (
                           <span className="text-xs truncate" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                            · {p.clienteNome}
+                            · {p.ClienteNome}
                           </span>
                         )}
                       </div>
