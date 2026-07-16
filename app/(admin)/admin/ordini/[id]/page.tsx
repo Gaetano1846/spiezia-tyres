@@ -1207,7 +1207,15 @@ export default function OrdineAdminDetailPage() {
                   {p.Stato && (
                     <div className="flex justify-between items-center gap-3">
                       <span style={{ color: "var(--text-muted)" }}>Stato</span>
-                      <Badge variant={p.Stato === "Pagato" ? "success" : "neutral"}>{p.Stato}</Badge>
+                      <Badge
+                        variant={
+                          p.Stato === "Completato" || p.Stato === "Pagato" ? "success"
+                          : p.Stato === "Revocato" ? "error"
+                          : "neutral"
+                        }
+                      >
+                        {p.Stato}
+                      </Badge>
                     </div>
                   )}
                   {!hasAny && <p style={{ color: "var(--text-muted)" }}>—</p>}

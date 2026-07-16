@@ -1121,30 +1121,40 @@ export default function OrdiniAdminPage() {
                             const isSaving = savingStato === docId;
                             const isReadOnly = STATI_READONLY.has(cur);
                             return (
-                              <div className="relative inline-block">
-                                <select
-                                  value={cur}
-                                  disabled={isSaving || isReadOnly}
-                                  onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine)}
-                                  className="appearance-none pl-2.5 pr-7 py-1 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                                  style={{
-                                    background: style.bg,
-                                    color: style.text,
-                                    border: `1px solid ${style.border}`,
-                                    fontFamily: "var(--font-montserrat)",
-                                    outline: "none",
-                                  }}
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  {/* Stato corrente sempre selezionabile (anche se read-only) */}
-                                  {isReadOnly && <option value={cur}>{cur}</option>}
-                                  {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                                <ChevronDown
-                                  size={11}
-                                  className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none"
-                                  style={{ color: style.text }}
-                                />
+                              <div className="flex flex-col items-start gap-1">
+                                <div className="relative inline-block">
+                                  <select
+                                    value={cur}
+                                    disabled={isSaving || isReadOnly}
+                                    onChange={(e) => handleRowStatoChange(docId, e.target.value as OrdineStato, cur, ordine)}
+                                    className="appearance-none pl-2.5 pr-7 py-1 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                                    style={{
+                                      background: style.bg,
+                                      color: style.text,
+                                      border: `1px solid ${style.border}`,
+                                      fontFamily: "var(--font-montserrat)",
+                                      outline: "none",
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {/* Stato corrente sempre selezionabile (anche se read-only) */}
+                                    {isReadOnly && <option value={cur}>{cur}</option>}
+                                    {STATI.map((s) => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                  <ChevronDown
+                                    size={11}
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                                    style={{ color: style.text }}
+                                  />
+                                </div>
+                                {ordine.PagamentoStato === "Revocato" && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap"
+                                    style={{ background: "#FEE2E2", color: "#991B1B", border: "1px solid #FCA5A5" }}
+                                  >
+                                    Rimborsato
+                                  </span>
+                                )}
                               </div>
                             );
                           })()}
@@ -1254,6 +1264,15 @@ export default function OrdiniAdminPage() {
                         <ChevronDown size={12} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
                       </button>
                     </div>
+
+                    {ordine.PagamentoStato === "Revocato" && (
+                      <span
+                        className="inline-block mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold"
+                        style={{ background: "#FEE2E2", color: "#991B1B", border: "1px solid #FCA5A5" }}
+                      >
+                        Rimborsato
+                      </span>
+                    )}
 
                     {/* Tendina dettagli — info aggiuntive */}
                     {isOpen && (

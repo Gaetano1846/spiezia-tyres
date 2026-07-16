@@ -87,6 +87,11 @@ export interface OrdineListItemApi {
    *  il ClienteNome risolto è il rivenditore/reseller (billing), non il cliente
    *  finale — l'admin usa questo campo per mostrare il vero destinatario. */
   SpedizioneDestinatario: string | null;
+  /** pagamento->>'Stato' (es. "Completato"/"Revocato") — presente anche in
+   *  lista (non solo dettaglio) così un rimborso è visibile a colpo d'occhio
+   *  senza aprire ogni ordine. Scritto da markOrderReversed/markOrdineReversedPg
+   *  lato Prezzo-Gomme. */
+  PagamentoStato: string | null;
 }
 
 /** Anagrafica minima del "proprietario" dell'ordine, risolta via JOIN nella
@@ -143,6 +148,7 @@ const LIST_COLS = `o.id, o.numero, o.source, o.stato, o.cliente_id, o.utente_id,
   coalesce(NULLIF(c.ragione_sociale, ''), c.nome) AS cliente_nome,
   u.display_name AS utente_nome,
   o.indirizzo_spedizione->>'Destinatario' AS spedizione_destinatario,
+  o.pagamento->>'Stato' AS pagamento_stato,
   (SELECT count(*) FROM core.ordine_articoli oa WHERE oa.ordine_id = o.id) AS articoli_count`;
 
 const DETAIL_COLS = `${LIST_COLS}, o.sede_id, o.iva, o.pfu, o.sconto_totale, o.contributo_logistico,
@@ -174,6 +180,7 @@ function rowToListItem(r: Record<string, unknown>): OrdineListItemApi {
     GlsTrackingNumber: (r.gls_tracking_number as string) ?? null,
     ArticoliCount: Number(r.articoli_count ?? 0),
     SpedizioneDestinatario: (r.spedizione_destinatario as string) || null,
+    PagamentoStato: (r.pagamento_stato as string) || null,
   };
 }
 
