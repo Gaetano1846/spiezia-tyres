@@ -18,6 +18,16 @@
 import { getDb, newId } from "@/lib/db";
 import type { Pagamento, Indirizzo } from "@/lib/types";
 
+// Ordini non ancora pagati: devono vivere nel database ma non comparire in
+// NESSUNA vista frontend (admin/client/rappresentante/CRM/report/export) finché
+// il pagamento non è confermato — stesso principio del pattern Firestore
+// "pending nascosto" (vedi Prezzo-Gomme: writePendingOrder non scrive DataOra,
+// quindi la query .orderBy('DataOra') di Flutter li esclude nativamente).
+// Qui il fallback coalesce(data_ora, created_at), necessario per gli ordini
+// storici senza DataOra riconoscibile, disfa quel meccanismo — quindi
+// l'esclusione va fatta esplicitamente per stato in ogni query di lettura.
+const HIDDEN_STATI = ["In Attesa Pagamento"];
+
 export interface ArticoloOrdineApi {
   Sku: string | null;
   Titolo: string | null;
@@ -288,6 +298,7 @@ export async function listOrdini(filters: ListOrdiniFilters = {}): Promise<Ordin
   const params: unknown[] = [];
   const push = (v: unknown) => { params.push(v); return `$${params.length}`; };
 
+  where.push(`NOT (o.stato = ANY(${push(HIDDEN_STATI)}))`);
   if (filters.utenteId) where.push(`o.utente_id = ${push(filters.utenteId)}`);
   if (filters.clienteId) where.push(`o.cliente_id = ${push(filters.clienteId)}`);
   if (filters.utenteIds?.length || filters.clienteIds?.length) {
@@ -339,8 +350,8 @@ export async function getOrdine(id: string): Promise<OrdineApi | null> {
        FROM core.ordini o
        LEFT JOIN core.clienti c ON c.id = o.cliente_id
        LEFT JOIN core.utenti u ON u.id = o.utente_id
-      WHERE o.id = $1`,
-    [id]
+      WHERE o.id = $1 AND NOT (o.stato = ANY($2))`,
+    [id, HIDDEN_STATI]
   );
   if (!rows[0]) return null;
   const ordine = rowToOrdine(rows[0]);
@@ -435,10 +446,13 @@ export async function getReportAggregato(filters: ReportFilters): Promise<Report
   if (!db) return EMPTY_REPORT;
 
   const fonti = filters.fonti?.length ? filters.fonti : null;
-  const sourceClause = fonti ? "AND o.source = ANY($4)" : "";
-  // $1=from $2=to $3=stati cancellati $4=fonti (solo se presente) — stessi
-  // parametri posizionali condivisi dalle tre query sotto.
-  const baseParams: unknown[] = [filters.from, filters.to, REPORT_CANCELLED_STATI];
+  const sourceClause = fonti ? "AND o.source = ANY($5)" : "";
+  // $1=from $2=to $3=stati cancellati $4=stati nascosti (mai pagati) $5=fonti
+  // (solo se presente) — stessi parametri posizionali condivisi dalle tre
+  // query sotto. Gli ordini "In Attesa Pagamento" sono esclusi dalla base
+  // (non solo dal bucket "cancellati"): non sono mai stati confermati, non
+  // devono contare né come fatturato né come volume né come annullati.
+  const baseParams: unknown[] = [filters.from, filters.to, REPORT_CANCELLED_STATI, HIDDEN_STATI];
   if (fonti) baseParams.push(fonti);
 
   const [bySourceRes, timeSeriesRes, topProdottiRes] = await Promise.all([
@@ -448,7 +462,8 @@ export async function getReportAggregato(filters: ReportFilters): Promise<Report
               coalesce(sum(o.totale) FILTER (WHERE NOT (o.stato = ANY($3))), 0) AS valid_revenue,
               count(*) FILTER (WHERE o.stato = ANY($3)) AS cancelled_count
          FROM core.ordini o
-        WHERE coalesce(o.data_ora, o.created_at) BETWEEN $1 AND $2 ${sourceClause}
+        WHERE coalesce(o.data_ora, o.created_at) BETWEEN $1 AND $2
+          AND NOT (o.stato = ANY($4)) ${sourceClause}
         GROUP BY o.source`,
       baseParams
     ),
@@ -460,7 +475,7 @@ export async function getReportAggregato(filters: ReportFilters): Promise<Report
               o.source, sum(o.totale) AS revenue
          FROM core.ordini o
         WHERE coalesce(o.data_ora, o.created_at) BETWEEN $1 AND $2 ${sourceClause}
-          AND NOT (o.stato = ANY($3))
+          AND NOT (o.stato = ANY($3)) AND NOT (o.stato = ANY($4))
         GROUP BY day, o.source`,
       baseParams
     ),
@@ -476,7 +491,7 @@ export async function getReportAggregato(filters: ReportFilters): Promise<Report
              FROM core.ordine_articoli oa
              JOIN core.ordini o ON o.id = oa.ordine_id
             WHERE coalesce(o.data_ora, o.created_at) BETWEEN $1 AND $2 ${sourceClause}
-              AND NOT (o.stato = ANY($3))
+              AND NOT (o.stato = ANY($3)) AND NOT (o.stato = ANY($4))
          ) t
         GROUP BY key
         ORDER BY sum(quantita) DESC
@@ -540,6 +555,7 @@ export async function countOrdini(filters: Pick<ListOrdiniFilters, "dataDa" | "d
   const params: unknown[] = [];
   const push = (v: unknown) => { params.push(v); return `$${params.length}`; };
 
+  where.push(`NOT (stato = ANY(${push(HIDDEN_STATI)}))`);
   if (filters.dataDa) where.push(`coalesce(data_ora, created_at) >= ${push(filters.dataDa)}`);
   if (filters.dataA) where.push(`coalesce(data_ora, created_at) <= ${push(filters.dataA)}`);
   if (filters.fonti?.length) where.push(`source = ANY(${push(filters.fonti)})`);
@@ -577,6 +593,8 @@ export async function listOrdiniForExport(filter: { ids?: string[]; limit?: numb
 
   const where: string[] = [];
   const params: unknown[] = [];
+  params.push(HIDDEN_STATI);
+  where.push(`NOT (o.stato = ANY($${params.length}))`);
   if (filter.ids?.length) {
     params.push(filter.ids);
     where.push(`o.id = ANY($${params.length})`);
