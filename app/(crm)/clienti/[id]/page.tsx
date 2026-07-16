@@ -3,9 +3,8 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
-  doc, getDocs, collection, collectionGroup, query, orderBy, limit,
-  where, updateDoc, addDoc, deleteDoc, serverTimestamp, Timestamp,
-  type DocumentReference,
+  getDocs, collection, query, orderBy, limit,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
@@ -22,6 +21,7 @@ import type { Cliente, Preventivo, Veicolo } from "@/lib/types";
 import type { OrdineListItemApi } from "@/lib/ordiniDb";
 import type { AppuntamentoApi } from "@/lib/appuntamentiDb";
 import type { FoglioApi } from "@/lib/fogliDb";
+import type { PromemoriaApi } from "@/lib/promemoriaDb";
 
 const appStatoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
   Completato:  "success",
@@ -32,16 +32,6 @@ const appStatoVariant: Record<string, "success" | "brand" | "neutral" | "error">
 
 type Tab = "Veicoli" | "Preventivi" | "Appuntamenti" | "Ordini" | "FogliDiLavoro" | "Promemoria" | "Note";
 const TABS: Tab[] = ["Veicoli", "Preventivi", "Appuntamenti", "Ordini", "FogliDiLavoro", "Promemoria", "Note"];
-
-type PromemoriaRow = {
-  id: string;
-  Nome: string;
-  Descrizione?: string;
-  Mittente?: string;
-  Data_Scadenza?: Timestamp;
-  Data_Creazione?: Timestamp;
-  Completata: boolean;
-};
 
 type PromemoriaForm = {
   nome: string;
@@ -116,7 +106,7 @@ export default function ClienteDetailPage() {
   const [appuntamenti, setAppuntamenti] = useState<AppuntamentoApi[]>([]);
   const [ordini,       setOrdini]       = useState<OrdineListItemApi[]>([]);
   const [fogli,        setFogli]        = useState<FoglioApi[]>([]);
-  const [promemoria,   setPromemoria]   = useState<PromemoriaRow[]>([]);
+  const [promemoria,   setPromemoria]   = useState<PromemoriaApi[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [activeTab,    setActiveTab]    = useState<Tab>("Veicoli");
   const [nota,         setNota]         = useState("");
@@ -144,11 +134,11 @@ export default function ClienteDetailPage() {
       try {
         // Cliente: ora su Postgres (Fase 3 migrazione). Ordini: ora su
         // Postgres (Fase 1 migrazione Ordini, core.ordini già allineato dal
-        // bridge). Appuntamenti e FogliDiLavoro: Postgres via API con filtro
-        // clienteId (Fase 7 — prima leggevano Firestore direttamente).
-        // Promemoria resta volontariamente su Firestore (non ha ancora uno
-        // schema Postgres dedicato — vedi nota nel report), corretto perché
-        // il bridge mantiene i Cliente ref sincronizzati.
+        // bridge). Appuntamenti, FogliDiLavoro e Promemoria: Postgres via API
+        // con filtro clienteId (Fase 7 per Appuntamenti/Fogli; Promemoria
+        // chiuso dopo — b2b.promemoria esisteva già in migration 005 ma non
+        // era mai stato agganciato a nessuna route, la pagina parlava ancora
+        // a Firestore users/promemoria_crm/Promemoria).
         const clienteRes = await fetch(`/api/clienti/${id}`);
         if (!clienteRes.ok) {
           toast.error("Cliente non trovato");
@@ -158,32 +148,18 @@ export default function ClienteDetailPage() {
         setCliente(c);
         setNota(c.Note ?? "");
 
-        const clienteRef = doc(db, "Clienti", id) as DocumentReference;
-
-        const [veicoliRes, preventiviSnap, appRes, ordiniRes, fogliRes, proSnap] = await Promise.all([
+        const [veicoliRes, preventiviSnap, appRes, ordiniRes, fogliRes, proRes] = await Promise.all([
           fetch(`/api/clienti/${id}/veicoli`),
           getDocs(query(collection(db, "Clienti", id, "Preventivo"), orderBy("DataCreazione", "desc"), limit(50))),
           fetch(`/api/appuntamenti?clienteId=${id}&limit=50`),
           fetch(`/api/admin/ordini?clienteId=${id}`),
           fetch(`/api/fogli-di-lavoro?clienteId=${id}&limit=50`),
-          getDocs(query(
-            collectionGroup(db, "Promemoria"),
-            where("Cliente", "==", clienteRef),
-            limit(50),
-          )),
+          fetch(`/api/promemoria?clienteId=${id}&limit=50`),
         ]);
 
-        setPromemoria(proSnap.docs
-          .map((d) => ({
-            id: d.id,
-            Nome:          d.data().Nome ?? "",
-            Descrizione:   d.data().Descrizione,
-            Mittente:      d.data().Mittente,
-            Data_Scadenza: d.data().Data_Scadenza as Timestamp | undefined,
-            Data_Creazione: d.data().Data_Creazione as Timestamp | undefined,
-            Completata:    d.data().Completata ?? false,
-          }))
-          .sort((a, b) => (a.Data_Scadenza?.seconds ?? Infinity) - (b.Data_Scadenza?.seconds ?? Infinity)));
+        if (!proRes.ok) throw new Error("Errore nel caricamento promemoria");
+        const { promemoria: proList } = (await proRes.json()) as { promemoria: PromemoriaApi[] };
+        setPromemoria(proList); // già ordinati asc per data (nulls last) lato server
 
         const { veicoli: veicoliList } = (await veicoliRes.json()) as { veicoli: Veicolo[] };
         setVeicoli(veicoliList);
@@ -372,24 +348,19 @@ export default function ClienteDetailPage() {
     if (!proForm.nome.trim()) { toast.error("Inserisci il nome del promemoria"); return; }
     setSavingPro(true);
     try {
-      const payload: Record<string, unknown> = {
-        Nome:        proForm.nome.trim(),
-        Descrizione: proForm.descrizione.trim() || null,
-        Cliente:     doc(db, "Clienti", id),
-        Completata:  false,
-        Data_Creazione: serverTimestamp(),
-      };
-      if (proForm.scadenza) {
-        payload.Data_Scadenza = Timestamp.fromDate(new Date(proForm.scadenza));
-      }
-      const newRef = await addDoc(collection(db, "users", "promemoria_crm", "Promemoria"), payload);
-      setPromemoria((prev) => [...prev, {
-        id: newRef.id,
-        Nome: proForm.nome.trim(),
-        Descrizione: proForm.descrizione.trim() || undefined,
-        Data_Scadenza: proForm.scadenza ? Timestamp.fromDate(new Date(proForm.scadenza)) : undefined,
-        Completata: false,
-      }]);
+      const res = await fetch("/api/promemoria", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clienteId: id,
+          nome: proForm.nome.trim(),
+          descrizione: proForm.descrizione.trim() || null,
+          dataScadenza: proForm.scadenza ? new Date(proForm.scadenza).toISOString() : null,
+        }),
+      });
+      if (!res.ok) throw new Error("create failed");
+      const { promemoria: nuovo } = (await res.json()) as { promemoria: PromemoriaApi };
+      setPromemoria((prev) => [...prev, nuovo]);
       setProForm(emptyPromemoriaForm());
       setShowPromemoriaModal(false);
       toast.success("Promemoria aggiunto");
@@ -400,19 +371,25 @@ export default function ClienteDetailPage() {
     }
   }
 
-  async function handleToggleCompletata(p: PromemoriaRow) {
+  async function handleToggleCompletata(p: PromemoriaApi) {
     try {
-      await updateDoc(doc(db, "users", "promemoria_crm", "Promemoria", p.id), { Completata: !p.Completata });
+      const res = await fetch(`/api/promemoria/${p.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ completata: !p.Completata }),
+      });
+      if (!res.ok) throw new Error("update failed");
       setPromemoria((prev) => prev.map((x) => x.id === p.id ? { ...x, Completata: !p.Completata } : x));
     } catch {
       toast.error("Errore nell'aggiornamento");
     }
   }
 
-  async function handleDeletePromemoria(p: PromemoriaRow) {
+  async function handleDeletePromemoria(p: PromemoriaApi) {
     if (!confirm(`Eliminare il promemoria "${p.Nome}"?`)) return;
     try {
-      await deleteDoc(doc(db, "users", "promemoria_crm", "Promemoria", p.id));
+      const res = await fetch(`/api/promemoria/${p.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("delete failed");
       setPromemoria((prev) => prev.filter((x) => x.id !== p.id));
       toast.success("Promemoria eliminato");
     } catch {
@@ -1148,8 +1125,8 @@ export default function ClienteDetailPage() {
               ) : (
                 <div className="space-y-2">
                   {promemoria.map((p) => {
-                    const scaduto = p.Data_Scadenza && !p.Completata &&
-                      p.Data_Scadenza.toDate() < new Date();
+                    const scaduto = !!p.DataScadenza && !p.Completata &&
+                      new Date(p.DataScadenza) < new Date();
                     return (
                       <div key={p.id}
                         className="flex items-start gap-3 px-4 py-3 rounded-xl"
@@ -1182,12 +1159,12 @@ export default function ClienteDetailPage() {
                               {p.Descrizione}
                             </p>
                           )}
-                          {p.Data_Scadenza && (
+                          {p.DataScadenza && (
                             <p className="text-xs mt-1 font-semibold" style={{
                               color: scaduto ? "#EF4444" : "var(--text-muted)",
                               fontFamily: "var(--font-montserrat)",
                             }}>
-                              {scaduto ? "Scaduto · " : "Scade · "}{fmtData(p.Data_Scadenza)}
+                              {scaduto ? "Scaduto · " : "Scade · "}{fmtData(p.DataScadenza)}
                             </p>
                           )}
                         </div>

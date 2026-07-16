@@ -5,6 +5,7 @@ import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
 import { checkAndDecrementFido, refundFido } from "@/lib/clientiDb";
 import { newId } from "@/lib/db";
 import { nextCounterServer } from "@/lib/countersDb";
+import { listIndirizziUtente, createIndirizzoUtente, type IndirizzoTipo } from "@/lib/utentiIndirizziDb";
 
 // Creazione ordine — SERVER-SIDE (bypassa le Firestore Security Rules, che
 // richiedono `request.auth != null`; con l'auth VPS-native un cliente con
@@ -73,13 +74,14 @@ function normalizeAddr(a: { Via?: unknown; CAP?: unknown; Citta?: unknown }): st
   return [a.Via, a.CAP, a.Citta].map((v) => String(v ?? "").trim().toLowerCase()).join("|");
 }
 
-// Salva l'indirizzo inserito nella rubrica dell'utente (o del cliente, in
-// modalità "ordina per conto di"), se non è già presente — così il prossimo
-// ordine può riusarlo dal menu "Usa un indirizzo salvato". SERVER-SIDE per lo
-// stesso motivo del resto della route (nessun token Firebase Auth lato client
-// garantito). Best-effort: un fallimento qui non deve far fallire l'ordine,
-// già creato con successo a questo punto. Resta su Firestore (fuori scope
-// Fase 2 — solo la riga ordine si sposta su Postgres).
+// Salva l'indirizzo inserito nella rubrica del cliente, in modalità "ordina
+// per conto di" (ramo forClient sotto), se non è già presente — così il
+// prossimo ordine può riusarlo dal menu "Usa un indirizzo salvato".
+// SERVER-SIDE per lo stesso motivo del resto della route (nessun token
+// Firebase Auth lato client garantito). Best-effort: un fallimento qui non
+// deve far fallire l'ordine, già creato con successo a questo punto. Resta
+// su Firestore (Clienti/{id}/Indirizzo_FatturazioneC è bridgeata verso il
+// CRM — fuori scope, lato CRM è corretto così).
 async function saveAddressIfNew(
   colRef: FirebaseFirestore.CollectionReference,
   doc: Record<string, unknown>
@@ -92,6 +94,40 @@ async function saveAddressIfNew(
     await colRef.add(doc);
   } catch (err) {
     console.error("[api/checkout/ordine] salvataggio indirizzo fallito (non bloccante):", err);
+  }
+}
+
+// Salva l'indirizzo self-checkout nella rubrica Postgres dell'utente
+// (core.utenti_indirizzi via lib/utentiIndirizziDb.ts, stessa tabella letta
+// da /api/account/indirizzi in "I miei indirizzi"), se non è già presente —
+// stesso pattern/stessa dedupe di saveAddressIfNew sopra, solo verso
+// Postgres invece di Firestore. Sostituisce la vecchia scrittura diretta su
+// users/{uid}/Indirizzo_Fatturazione (Firestore, mai bridgeata e mai più
+// letta da nessuna pagina dopo il cutover di account/page.tsx): un cliente
+// che salvava un indirizzo al checkout self-service non lo rivedeva più in
+// "I miei indirizzi". Best-effort per lo stesso motivo del resto della route.
+async function saveAddressIfNewPg(
+  utenteId: string,
+  tipo: IndirizzoTipo,
+  a: AddressPayload
+): Promise<void> {
+  try {
+    const key = normalizeAddr({ Via: a.via, CAP: a.cap, Citta: a.citta });
+    const existing = await listIndirizziUtente(utenteId, tipo);
+    const alreadySaved = existing.some(
+      (ind) => normalizeAddr({ Via: ind.Via, CAP: ind.CAP, Citta: ind.Citta }) === key
+    );
+    if (alreadySaved) return;
+    await createIndirizzoUtente(utenteId, tipo, {
+      Nome: a.nome,
+      Via: a.via,
+      CAP: a.cap,
+      Citta: a.citta,
+      Provincia: a.provincia,
+      Partita_Iva: a.partitaIva || undefined,
+    });
+  } catch (err) {
+    console.error("[api/checkout/ordine] salvataggio indirizzo (Postgres) fallito (non bloccante):", err);
   }
 }
 
@@ -224,14 +260,10 @@ export async function POST(req: Request) {
         await saveAddressIfNew(col, clienteAddr(body.spedizione));
       }
     } else {
-      const col = db.collection(`users/${session.uid}/Indirizzo_Fatturazione`);
-      const userAddr = (a: AddressPayload) => ({
-        Nome: a.nome, Via: a.via, CAP: a.cap, Citta: a.citta,
-        Provincia: a.provincia, PartitaIVA: a.partitaIva || null,
-      });
-      await saveAddressIfNew(col, userAddr(body.fatturazione));
-      if (body.spedizione && normalizeAddr(userAddr(body.spedizione)) !== normalizeAddr(userAddr(body.fatturazione))) {
-        await saveAddressIfNew(col, userAddr(body.spedizione));
+      await saveAddressIfNewPg(session.uid, "fatturazione", body.fatturazione);
+      if (body.spedizione && normalizeAddr({ Via: body.spedizione.via, CAP: body.spedizione.cap, Citta: body.spedizione.citta })
+          !== normalizeAddr({ Via: body.fatturazione.via, CAP: body.fatturazione.cap, Citta: body.fatturazione.citta })) {
+        await saveAddressIfNewPg(session.uid, "spedizione", body.spedizione);
       }
     }
 
