@@ -31,6 +31,10 @@ export interface UtenteProfile {
   Fido_Residuo: number | null;
   UtentiAvvisati: boolean;
   created_time: string | null;
+  /** True se la sessione corrente sta impersonando questo utente (admin
+   *  "Accedi come") — NON letto da Postgres, valorizzato dalla route
+   *  /api/auth/profile che ha accesso ai cookie. Vedi lib/auth.ts::isImpersonating. */
+  Impersonating?: boolean;
 }
 
 /**
@@ -44,12 +48,20 @@ export interface UtenteProfile {
 export async function getUtenteProfile(id: string): Promise<UtenteProfile | null> {
   const db = getDb();
   if (!db) return null;
+  // Fido: preferisci core.clienti quando l'utente ha un'anagrafica collegata
+  // — è l'unica colonna aggiornata dal sync gestionale/banca (FTP, vedi
+  // lib/clientSync/fido.js) e dall'editing admin per questi account;
+  // core.utenti.fido resta il fallback per i login senza anagrafica propria
+  // (rappresentanti, admin, clienti self-service senza plafond dedicato).
   const { rows } = await db.query(
     `SELECT u.id, u.email, u.display_name, u.photo_url, u.telefono, u.ruolo, u.crm,
-            u.sede_id, s.nome AS sede_nome, u.reparto_id, u.mansione_id, u.fido,
-            u.fido_residuo, u.fs_extra, u.created_at
+            u.sede_id, s.nome AS sede_nome, u.reparto_id, u.mansione_id,
+            coalesce(c.fido, u.fido) AS fido,
+            coalesce(c.fido_residuo, u.fido_residuo) AS fido_residuo,
+            u.fs_extra, u.created_at
        FROM core.utenti u
        LEFT JOIN core.sedi s ON s.id = u.sede_id
+       LEFT JOIN core.clienti c ON c.utente_id = u.id
       WHERE u.id = $1`,
     [id]
   );

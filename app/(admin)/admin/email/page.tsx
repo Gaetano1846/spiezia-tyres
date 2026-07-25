@@ -1,54 +1,33 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import {
-  collection, query, orderBy, getDocs, getDoc,
-  updateDoc, doc, limit, type Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Mail, Send, X, Search, Sparkles, Loader2 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type EmailFS = {
-  id: string;
-  from?: string;
-  to?: string;
-  subject?: string;
-  body?: string;
-  html?: string;
-  receivedAt?: Timestamp;
-  tipologia?: string;       // "ebay" | "tyre24"
-  direzione?: string;       // "ricevuta" | "inviata"
-  letta?: boolean;
-  seen?: boolean;
-  Risposto?: boolean;
-  Risposta_suggerita?: string;
-};
+import type { EmailApi } from "@/lib/emailsDb";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function iniziali(from?: string): string {
+function iniziali(from?: string | null): string {
   if (!from) return "?";
   const parts = from.replace(/<.*>/, "").trim().split(" ");
   return parts.map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "?";
 }
 
-function formatData(ts?: Timestamp): string {
-  if (!ts?.toDate) return "";
-  const d   = ts.toDate();
-  const dd  = String(d.getDate()).padStart(2, "0");
-  const mm  = String(d.getMonth() + 1).padStart(2, "0");
-  const hh  = String(d.getHours()).padStart(2, "0");
+function formatData(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${dd}/${mm} ${hh}:${min}`;
 }
 
 const TIPOLOGIA_VARIANT: Record<string, "brand" | "neutral" | "success"> = {
-  ebay:   "brand",
+  ebay: "brand",
   tyre24: "success",
 };
 
@@ -103,52 +82,57 @@ function Chips<T extends string>({
   );
 }
 
-type TabDir    = "ricevute" | "inviate";
-type TabRisp   = "tutte" | "non-risposte" | "risposte";
-type TabTipo   = "tutte" | "ebay" | "tyre24";
+type TabDir = "ricevute" | "inviate";
+type TabRisp = "tutte" | "non-risposte" | "risposte";
+type TabTipo = "tutte" | "ebay" | "tyre24";
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function EmailPage() {
-  const [emails,    setEmails]    = useState<EmailFS[]>([]);
-  const [loading,   setLoading]   = useState(true);
-  const [selected,  setSelected]  = useState<EmailFS | null>(null);
-  const [risposta,  setRisposta]  = useState("");
-  const [search,    setSearch]    = useState("");
-  const [sending,   setSending]   = useState(false);
+  const [emails, setEmails] = useState<EmailApi[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<EmailApi | null>(null);
+  const [risposta, setRisposta] = useState("");
+  const [search, setSearch] = useState("");
+  const [sending, setSending] = useState(false);
   const [generando, setGenerando] = useState(false);
 
   // Filtri (come Flutter: direzione, risposto, tipologia)
-  const [tabDir,  setTabDir]  = useState<TabDir>("ricevute");
+  const [tabDir, setTabDir] = useState<TabDir>("ricevute");
   const [tabRisp, setTabRisp] = useState<TabRisp>("tutte");
   const [tabTipo, setTabTipo] = useState<TabTipo>("tutte");
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const snap = await getDocs(
-          query(collection(db, "Emails"), orderBy("receivedAt", "desc"), limit(200))
-        );
-        setEmails(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EmailFS, "id">) })));
-      } catch (err) {
-        console.error(err);
-        toast.error("Errore nel caricamento delle email");
-      } finally {
-        setLoading(false);
-      }
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/emails?limit=200");
+      if (!res.ok) throw new Error("fetch fallita");
+      const json = (await res.json()) as { emails: EmailApi[] };
+      setEmails(json.emails);
+    } catch (err) {
+      console.error(err);
+      toast.error("Errore nel caricamento delle email");
+    } finally {
+      setLoading(false);
     }
-    load();
   }, []);
 
-  async function handleSelect(e: EmailFS) {
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleSelect(e: EmailApi) {
     setSelected(e);
     setRisposta(e.Risposta_suggerita ?? "");
     if (e.letta && e.seen) return;
-    setEmails((prev) => prev.map((em) => em.id === e.id ? { ...em, letta: true, seen: true } : em));
+    setEmails((prev) => prev.map((em) => (em.id === e.id ? { ...em, letta: true, seen: true } : em)));
     try {
-      await updateDoc(doc(db, "Emails", e.id), { letta: true, seen: true });
+      await fetch(`/api/emails/${e.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "read" }),
+      });
     } catch {
-      setEmails((prev) => prev.map((em) => em.id === e.id ? { ...em, letta: false } : em));
+      setEmails((prev) => prev.map((em) => (em.id === e.id ? { ...em, letta: false, seen: false } : em)));
     }
   }
 
@@ -162,20 +146,19 @@ export default function EmailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emailId }),
       });
+      if (res.status === 503) {
+        toast.error("Generazione risposta AI temporaneamente disattivata");
+        return;
+      }
       if (!res.ok) throw new Error("Errore generazione AI");
-
-      // La route aggiorna Risposta_suggerita direttamente su Firestore.
-      // Ri-leggiamo il doc per ottenere il testo generato.
-      const snap = await getDoc(doc(db, "Emails", emailId));
-      const reply = snap.exists() ? ((snap.data()?.Risposta_suggerita as string) ?? "") : "";
+      const json = (await res.json()) as { Risposta_suggerita?: string | null };
+      const reply = json.Risposta_suggerita ?? "";
 
       setRisposta(reply);
-      setSelected((prev) => prev ? { ...prev, Risposta_suggerita: reply } : prev);
-      setEmails((prev) =>
-        prev.map((em) => em.id === emailId ? { ...em, Risposta_suggerita: reply } : em)
-      );
+      setSelected((prev) => (prev ? { ...prev, Risposta_suggerita: reply } : prev));
+      setEmails((prev) => prev.map((em) => (em.id === emailId ? { ...em, Risposta_suggerita: reply } : em)));
       if (reply) toast.success("Risposta AI generata");
-      else toast.error("Nessun testo generato dalla CF");
+      else toast.error("Nessuna risposta necessaria secondo l'AI");
     } catch {
       toast.error("Errore nella generazione AI");
     } finally {
@@ -192,22 +175,19 @@ export default function EmailPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to:               selected.from ?? "",
-          subject:          `RE: ${selected.subject ?? ""}`,
-          htmlBody:         risposta.trim(),
+          to: selected.from ?? "",
+          subject: `RE: ${selected.subject ?? ""}`,
+          htmlBody: risposta.trim(),
           replyToMessageId: emailId,
         }),
       });
       if (!res.ok) throw new Error("Errore invio");
-      // Aggiorna Firestore dopo invio
-      await updateDoc(doc(db, "Emails", emailId), {
-        Risposto:  true,
-        letta:     true,
-        seen:      true,
+      await fetch(`/api/emails/${emailId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "replied" }),
       });
-      setEmails((prev) =>
-        prev.map((em) => em.id === emailId ? { ...em, Risposto: true, letta: true } : em)
-      );
+      setEmails((prev) => prev.map((em) => (em.id === emailId ? { ...em, Risposto: true, letta: true, seen: true } : em)));
       setSelected(null);
       setRisposta("");
       toast.success("Risposta inviata");
@@ -228,7 +208,7 @@ export default function EmailPage() {
     else arr = arr.filter((e) => e.direzione === "inviata");
 
     // 2. Stato risposta
-    if (tabRisp === "risposte")     arr = arr.filter((e) => e.Risposto === true);
+    if (tabRisp === "risposte") arr = arr.filter((e) => e.Risposto === true);
     if (tabRisp === "non-risposte") arr = arr.filter((e) => !e.Risposto);
 
     // 3. Tipologia
@@ -270,7 +250,7 @@ export default function EmailPage() {
             <Chips<TabDir>
               options={[
                 { key: "ricevute", label: "Ricevute" },
-                { key: "inviate",  label: "Inviate" },
+                { key: "inviate", label: "Inviate" },
               ]}
               value={tabDir}
               onChange={(v) => { setTabDir(v); setSelected(null); }}
@@ -281,9 +261,9 @@ export default function EmailPage() {
           <div className="mb-2 flex-shrink-0">
             <Chips<TabRisp>
               options={[
-                { key: "tutte",         label: "Tutte" },
-                { key: "non-risposte",  label: "Non risposte" },
-                { key: "risposte",      label: "Risposte" },
+                { key: "tutte", label: "Tutte" },
+                { key: "non-risposte", label: "Non risposte" },
+                { key: "risposte", label: "Risposte" },
               ]}
               value={tabRisp}
               onChange={(v) => { setTabRisp(v); setSelected(null); }}
@@ -294,8 +274,8 @@ export default function EmailPage() {
           <div className="mb-3 flex-shrink-0">
             <Chips<TabTipo>
               options={[
-                { key: "tutte",  label: "Tutte" },
-                { key: "ebay",   label: "eBay" },
+                { key: "tutte", label: "Tutte" },
+                { key: "ebay", label: "eBay" },
                 { key: "tyre24", label: "Tyre24" },
               ]}
               value={tabTipo}
@@ -337,7 +317,7 @@ export default function EmailPage() {
               </div>
             ) : (
               lista.map((e) => {
-                const isUnread   = !e.letta && !e.seen && e.direzione !== "inviata";
+                const isUnread = !e.letta && !e.seen && e.direzione !== "inviata";
                 const isSelected = selected?.id === e.id;
                 return (
                   <div
@@ -454,8 +434,8 @@ export default function EmailPage() {
                 color: "var(--text-primary)",
               }}
             >
-              {selected.html ? (
-                <div dangerouslySetInnerHTML={{ __html: selected.html }} />
+              {selected.html && selected.body ? (
+                <div dangerouslySetInnerHTML={{ __html: selected.body }} />
               ) : (
                 <pre className="whitespace-pre-wrap text-sm" style={{ fontFamily: "var(--font-montserrat)" }}>
                   {selected.body ?? ""}

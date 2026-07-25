@@ -38,6 +38,14 @@ const MARCHE = [
   "Kumho","Starmaxx","Kormoran","Nexen","Apollo","Compasal",
 ];
 
+function euroFmt(n: number): string {
+  return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+}
+
+function fidoBasso(fido: number, residuo: number | null | undefined): boolean {
+  return residuo != null && residuo < fido * 0.2;
+}
+
 const INDICI_VELOCITA = ["P","Q","R","S","T","H","V","W","Y","Z"];
 const INDICI_CARICO   = Array.from({ length: 50 }, (_, i) => String(60 + i)); // 60..109
 
@@ -233,23 +241,27 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
 
           {/* Destra: Fido + Logo + Carrello */}
           <div className="flex items-center gap-3 flex-shrink-0">
-            {user?.Fido != null && user.Fido > 0 && (
+            {/* Solo da desktop (lg) in su — sotto quella soglia il fido è
+                mostrato nella riga compatta dedicata (sempre visibile,
+                vedi sotto), non qui: due righe non ci stanno nell'header
+                mobile senza rompere il layout. */}
+            {user?.Fido != null && (
               <div className="hidden lg:flex flex-col gap-0.5">
                 <div
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs"
                   style={{ border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
                 >
                   <span className="font-bold" style={{ color: "#22c55e" }}>$</span>
-                  <span>Fido: <strong>{user.Fido.toLocaleString("it-IT", { style: "currency", currency: "EUR" })}</strong></span>
+                  <span>Fido: <strong>{euroFmt(user.Fido)}</strong></span>
                 </div>
                 <div
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs"
                   style={{ border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)" }}
                 >
-                  <span className="font-bold" style={{ color: user.Fido_Residuo != null && user.Fido_Residuo < user.Fido * 0.2 ? "#EF4444" : "#9ca3af" }}>$</span>
-                  <span style={{ color: user.Fido_Residuo != null && user.Fido_Residuo < user.Fido * 0.2 ? "#EF4444" : "inherit" }}>
+                  <span className="font-bold" style={{ color: fidoBasso(user.Fido, user.Fido_Residuo) ? "#EF4444" : "#9ca3af" }}>$</span>
+                  <span style={{ color: fidoBasso(user.Fido, user.Fido_Residuo) ? "#EF4444" : "inherit" }}>
                     Residuo: <strong>
-                      {user.Fido_Residuo != null ? user.Fido_Residuo.toLocaleString("it-IT", { style: "currency", currency: "EUR" }) : "—"}
+                      {user.Fido_Residuo != null ? euroFmt(user.Fido_Residuo) : "—"}
                     </strong>
                   </span>
                 </div>
@@ -274,6 +286,23 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
             </button>
           </div>
         </div>
+
+        {/* ── Fido — riga compatta sotto la soglia desktop (lg), dove il
+             blocco a due righe sopra è nascosto. "I clienti devono sempre
+             vedere il proprio fido dall'header" — qui copre mobile/tablet. ── */}
+        {user?.Fido != null && (
+          <div
+            className="lg:hidden flex items-center gap-1.5 px-3 pb-1.5 pt-0 text-xs flex-wrap"
+            style={{ background: "#fff", fontFamily: "var(--font-montserrat)" }}
+          >
+            <span className="font-bold" style={{ color: "#22c55e" }}>$</span>
+            <span>Fido: <strong>{euroFmt(user.Fido)}</strong></span>
+            <span style={{ color: "#d1d5db" }}>·</span>
+            <span style={{ color: fidoBasso(user.Fido, user.Fido_Residuo) ? "#EF4444" : "inherit" }}>
+              Residuo: <strong>{user.Fido_Residuo != null ? euroFmt(user.Fido_Residuo) : "—"}</strong>
+            </span>
+          </div>
+        )}
 
         {/* ── Ricerca Avanzata — riga dedicata solo su mobile ── */}
         <div

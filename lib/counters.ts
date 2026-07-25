@@ -7,16 +7,23 @@ export type CounterField = "Preventivo" | "FoglioDiLavoro" | "Ordine";
 // derivata da Counters/{sedeId}), questo flag resta SPENTO — Firestore
 // continua ad allocare come sempre, comportamento identico a oggi. Si accende
 // solo al cutover, quando Flutter smette di creare ordini.
-// Solo "Ordine" è affetto: Preventivo/FoglioDiLavoro restano sempre Firestore.
 const ORDINE_BACKEND = process.env.NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND;
 
-async function nextCounterPostgres(sedeId: string): Promise<number> {
+// Stesso meccanismo per Preventivo/FoglioDiLavoro, flag separato e
+// indipendente da ORDINE_BACKEND (nessun rischio per la numerazione Ordine
+// già in produzione). Verificato prima di costruire questo path: nessuno dei
+// due campi è mai transitato su Counters/{sedeId} storicamente (0 valori
+// osservati su tutte le sedi) — la numerazione storica Preventivo/Foglio
+// veniva da un meccanismo del vecchio CRM Flutter esterno a questo doc.
+const EXTRA_BACKEND = process.env.NEXT_PUBLIC_COUNTERS_EXTRA_BACKEND;
+
+async function nextCounterPostgres(field: CounterField, sedeId: string): Promise<number> {
   const res = await fetch("/api/counters/next", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ field: "Ordine", sedeId }),
+    body: JSON.stringify({ field, sedeId }),
   });
-  if (!res.ok) throw new Error(`allocazione numero ordine fallita: ${res.status}`);
+  if (!res.ok) throw new Error(`allocazione numero ${field} fallita: ${res.status}`);
   const { numero } = (await res.json()) as { numero: number };
   return numero;
 }
@@ -48,8 +55,9 @@ export async function nextCounter(
   field: CounterField,
   sedeId: string
 ): Promise<number> {
-  if (field === "Ordine" && ORDINE_BACKEND === "postgres") {
-    return nextCounterPostgres(sedeId);
-  }
+  const postgres =
+    (field === "Ordine" && ORDINE_BACKEND === "postgres") ||
+    (field !== "Ordine" && EXTRA_BACKEND === "postgres");
+  if (postgres) return nextCounterPostgres(field, sedeId);
   return nextCounterFirestore(field, sedeId);
 }

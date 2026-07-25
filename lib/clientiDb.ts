@@ -281,6 +281,101 @@ export async function deleteVeicolo(id: string): Promise<void> {
   await db.query(`DELETE FROM b2b.veicoli WHERE id = $1`, [id]);
 }
 
+// Rubrica indirizzi CRM del cliente (core.clienti_indirizzi) — non da
+// confondere con core.utenti_indirizzi (rubrica self-service, vedi
+// lib/utentiIndirizziDb.ts): questa è l'anagrafica indirizzi legata a un
+// Cliente business, usata dal checkout in modalità "ordina per conto di"
+// (decommissioning finale Firebase — sostituisce
+// Clienti/{id}/Indirizzo_FatturazioneC, già bridgeata bidirezionalmente).
+
+export type IndirizzoClienteTipo = "fatturazione" | "spedizione";
+
+export interface IndirizzoCliente {
+  id: string;
+  Nome: string | null;
+  Cognome: string | null;
+  Azienda: string | null;
+  Via: string | null;
+  Civico: string | null;
+  CAP: string | null;
+  Citta: string | null;
+  Provincia: string | null;
+  Paese: string | null;
+  Telefono: string | null;
+  Pec: string | null;
+  CodiceFiscale: string | null;
+  Partita_Iva: string | null;
+  CodiceSdi: string | null;
+}
+
+export interface IndirizzoClienteInput {
+  Nome?: string | null;
+  Cognome?: string | null;
+  Azienda?: string | null;
+  Via?: string | null;
+  Civico?: string | null;
+  CAP?: string | null;
+  Citta?: string | null;
+  Provincia?: string | null;
+  Paese?: string | null;
+  Telefono?: string | null;
+  Pec?: string | null;
+  CodiceFiscale?: string | null;
+  Partita_Iva?: string | null;
+  CodiceSdi?: string | null;
+}
+
+function rowToIndirizzoCliente(r: Record<string, unknown>): IndirizzoCliente {
+  return {
+    id: r.id as string,
+    Nome: (r.nome as string) ?? null,
+    Cognome: (r.cognome as string) ?? null,
+    Azienda: (r.azienda as string) ?? null,
+    Via: (r.via as string) ?? null,
+    Civico: (r.civico as string) ?? null,
+    CAP: (r.cap as string) ?? null,
+    Citta: (r.citta as string) ?? null,
+    Provincia: (r.provincia as string) ?? null,
+    Paese: (r.paese as string) ?? null,
+    Telefono: (r.telefono as string) ?? null,
+    Pec: (r.pec as string) ?? null,
+    CodiceFiscale: (r.codice_fiscale as string) ?? null,
+    Partita_Iva: (r.partita_iva as string) ?? null,
+    CodiceSdi: (r.codice_sdi as string) ?? null,
+  };
+}
+
+export async function listIndirizziCliente(clienteId: string, tipo: IndirizzoClienteTipo): Promise<IndirizzoCliente[]> {
+  const db = getDb();
+  if (!db) return [];
+  const { rows } = await db.query(
+    `SELECT * FROM core.clienti_indirizzi WHERE cliente_id = $1 AND tipo = $2 ORDER BY updated_at DESC`,
+    [clienteId, tipo]
+  );
+  return rows.map(rowToIndirizzoCliente);
+}
+
+export async function createIndirizzoCliente(
+  clienteId: string,
+  tipo: IndirizzoClienteTipo,
+  input: IndirizzoClienteInput
+): Promise<IndirizzoCliente> {
+  const db = getDb();
+  if (!db) throw new Error("Postgres non configurato");
+  const id = newId();
+  const { rows } = await db.query(
+    `INSERT INTO core.clienti_indirizzi
+       (id, cliente_id, tipo, nome, cognome, azienda, via, civico, cap, citta, provincia, paese, telefono, pec, codice_fiscale, partita_iva, codice_sdi)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+     RETURNING *`,
+    [id, clienteId, tipo, input.Nome ?? null, input.Cognome ?? null, input.Azienda ?? null,
+      input.Via ?? null, input.Civico ?? null, input.CAP ?? null, input.Citta ?? null,
+      input.Provincia ?? null, input.Paese ?? null, input.Telefono ?? null, input.Pec ?? null,
+      input.CodiceFiscale ?? null, input.Partita_Iva ?? null, input.CodiceSdi ?? null]
+  );
+  return rowToIndirizzoCliente(rows[0]);
+}
+
 export interface VeicoloConClienteApi extends VeicoloApi {
   ClienteId: string;
   ClienteNome: string;
@@ -364,4 +459,23 @@ export async function refundFido(table: "clienti" | "utenti", id: string, import
     `UPDATE ${tableName} SET fido_residuo = coalesce(fido_residuo, fido) + $1 WHERE id = $2`,
     [importo, id]
   );
+}
+
+/**
+ * Id dell'anagrafica core.clienti collegata a un login core.utenti (1:1),
+ * se esiste. Il fido autoritativo di un cliente con anagrafica propria vive
+ * SOLO su core.clienti (sincronizzato dal gestionale/banca via FTP, vedi
+ * lib/clientSync/fido.js, e scritto lì anche dall'admin — vedi saveEdit in
+ * app/(admin)/admin/clienti/page.tsx) — core.utenti.fido per questi account
+ * non viene mai aggiornato dall'esterno, quindi resta null/stantio. Usata dal
+ * checkout self-service per controllare/scalare il fido sulla tabella giusta
+ * invece che su core.utenti a prescindere (bug: prima un cliente con
+ * anagrafica collegata che ordinava da sé non aveva NESSUN blocco fido,
+ * perché core.utenti.fido era sempre null per lui).
+ */
+export async function getClienteIdForUtente(utenteId: string): Promise<string | null> {
+  const db = getDb();
+  if (!db) return null;
+  const { rows } = await db.query(`SELECT id FROM core.clienti WHERE utente_id = $1 LIMIT 1`, [utenteId]);
+  return (rows[0]?.id as string) ?? null;
 }

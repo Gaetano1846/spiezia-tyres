@@ -3,8 +3,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind, ZoomIn, Info } from "lucide-react";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useCart } from "@/components/layout/CartProvider";
 import { useAuth } from "@/components/layout/AuthProvider";
 import toast from "react-hot-toast";
@@ -34,6 +32,59 @@ function StagioneIcon({ stagione }: { stagione: string }) {
   if (stagione === "4 Stagioni")
     return <Wind size={16} style={{ color: "#16A34A" }} />;
   return <Sun size={16} style={{ color: "#EAB308" }} />;
+}
+
+// Stesso pattern di handleMisuraRapida, ma non ancorato a inizio/fine stringa
+// — riconosce la misura anche dentro un testo libero tipo "205/55 R16" digitato
+// nella barra di ricerca principale (home/header), che prima arrivava a
+// searchProdotti solo come query full-text, mai come filtro numerico esatto.
+// Diametro con \.\d+ opzionale: stesso motivo del formato compatto sotto,
+// pneumatici commerciali/autocarro con mezze misure (es. "225/75 R17.5").
+const MISURA_RE = /(\d{3})\s*\/\s*(\d{2,3})\s*[Rr]\s*(\d{2}(?:\.\d+)?)/;
+
+// Formato compatto senza separatori (es. "2257515" = 225/75 R15) — molto
+// usato digitando direttamente nella barra di ricerca (a differenza di
+// MISURA_RE non richiede "/" né "R"). Ancorato all'INTERA stringa (non una
+// sottostringa): un match parziale dentro un testo più lungo (es. uno SKU
+// che contiene cifre di seguito) darebbe troppi falsi positivi. Cifre
+// validate con range plausibili per una misura pneumatico reale, non solo
+// "3 cifre + 2 cifre + 2/3 cifre" — altrimenti un codice prodotto qualsiasi
+// verrebbe interpretato come misura.
+//
+// Diametro a 3 cifre (8 cifre totali, es. "22575175" = 225/75 R17.5): i
+// pneumatici commerciali/autocarro usano spesso mezze misure (17.5/19.5/22.5)
+// — digitate compatte senza il punto decimale. Prima riconoscevamo solo il
+// diametro a 2 cifre (7 totali): con 8 cifre il parsing falliva del tutto e
+// la stringa tornava a fare ricerca testuale libera, sballando i risultati
+// anche con un brand attivo (bug segnalato dall'utente, stesso sintomo del
+// fix precedente ma per un caso non ancora coperto).
+const MISURA_COMPATTA_RE = /^(\d{3})(\d{2})(\d{2,3})$/;
+
+function misuraPlausibile(largezza: number, altezza: number, diametro: number): boolean {
+  return largezza >= 100 && largezza <= 400 && altezza >= 20 && altezza <= 100 && diametro >= 8 && diametro <= 30;
+}
+
+function parseMisura(text: string): { largezza: string; altezza: string; diametro: string; rest: string } | null {
+  const trimmed = text.trim();
+  const compact = trimmed.match(MISURA_COMPATTA_RE);
+  if (compact) {
+    const largezza = Number(compact[1]);
+    const altezza = Number(compact[2]);
+    const diametroRaw = compact[3];
+    // 3 cifre = mezza misura implicita (175 → 17.5), 2 cifre = intero.
+    const diametro = diametroRaw.length === 3 ? Number(diametroRaw) / 10 : Number(diametroRaw);
+    if (misuraPlausibile(largezza, altezza, diametro)) {
+      return { largezza: compact[1], altezza: compact[2], diametro: String(diametro), rest: "" };
+    }
+  }
+  const m = text.match(MISURA_RE);
+  if (!m || m.index === undefined) return null;
+  return {
+    largezza: m[1],
+    altezza: m[2],
+    diametro: m[3],
+    rest: (text.slice(0, m.index) + text.slice(m.index + m[0].length)).replace(/\s+/g, " ").trim(),
+  };
 }
 
 function euro(n: number | undefined | null) {
@@ -184,17 +235,46 @@ export default function ProdottiPage() {
 
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sincronizza i filtri quando i searchParams cambiano (es. navigazione da header modal)
+  // Sincronizza i filtri quando i searchParams cambiano (es. navigazione da home/header).
   useEffect(() => {
+    // Una nuova navigazione è sempre una nuova intenzione di ricerca — non
+    // deve ereditare una eventuale scelta "manual" della pagina precedente.
+    misuraSourceRef.current = "auto";
     setSearch(searchParams.get("q") ?? "");
     const m = searchParams.get("marca");
     setMarche(m ? m.split(",").filter(Boolean) : []);
     const s = searchParams.get("stagione");
     setStagioni(s ? (s.split(",") as Stagione[]) : []);
     setCategoria(searchParams.get("categoria") ?? "");
-    setMisuraRapida(""); setLargezza(""); setAltezza(""); setDiametro("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  // Tiene largezza/altezza/diametro/misuraRapida SEMPRE allineati alla misura
+  // eventualmente presente nel testo di ricerca corrente (sia arrivato da
+  // home/header via ?q=, sia digitato a mano qui) — visibile nel pannello
+  // Filtri e, soprattutto, "appiccicata": se dopo aver cercato una misura si
+  // applica un altro filtro (es. un brand), la misura non deve sparire e
+  // restituire risultati non filtrati (bug segnalato dall'utente — prima la
+  // misura era volutamente invisibile/non-stato, ma in pratica un filtro
+  // combinato senza feedback visivo era troppo fragile). `misuraSourceRef`
+  // distingue "impostata automaticamente dal testo" da "impostata a mano
+  // dall'utente nel campo Misura Rapida": solo la prima viene sovrascritta/
+  // pulita quando il testo di ricerca cambia — una scelta manuale non viene
+  // mai cancellata silenziosamente da un testo che nel frattempo non
+  // contiene più una misura.
+  const misuraSourceRef = useRef<"auto" | "manual">("auto");
+  useEffect(() => {
+    if (misuraSourceRef.current === "manual") return;
+    const misura = parseMisura(search);
+    if (misura) {
+      setLargezza(misura.largezza);
+      setAltezza(misura.altezza);
+      setDiametro(misura.diametro);
+      setMisuraRapida(`${misura.largezza}/${misura.altezza} R${misura.diametro}`);
+    } else {
+      setLargezza(""); setAltezza(""); setDiametro(""); setMisuraRapida("");
+    }
+  }, [search]);
 
   useEffect(() => {
     // Carica lista marche da Algolia facets; se non configurate come facets nel dashboard,
@@ -206,14 +286,14 @@ export default function ProdottiPage() {
       .catch(console.warn);
   }, []);
 
-  // Carica i loghi dei brand dalla collezione Marca_Prodotto (Nome → Logo)
+  // Carica i loghi dei brand (Nome → Logo) — Postgres via API, decommissioning finale Firebase.
   useEffect(() => {
-    getDocs(collection(db, "Marca_Prodotto"))
-      .then((snap) => {
+    fetch("/api/marche?limit=500")
+      .then((r) => r.json())
+      .then((data: { marche?: Array<{ Nome: string; Logo: string | null }> }) => {
         const map: Record<string, string> = {};
-        snap.docs.forEach((d) => {
-          const data = d.data() as { Nome?: string; Logo?: string };
-          if (data.Nome && data.Logo) map[data.Nome.trim().toLowerCase()] = data.Logo;
+        (data.marche ?? []).forEach((m) => {
+          if (m.Nome && m.Logo) map[m.Nome.trim().toLowerCase()] = m.Logo;
         });
         setBrandLogos(map);
       })
@@ -226,15 +306,31 @@ export default function ProdottiPage() {
     [brandLogos]
   );
 
+  // Misura eventualmente riconosciuta nel testo libero di `search` — SOLO per
+  // interrogare il catalogo, mai per popolare lo stato dei filtri: è parte
+  // della ricerca, non un filtro scelto dall'utente nel pannello (richiesto
+  // esplicitamente — niente badge "L:/A:/R", niente campo "Misura rapida"
+  // valorizzato). Ricalcolata ad ogni render da `search`, mai "incollata" a
+  // un valore precedente: prima una ricerca successiva con una misura diversa
+  // non aggiornava il filtro perché vinceva sempre lo stato della ricerca
+  // precedente (bug segnalato dall'utente) — ora largezza/altezza/diametro
+  // (stato) esistono SOLO se l'utente li ha impostati a mano nel pannello
+  // Filtri, e in quel caso vincono loro (scelta esplicita > testo libero).
+  const misuraDaTesto = useMemo(() => parseMisura(search), [search]);
+  const effLargezza = largezza || misuraDaTesto?.largezza || "";
+  const effAltezza  = altezza  || misuraDaTesto?.altezza  || "";
+  const effDiametro = diametro || misuraDaTesto?.diametro || "";
+  const effQuery    = misuraDaTesto ? misuraDaTesto.rest : search;
+
   const doSearch = useCallback(async (pg: number) => {
     setLoading(true);
     setQuantities({});
     try {
       const r = await searchProdotti({
-        query: search,
-        largezza: largezza || undefined,
-        altezza:  altezza  || undefined,
-        diametro: diametro || undefined,
+        query: effQuery,
+        largezza: effLargezza || undefined,
+        altezza:  effAltezza  || undefined,
+        diametro: effDiametro || undefined,
         stagioni,
         marche,
         indiceVelocita: indiceVel.trim() || undefined,
@@ -285,19 +381,23 @@ export default function ProdottiPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, largezza, altezza, diametro, stagioni, marche, indiceVel, categoria, sortBy]);
+  }, [effQuery, effLargezza, effAltezza, effDiametro, stagioni, marche, indiceVel, categoria, sortBy]);
 
   useEffect(() => {
     if (debRef.current) clearTimeout(debRef.current);
     debRef.current = setTimeout(() => doSearch(0), 300);
     return () => { if (debRef.current) clearTimeout(debRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, largezza, altezza, diametro, stagioni, marche, indiceVel, categoria, sortBy]);
+  }, [effQuery, effLargezza, effAltezza, effDiametro, stagioni, marche, indiceVel, categoria, sortBy]);
 
   function handleMisuraRapida(v: string) {
+    misuraSourceRef.current = "manual";
     setMisuraRapida(v);
-    const m = v.trim().match(/^(\d{3})\s*\/\s*(\d{2,3})\s*[Rr]\s*(\d{2})$/);
+    // Diametro con \.\d+ opzionale — stesso motivo di MISURA_RE (mezze misure
+    // autocarro, es. "225/75 R17.5").
+    const m = v.trim().match(/^(\d{3})\s*\/\s*(\d{2,3})\s*[Rr]\s*(\d{2}(?:\.\d+)?)$/);
     if (m) { setLargezza(m[1]); setAltezza(m[2]); setDiametro(m[3]); }
+    else { setLargezza(""); setAltezza(""); setDiametro(""); }
   }
 
   // Default 4, ma mai oltre lo stock disponibile (il prodotto potrebbe averne
@@ -321,6 +421,7 @@ export default function ProdottiPage() {
   }
 
   function azzera() {
+    misuraSourceRef.current = "auto";
     setSearch(""); setMisuraRapida(""); setLargezza(""); setAltezza("");
     setDiametro(""); setIndiceVel(""); setStagioni([]); setMarche([]); setMarcaSearch(""); setCategoria("");
   }
@@ -348,6 +449,10 @@ export default function ProdottiPage() {
   const isCerchi     = categoria.includes("Cerchi");
   const isCamere     = categoria.includes("Camere");
 
+  // Solo stato esplicito del pannello Filtri — MAI la misura dedotta dal
+  // testo di ricerca (effLargezza/effAltezza/effDiametro, usata solo per
+  // interrogare il catalogo): quella non è un filtro scelto dall'utente,
+  // non deve comparire come badge qui.
   const activeFilters = [
     ...(isPneumatici && largezza  ? [`L:${largezza}`]  : []),
     ...(isPneumatici && altezza   ? [`A:${altezza}`]   : []),
@@ -694,15 +799,15 @@ export default function ProdottiPage() {
                       {hit.Indice_Carico && hit.Indice_Velocita
                         ? ` ${hit.Indice_Carico}${hit.Indice_Velocita}` : ""}
                     </p>
-                    {/* Prezzo finito visibile solo su mobile (colonne nascoste su xl) */}
+                    {/* Prezzo netto + PFU visibile solo su mobile (colonne nascoste su xl) */}
                     {senzaPrezzo ? (
                       <p className="text-xs font-semibold xl:hidden mt-0.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
                         Prezzo su richiesta
                       </p>
                     ) : (
                       <p className="text-sm font-black xl:hidden mt-0.5" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
-                        {euro(prezzoFinito)}
-                        <span className="text-[10px] font-normal ml-1" style={{ color: "#9ca3af" }}>IVA incl.</span>
+                        {euro(prezzo)}
+                        <span className="text-[10px] font-normal ml-1" style={{ color: "#9ca3af" }}>+ PFU {euro(pfu)}</span>
                         <button
                           type="button"
                           onClick={(e) => openPrezzoPopup(e, hit.objectID)}

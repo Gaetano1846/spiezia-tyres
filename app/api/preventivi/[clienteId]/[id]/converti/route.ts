@@ -4,6 +4,7 @@ import { getPreventivo, markPreventivoConvertito } from "@/lib/preventiviDb";
 import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
 import { newId } from "@/lib/db";
 import { nextCounterServer } from "@/lib/countersDb";
+import { sendOrdineEmail } from "@/lib/email/ordineEmail";
 
 export const runtime = "nodejs";
 
@@ -96,10 +97,19 @@ export async function POST(
       totale: round2(totale),
       iva: round2(iva),
       pfu: round2(totPfu),
+      // Stesso placeholder di checkout/ordine — pagamento gestito in sede,
+      // non online. Senza questo campo il blocco "Pagamento" nel dettaglio
+      // ordine admin non veniva mai renderizzato per gli ordini nati da
+      // conversione preventivo (incoerenza minore trovata, non un bug
+      // funzionale, ma inconsistente col path checkout).
+      pagamento: { Metodo: "Da definire", Stato: "In attesa" },
       note: preventivo.Note ?? null,
       fsExtra: pgClienteId ? {} : { ClienteUid: clienteId },
       articoli: arts.map((a) => ({
-        titolo: a.Modello ?? "",
+        // +Misura nel titolo (stesso motivo di app/api/checkout/ordine/route.ts):
+        // prima finiva SOLO in fs_extra.Prodotto, mai renderizzata dalla pagina
+        // admin ordini — la riga sembrava "senza gomma collegata".
+        titolo: [a.Modello, a.Misura].filter(Boolean).join(" ").trim(),
         marca: a.Marca ?? "",
         quantita: a.Quantita ?? 0,
         prezzoUnitario: a.PrezzoUnitario ?? 0,
@@ -112,6 +122,11 @@ export async function POST(
     });
 
     await markPreventivoConvertito(clienteId, id, ordineId);
+
+    // Fire-and-forget: stesso motivo di app/api/checkout/ordine/route.ts.
+    sendOrdineEmail(ordineId).catch((err) => {
+      console.error("[api/preventivi/converti] invio email ordine fallito (non bloccante):", err);
+    });
 
     return NextResponse.json({ id: ordineId, numero: numeroOrdine });
   } catch (err) {

@@ -1,23 +1,11 @@
 services:
   spiezia-b2b2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      # NEXT_PUBLIC_* are baked at build time — read from .env on the VPS
-      args:
-        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY}
-        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}
-        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID}
-        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}
-        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID}
-        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID}
-        NEXT_PUBLIC_ALGOLIA_APP_ID: ${NEXT_PUBLIC_ALGOLIA_APP_ID}
-        NEXT_PUBLIC_ALGOLIA_SEARCH_KEY: ${NEXT_PUBLIC_ALGOLIA_SEARCH_KEY}
-        NEXT_PUBLIC_ALGOLIA_INDEX: ${NEXT_PUBLIC_ALGOLIA_INDEX}
-        NEXT_PUBLIC_PRODOTTI_BACKEND: ${NEXT_PUBLIC_PRODOTTI_BACKEND:-}
-        NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND: ${NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND:-}
-    image: spiezia-b2b2:local
+    # Image is built on GitHub Actions (.github/workflows/build-and-push.yml)
+    # and pulled here, never built on the VPS itself — this host runs dozens
+    # of unrelated clients' containers with very little RAM/swap headroom.
+    image: ghcr.io/gaetano1846/spiezia-tyres:latest
     container_name: spiezia-b2b2
+    pull_policy: always
 
     # ── Security hardening (safe for stateless Next.js) ──────────────────────
     read_only: true

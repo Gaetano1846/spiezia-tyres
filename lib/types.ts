@@ -27,6 +27,8 @@ export type AppUser = {
   utentiAvvisati?: boolean;
   createdAt?: Timestamp;
   lastLogin?: Timestamp;
+  /** True se un admin sta attualmente impersonando questo utente ("Accedi come"). */
+  Impersonating?: boolean;
 };
 
 // ─── Indirizzo ─────────────────────────────────────────────────────────────────

@@ -28,6 +28,9 @@ export default function MultiSearchableSelect({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Timestamp di apertura — vedi onScroll sotto: ignora lo scroll indotto
+  // dalla tastiera mobile che si apre quando il campo di ricerca prende focus.
+  const openedAtRef = useRef(0);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -63,6 +66,7 @@ export default function MultiSearchableSelect({
     if (open) {
       setSearch("");
       calcRect();
+      openedAtRef.current = Date.now();
       setTimeout(() => inputRef.current?.focus(), 30);
     }
   }, [open, calcRect]);
@@ -74,7 +78,17 @@ export default function MultiSearchableSelect({
       if (!triggerRef.current?.contains(t) && !dropdownRef.current?.contains(t))
         setOpen(false);
     }
-    function onScroll() { setOpen(false); }
+    // Il focus programmatico sul campo di ricerca (sopra, 30ms dopo
+    // l'apertura) fa aprire la tastiera su mobile, che a sua volta induce il
+    // browser a fare scroll per portare il campo in vista — quello scroll
+    // NON è un'interazione dell'utente col resto della pagina, ma prima
+    // veniva trattato come tale e chiudeva il dropdown nell'istante stesso
+    // in cui si toccava il campo di ricerca (bug segnalato dall'utente).
+    // Finestra di grazia: ignora lo scroll nei primi 500ms dall'apertura.
+    function onScroll() {
+      if (Date.now() - openedAtRef.current < 500) return;
+      setOpen(false);
+    }
     document.addEventListener("mousedown", close);
     window.addEventListener("scroll", onScroll, true);
     return () => {

@@ -3,9 +3,16 @@ import { timingSafeEqual, createHmac } from "node:crypto";
 import type { SessionPayload, Ruolo } from "@/lib/types";
 import { getPgSession, PG_TOKEN_PREFIX } from "@/lib/spiezia-auth/session";
 
-const SESSION_COOKIE = "spiezia_session";
+export const SESSION_COOKIE = "spiezia_session";
 const DEV_COOKIE = "spiezia_dev_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Impersonazione admin ("Accedi come", admin/clienti) — conserva il token
+// RAW della sessione admin originale mentre spiezia_session viene sostituito
+// con quello dell'utente impersonato, così si può tornare admin senza un
+// secondo login. httpOnly: il client non può leggerlo via JS, solo sapere
+// (via /api/auth/profile → Impersonating) che è presente.
+export const IMPERSONATOR_COOKIE = "spiezia_impersonator";
 
 // Firestore storico ha Ruolo con casing misto ("admin", "ADMIN", "Admin"…).
 // Normalizziamo a Prima-maiuscola così i confronti (isAdmin ecc.) sono affidabili
@@ -77,6 +84,25 @@ export function buildRoleCookie(Ruolo: string, CRM: boolean): string {
   return `user-role=${value}; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`;
 }
 
+export function buildImpersonatorCookie(rawAdminToken: string): string {
+  return `${IMPERSONATOR_COOKIE}=${rawAdminToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`;
+}
+
+export function clearImpersonatorCookie(): string {
+  return `${IMPERSONATOR_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+/** Token RAW della sessione admin preservata durante un'impersonazione, se presente. */
+export async function getImpersonatorToken(): Promise<string | undefined> {
+  const store = await cookies();
+  return store.get(IMPERSONATOR_COOKIE)?.value;
+}
+
+/** True se la richiesta corrente sta impersonando un altro utente (per il banner lato client). */
+export async function isImpersonating(): Promise<boolean> {
+  return Boolean(await getImpersonatorToken());
+}
+
 // Auth machine-to-machine per endpoint chiamati da cron/script interni (Fase 9
 // — importer ordini), non da browser: nessun cookie di sessione disponibile.
 // Header `x-internal-secret` confrontato a tempo costante contro
@@ -113,5 +139,6 @@ export function clearCookies(): string[] {
     `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
     `${DEV_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
     `user-role=; Path=/; SameSite=Lax; Max-Age=0`,
+    clearImpersonatorCookie(),
   ];
 }

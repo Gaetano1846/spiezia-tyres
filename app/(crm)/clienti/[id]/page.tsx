@@ -3,11 +3,6 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
-  getDocs, collection, query, orderBy, limit,
-  Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import {
   ArrowLeft, Pencil, Car, FileText, Calendar, StickyNote,
   Plus, Eye, Phone, Mail, Building2, CreditCard, AlertCircle,
   X, Check, ShoppingBag, Wrench, Bell,
@@ -17,10 +12,11 @@ import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import DateField from "@/components/ui/DateField";
 import toast from "react-hot-toast";
-import type { Cliente, Preventivo, Veicolo } from "@/lib/types";
+import type { Cliente, Veicolo } from "@/lib/types";
 import type { OrdineListItemApi } from "@/lib/ordiniDb";
 import type { AppuntamentoApi } from "@/lib/appuntamentiDb";
 import type { FoglioApi } from "@/lib/fogliDb";
+import type { PreventivoApi } from "@/lib/preventiviDb";
 import type { PromemoriaApi } from "@/lib/promemoriaDb";
 
 const appStatoVariant: Record<string, "success" | "brand" | "neutral" | "error"> = {
@@ -40,25 +36,15 @@ type PromemoriaForm = {
 };
 const emptyPromemoriaForm = (): PromemoriaForm => ({ nome: "", descrizione: "", scadenza: "" });
 
-// Accetta sia Timestamp Firestore (Preventivi/Ordini — fuori scope, non migrati)
-// sia ISO string (Appuntamenti/Fogli — Postgres via API, Fase 7).
-function fmtData(v: Timestamp | string | null | undefined): string {
-  const d = !v ? null : typeof v === "string" ? new Date(v) : v.toDate?.() ?? null;
-  if (!d) return "—";
+function fmtData(v: string | null | undefined): string {
+  const d = v ? new Date(v) : null;
+  if (!d || Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-// Ordini: da Postgres (core.ordini) — Data arriva già come ISO string, non
-// un Timestamp Firestore come le altre tab di questa pagina.
-function fmtDataIso(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-}
-
-function fmtOra(v: Timestamp | string | null | undefined): string {
-  const d = !v ? null : typeof v === "string" ? new Date(v) : v.toDate?.() ?? null;
-  if (!d) return "—";
+function fmtOra(v: string | null | undefined): string {
+  const d = v ? new Date(v) : null;
+  if (!d || Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
@@ -67,7 +53,7 @@ function euro(n: number | undefined) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-type PrevWithClienteId = Preventivo & { _clienteId: string };
+type PrevWithClienteId = PreventivoApi & { _clienteId: string };
 
 type EditForm = {
   Nome: string;
@@ -134,11 +120,12 @@ export default function ClienteDetailPage() {
       try {
         // Cliente: ora su Postgres (Fase 3 migrazione). Ordini: ora su
         // Postgres (Fase 1 migrazione Ordini, core.ordini già allineato dal
-        // bridge). Appuntamenti, FogliDiLavoro e Promemoria: Postgres via API
-        // con filtro clienteId (Fase 7 per Appuntamenti/Fogli; Promemoria
-        // chiuso dopo — b2b.promemoria esisteva già in migration 005 ma non
-        // era mai stato agganciato a nessuna route, la pagina parlava ancora
-        // a Firestore users/promemoria_crm/Promemoria).
+        // bridge). Appuntamenti, FogliDiLavoro, Promemoria e Preventivi:
+        // Postgres via API con filtro clienteId (Fase 7 per
+        // Appuntamenti/Fogli; Promemoria chiuso dopo — b2b.promemoria
+        // esisteva già in migration 005 ma non era mai stato agganciato a
+        // nessuna route; Preventivi ultimo a chiudere, decommissioning
+        // finale Firebase).
         const clienteRes = await fetch(`/api/clienti/${id}`);
         if (!clienteRes.ok) {
           toast.error("Cliente non trovato");
@@ -148,9 +135,9 @@ export default function ClienteDetailPage() {
         setCliente(c);
         setNota(c.Note ?? "");
 
-        const [veicoliRes, preventiviSnap, appRes, ordiniRes, fogliRes, proRes] = await Promise.all([
+        const [veicoliRes, preventiviRes, appRes, ordiniRes, fogliRes, proRes] = await Promise.all([
           fetch(`/api/clienti/${id}/veicoli`),
-          getDocs(query(collection(db, "Clienti", id, "Preventivo"), orderBy("DataCreazione", "desc"), limit(50))),
+          fetch(`/api/preventivi?clienteId=${id}&limit=50`),
           fetch(`/api/appuntamenti?clienteId=${id}&limit=50`),
           fetch(`/api/admin/ordini?clienteId=${id}`),
           fetch(`/api/fogli-di-lavoro?clienteId=${id}&limit=50`),
@@ -163,11 +150,9 @@ export default function ClienteDetailPage() {
 
         const { veicoli: veicoliList } = (await veicoliRes.json()) as { veicoli: Veicolo[] };
         setVeicoli(veicoliList);
-        setPreventivi(preventiviSnap.docs.map((d) => ({
-          id: d.id,
-          _clienteId: id,
-          ...d.data(),
-        } as PrevWithClienteId)));
+        if (!preventiviRes.ok) throw new Error("Errore nel caricamento preventivi");
+        const { preventivi: prevList } = (await preventiviRes.json()) as { preventivi: PreventivoApi[] };
+        setPreventivi(prevList.map((p) => ({ ...p, _clienteId: id })));
         if (!appRes.ok) throw new Error("Errore nel caricamento appuntamenti");
         const { appuntamenti: appList } = (await appRes.json()) as { appuntamenti: AppuntamentoApi[] };
         setAppuntamenti(appList); // già ordinati desc per data_ora lato server
@@ -889,16 +874,16 @@ export default function ClienteDetailPage() {
                     </thead>
                     <tbody>
                       {preventivi.map((p) => {
-                        const numero = p.ID != null ? `#${p.ID}` : `#${p.id.slice(0, 6).toUpperCase()}`;
+                        const numero = p.Numero != null ? `#${p.Numero}` : `#${p.id.slice(0, 6).toUpperCase()}`;
                         const statoLabel = p.Accettato ? "Accettato" : "In attesa";
-                        const pezzi = p.Pneumatici_Nuovi?.reduce((s, pn) => s + (pn.Quantita ?? 0), 0) ?? 0;
+                        const pezzi = p.Articoli?.reduce((s, a) => s + (a.Quantita ?? 0), 0) ?? 0;
                         return (
                           <tr key={p.id} className="hover:bg-[#F1F4F8] transition-colors" style={{ borderBottom: "1px solid var(--border)" }}>
                             <td className="px-2 py-3 font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-montserrat)" }}>
                               {numero}
                             </td>
                             <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                              {p.Data ?? fmtData(p.Data_Creazione as Timestamp)}
+                              {p.Data ?? fmtData(p.DataCreazione)}
                             </td>
                             <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                               {pezzi > 0 ? `${pezzi} pz` : "—"}
@@ -1010,7 +995,7 @@ export default function ClienteDetailPage() {
                               {o.Numero ?? `#${o.id.slice(0, 6).toUpperCase()}`}
                             </td>
                             <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
-                              {fmtDataIso(o.Data)}
+                              {fmtData(o.Data)}
                             </td>
                             <td className="px-2 py-3" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}>
                               {euro(o.Totale)}

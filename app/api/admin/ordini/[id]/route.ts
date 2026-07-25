@@ -4,10 +4,37 @@ import {
   getOrdine, updateOrdineStato, appendCronologia, updateOrdineColli,
   updateOrdineIndirizzi, updateOrdineTracking,
 } from "@/lib/ordiniDb";
+import { getProdottoById } from "@/lib/prodottiDb";
 
 export const runtime = "nodejs";
 
-// GET /api/admin/ordini/[id] — dettaglio completo (Articoli + Cronologia + Note_Interne).
+type StockView = {
+  nola: number; nola2: number; roma: number; volla: number;
+  ocp: number; t24: number; isT24: boolean;
+};
+
+// Stock per magazzino dei prodotti referenziati dagli articoli ordine —
+// risolto server-side (getProdottoById ha già il fallback doc-ID Firestore
+// storico), decommissioning finale Firebase: sostituisce i getDoc() diretti
+// che admin/ordini/[id]/page.tsx faceva client-side su Prodotti.
+async function resolveStockByRef(refPaths: string[]): Promise<Record<string, StockView>> {
+  const unique = [...new Set(refPaths)];
+  const entries = await Promise.all(
+    unique.map(async (refPath) => {
+      const skuOrDocId = refPath.split("/").pop() ?? refPath;
+      const p = await getProdottoById(skuOrDocId);
+      if (!p) return null;
+      const sv: StockView = {
+        nola: p.Stock_Nola, nola2: p.Stock_Nola_2, roma: p.Stock_Roma, volla: p.Stock_Volla,
+        ocp: p.Stock_OCP, t24: p.Stock_T24, isT24: p.T24,
+      };
+      return [refPath, sv] as const;
+    })
+  );
+  return Object.fromEntries(entries.filter((e): e is readonly [string, StockView] => e !== null));
+}
+
+// GET /api/admin/ordini/[id] — dettaglio completo (Articoli + Cronologia + Note_Interne + stockByRef).
 // Sostituisce il getDoc Firestore diretto (client SDK) di admin/ordini/[id]/page.tsx.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -19,7 +46,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const ordine = await getOrdine(id);
     if (!ordine) return NextResponse.json({ error: "Ordine non trovato" }, { status: 404 });
-    return NextResponse.json({ ordine });
+    const refPaths = ordine.Articoli.map((a) => a.RefPath).filter((r): r is string => !!r);
+    const stockByRef = await resolveStockByRef(refPaths);
+    return NextResponse.json({ ordine, stockByRef });
   } catch (err) {
     console.error("[api/admin/ordini/[id] GET]", err);
     return NextResponse.json({ error: "Errore nel caricamento ordine" }, { status: 500 });

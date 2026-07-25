@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getSession, isCRM } from "@/lib/auth";
+import { getSession, isCRM, isMagazzino } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -9,6 +9,12 @@ export const runtime = "nodejs";
 // consegna vera e propria a nginx via X-Accel-Redirect (location interna
 // /files/private/, mai raggiungibile direttamente) — zero traffico file
 // attraverso il processo Node.
+//
+// Gate isCRM OR isMagazzino: da quando le etichette GLS (ZPL/PDF, lette
+// dall'app magazzino per la stampa Zebra via getZplBySped) sono state
+// spostate qui da Firebase Storage, un magazziniere puro (Ruolo="magazziniere",
+// niente flag CRM) deve poter scaricare la propria etichetta — isCRM da solo
+// lo avrebbe respinto con 403.
 
 const CONTENT_TYPES: Record<string, string> = {
   pdf: "application/pdf",
@@ -20,7 +26,7 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const session = await getSession();
-  if (!session || !isCRM(session)) {
+  if (!session || !(isCRM(session) || isMagazzino(session))) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
 

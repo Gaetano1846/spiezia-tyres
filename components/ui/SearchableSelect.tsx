@@ -28,6 +28,9 @@ export default function SearchableSelect({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Timestamp di apertura — vedi onScroll sotto: ignora lo scroll indotto
+  // dalla tastiera mobile che si apre quando il campo di ricerca prende focus.
+  const openedAtRef = useRef(0);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -69,6 +72,7 @@ export default function SearchableSelect({
     if (open) {
       setSearch("");
       calcRect();
+      openedAtRef.current = Date.now();
       setTimeout(() => inputRef.current?.focus(), 30);
     }
   }, [open, calcRect]);
@@ -83,8 +87,17 @@ export default function SearchableSelect({
         !dropdownRef.current?.contains(t)
       ) setOpen(false);
     }
+    // Il focus programmatico sul campo di ricerca (sopra, 30ms dopo
+    // l'apertura) apre la tastiera su mobile, che induce il browser a fare
+    // scroll per portare il campo in vista — non un'interazione reale
+    // dell'utente col resto della pagina. Il controllo dropdownRef.contains
+    // da solo non basta (lo scroll indotto dalla tastiera ha target
+    // document/window, non un nodo dentro il dropdown) — da qui la finestra
+    // di grazia di 500ms dall'apertura (bug segnalato dall'utente: il
+    // dropdown si chiudeva nell'istante in cui si toccava il campo ricerca).
     function onScroll(e: Event) {
       if (dropdownRef.current?.contains(e.target as Node)) return;
+      if (Date.now() - openedAtRef.current < 500) return;
       setOpen(false);
     }
     document.addEventListener("mousedown", close);

@@ -114,9 +114,23 @@ const SELECT_BASE = `
     LEFT JOIN core.clienti c ON c.id = p.cliente_id
     LEFT JOIN b2b.veicoli v ON v.id = p.veicolo_id`;
 
-export async function listPreventivi(limit = 200): Promise<PreventivoApi[]> {
+export interface ListPreventiviFilters {
+  clienteId?: string;
+  limit?: number;
+}
+
+/** clienteId opzionale (scheda cliente, tab Preventivi) — decommissioning
+ *  finale Firebase, sostituisce getDocs(collection(db,"Clienti",id,"Preventivo")). */
+export async function listPreventivi({ clienteId, limit = 200 }: ListPreventiviFilters = {}): Promise<PreventivoApi[]> {
   const db = getDb();
   if (!db) return [];
+  if (clienteId) {
+    const { rows } = await db.query(
+      `${SELECT_BASE} WHERE p.cliente_id = $1 ORDER BY p.data_creazione DESC NULLS LAST LIMIT $2`,
+      [clienteId, limit]
+    );
+    return rows.map(rowToPreventivo);
+  }
   const { rows } = await db.query(`${SELECT_BASE} ORDER BY p.data_creazione DESC NULLS LAST LIMIT $1`, [limit]);
   return rows.map(rowToPreventivo);
 }

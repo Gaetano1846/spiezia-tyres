@@ -1,11 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import {
-  collectionGroup, query, getDocs,
-  limit,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Calendar, Users, FileText, Wrench, Clock, Bell, CheckCircle2 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
@@ -14,6 +9,7 @@ import toast from "react-hot-toast";
 import { useAuth } from "@/components/layout/AuthProvider";
 import type { AppuntamentoApi } from "@/lib/appuntamentiDb";
 import type { PromemoriaApi } from "@/lib/promemoriaDb";
+import type { PreventivoApi } from "@/lib/preventiviDb";
 
 const statoVariant: Record<string, "success" | "brand" | "neutral"> = {
   Completato:  "success",
@@ -57,15 +53,13 @@ export default function DashboardPage() {
     const endOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
     try {
-      // Clienti/Appuntamenti/Foglio_di_Lavoro/Promemoria: Postgres via API
-      // (Fase 7 per Appuntamenti/Fogli; Promemoria chiuso dopo — b2b.promemoria
-      // esisteva già ma non era mai stato agganciato a nessuna route).
-      // Preventivi (collectionGroup) resta volontariamente su Firestore,
-      // fuori scope di questa fase (altro workstream).
-      const [clientiRes, appRes, prevSnap, fogliRes, promemoriaRes] = await Promise.all([
+      // Clienti/Appuntamenti/Foglio_di_Lavoro/Promemoria/Preventivi: Postgres
+      // via API (Fase 7 per Appuntamenti/Fogli; Promemoria e Preventivi
+      // chiusi dopo — decommissioning finale Firebase).
+      const [clientiRes, appRes, prevRes, fogliRes, promemoriaRes] = await Promise.all([
         fetch(`/api/clienti?limit=1`),
         fetch(`/api/appuntamenti?from=${encodeURIComponent(startOfDay.toISOString())}&to=${encodeURIComponent(endOfDay.toISOString())}`),
-        getDocs(query(collectionGroup(db, "Preventivo"), limit(500))),
+        fetch(`/api/preventivi?limit=500`),
         fetch(`/api/fogli-di-lavoro?limit=1000`),
         // I promemoria CRM ancora aperti — la dashboard filtra ulteriormente
         // per data (solo quelli già in scadenza/scaduti) lato client, come prima.
@@ -74,21 +68,22 @@ export default function DashboardPage() {
 
       if (!clientiRes.ok) throw new Error(`clienti ${clientiRes.status}`);
       if (!appRes.ok) throw new Error(`appuntamenti ${appRes.status}`);
+      if (!prevRes.ok) throw new Error(`preventivi ${prevRes.status}`);
       if (!fogliRes.ok) throw new Error(`fogli ${fogliRes.status}`);
       if (!promemoriaRes.ok) throw new Error(`promemoria ${promemoriaRes.status}`);
 
       const { total: clientiCount } = (await clientiRes.json()) as { total?: number };
       const { appuntamenti: apps } = (await appRes.json()) as { appuntamenti: AppuntamentoApi[] };
+      const { preventivi: prevList } = (await prevRes.json()) as { preventivi: PreventivoApi[] };
       const { fogli } = (await fogliRes.json()) as { fogli: Array<{ Stato: string }> };
       const { promemoria: promRaw } = (await promemoriaRes.json()) as { promemoria: PromemoriaApi[] };
 
       // "Aperti" = non ancora accettati né rifiutati. I preventivi nascono
       // con Stato "In attesa" (e flag Accettato=false), quindi non basta
       // contare Bozza/Inviato: includiamo tutto ciò che è ancora da lavorare.
-      const prevAperti = prevSnap.docs.filter((d) => {
-        const data = d.data();
-        if (data.Accettato === true) return false;
-        const stato = (data.Stato as string) ?? "In attesa";
+      const prevAperti = prevList.filter((p) => {
+        if (p.Accettato === true) return false;
+        const stato = p.Stato ?? "In attesa";
         return !["Accettato", "Rifiutato"].includes(stato);
       }).length;
 

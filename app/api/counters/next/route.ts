@@ -6,23 +6,30 @@ export const runtime = "nodejs";
 
 // POST /api/counters/next {field, sedeId} → {numero}
 //
-// Contatore su Postgres per la numerazione ordini (Fase 4 migrazione). Nasce
-// PRONTO ma NON collegato al checkout: la vecchia app Flutter crea ancora
-// ordini B2B/Vetrina oggi assegnando numeri IN MODO CASUALE (non da questo
-// meccanismo) — finché Flutter non viene dismessa, questa route esiste ma
-// lib/counters.ts non la chiama (flag NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND
-// spento di default). Al cutover, il flag si accende e questa route diventa
-// l'unico allocatore.
+// Contatore su Postgres per la numerazione Ordine/Preventivo/FoglioDiLavoro
+// (Fase 4 + estensione decommissioning finale Firebase). Ordine è già in
+// produzione (flag NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND). Preventivo/
+// FoglioDiLavoro nascono PRONTI dietro un secondo flag indipendente
+// (NEXT_PUBLIC_COUNTERS_EXTRA_BACKEND, spento di default) — stesso pattern:
+// costruiti e verificabili, ma non attivi finché non si conferma che nessun
+// altro scrittore (CRM Flutter legacy, se ancora vivo) tocca questi due campi
+// in parallelo.
 //
-// Seed: b2b.counters parte da 100000 per ogni sede (sopra il massimo storico
-// osservato tra i numeri "B2B" casuali di Flutter, 99990) — zero possibilità
-// di collisione con lo storico. Solo campo 'Ordine' è servito da qui:
-// Preventivo/FoglioDiLavoro restano sul meccanismo Firestore esistente,
-// fuori scope per questa fase.
+// Seed per campo — margine di sicurezza sopra il massimo storico osservato
+// (stesso criterio di Ordine: 100000 sopra il max Flutter 99990). Verificato
+// via query diretta su b2b.preventivi/b2b.fogli_di_lavoro prima di scegliere
+// questi valori: Nola (unica sede con volume reale) ha max
+// Preventivo.numero=120, FoglioDiLavoro.numero=1718. Nessuno dei due campi è
+// mai transitato su Counters/{sedeId} Firestore (0 valori osservati su tutte
+// le sedi) — la numerazione storica veniva da un meccanismo esterno.
 //
-// UPSERT atomico in una sola query: se la sede non ha ancora una riga,
-// l'INSERT la crea a 100000; altrimenti ON CONFLICT incrementa quella
-// esistente. Nessuna race condition possibile (lock di riga Postgres).
+// UPSERT atomico in una sola query: se la sede non ha ancora una riga per
+// quel campo, l'INSERT la crea al seed; altrimenti ON CONFLICT incrementa
+// quella esistente. Nessuna race condition possibile (lock di riga Postgres).
+const FIELDS = ["Ordine", "Preventivo", "FoglioDiLavoro"] as const;
+type CounterField = (typeof FIELDS)[number];
+const SEEDS: Record<CounterField, number> = { Ordine: 100000, Preventivo: 1000, FoglioDiLavoro: 5000 };
+
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non autenticato" }, { status: 401 });
@@ -35,11 +42,8 @@ export async function POST(req: NextRequest) {
   }
 
   const { field, sedeId } = body;
-  if (field !== "Ordine") {
-    return NextResponse.json(
-      { error: "Solo il campo 'Ordine' è servito da Postgres in questa fase" },
-      { status: 400 }
-    );
+  if (!field || !FIELDS.includes(field as CounterField)) {
+    return NextResponse.json({ error: "Campo non valido" }, { status: 400 });
   }
   if (!sedeId || typeof sedeId !== "string") {
     return NextResponse.json({ error: "sedeId obbligatorio" }, { status: 400 });
@@ -51,10 +55,10 @@ export async function POST(req: NextRequest) {
   try {
     const { rows } = await db.query(
       `INSERT INTO b2b.counters (sede_id, campo, valore)
-       VALUES ($1, 'Ordine', 100000)
+       VALUES ($1, $2, $3)
        ON CONFLICT (sede_id, campo) DO UPDATE SET valore = b2b.counters.valore + 1
        RETURNING valore`,
-      [sedeId]
+      [sedeId, field, SEEDS[field as CounterField]]
     );
     return NextResponse.json({ numero: Number(rows[0].valore) });
   } catch (err) {

@@ -18,16 +18,24 @@ import { adminDb } from "@/lib/firebase-admin";
 import type { CounterField } from "@/lib/counters";
 
 const ORDINE_BACKEND = process.env.NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND;
+const EXTRA_BACKEND = process.env.NEXT_PUBLIC_COUNTERS_EXTRA_BACKEND;
 
-async function allocateOrdinePostgres(sedeId: string): Promise<number> {
+// Seed per campo — margine di sicurezza sopra il massimo storico osservato
+// (stesso criterio di Ordine/100000 sopra il massimo Flutter 99990): Nola
+// (l'unica sede con volume reale) ha max Preventivo.numero=120,
+// FoglioDiLavoro.numero=1718 — verificato via query diretta su
+// b2b.preventivi/b2b.fogli_di_lavoro prima di scegliere questi valori.
+const SEEDS: Record<CounterField, number> = { Ordine: 100000, Preventivo: 1000, FoglioDiLavoro: 5000 };
+
+async function allocatePostgres(field: CounterField, sedeId: string): Promise<number> {
   const db = getDb();
   if (!db) throw new Error("Postgres non configurato");
   const { rows } = await db.query(
     `INSERT INTO b2b.counters (sede_id, campo, valore)
-     VALUES ($1, 'Ordine', 100000)
+     VALUES ($1, $2, $3)
      ON CONFLICT (sede_id, campo) DO UPDATE SET valore = b2b.counters.valore + 1
      RETURNING valore`,
-    [sedeId]
+    [sedeId, field, SEEDS[field]]
   );
   return Number(rows[0].valore);
 }
@@ -52,8 +60,9 @@ async function allocateFirestore(field: CounterField, sedeId: string): Promise<n
  * endpoint pubblici e quindi verificano getSession() da soli).
  */
 export async function nextCounterServer(field: CounterField, sedeId: string): Promise<number> {
-  if (field === "Ordine" && ORDINE_BACKEND === "postgres") {
-    return allocateOrdinePostgres(sedeId);
-  }
+  const postgres =
+    (field === "Ordine" && ORDINE_BACKEND === "postgres") ||
+    (field !== "Ordine" && EXTRA_BACKEND === "postgres");
+  if (postgres) return allocatePostgres(field, sedeId);
   return allocateFirestore(field, sedeId);
 }

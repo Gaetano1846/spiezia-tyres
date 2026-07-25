@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "@/lib/firebase";
 import { Loader2, Download, Printer } from "lucide-react";
 import toast from "react-hot-toast";
 import type { PreventivoApi } from "@/lib/preventiviDb";
@@ -86,23 +84,19 @@ export default function StampaPreventivoPage() {
         y += pageH;
       }
 
-      const pdfBytes = pdf.output("arraybuffer");
-      const fileName = `preventivo_${id}_${Date.now()}.pdf`;
-      const storageRef = ref(storage, `Ordini_PDF/preventivi/${fileName}`);
-      await uploadBytes(storageRef, new Uint8Array(pdfBytes), { contentType: "application/pdf" });
-      const url = await getDownloadURL(storageRef);
+      const pdfBytes = pdf.output("blob") as Blob;
+      const form = new FormData();
+      form.append("file", pdfBytes, `preventivo_${id}.pdf`);
 
-      // Salva l'URL su Postgres — il bridge lo propaga a Firestore (PDF_URL)
-      // per il CRM FlutterFlow legacy.
-      const patchRes = await fetch(`/api/preventivi/${clienteId}/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdfUrl: url }),
+      const uploadRes = await fetch(`/api/preventivi/${clienteId}/${id}/pdf`, {
+        method: "POST",
+        body: form,
       });
-      if (!patchRes.ok) throw new Error(String(patchRes.status));
+      if (!uploadRes.ok) throw new Error(String(uploadRes.status));
+      const { preventivo: updated } = (await uploadRes.json()) as { preventivo: PreventivoApi };
 
-      setPdfUrl(url);
-      window.open(url, "_blank");
+      setPdfUrl(updated.PdfUrl);
+      if (updated.PdfUrl) window.open(updated.PdfUrl, "_blank");
       toast.success("PDF generato e salvato");
     } catch (err) {
       console.error(err);

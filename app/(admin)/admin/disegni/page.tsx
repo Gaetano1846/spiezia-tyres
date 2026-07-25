@@ -1,28 +1,17 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import {
-  collection, doc,
-  addDoc, updateDoc, arrayUnion,
-} from "firebase/firestore";
-import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
 import { Search, Pencil, Plus, X, Check, Loader2, ChevronLeft, ChevronRight, Upload, ImageIcon } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
+import { useModelliInfiniteList } from "@/hooks/useModelliInfiniteList";
+import type { ModelloApi } from "@/lib/modelliDb";
 
-interface Disegno {
-  id: string;
-  Nome: string;
-  Immagine?: string;
-  Conteggio?: number;
-  conteggio?: number;  // alcune doc usano la variante minuscola
-}
+type Disegno = ModelloApi;
 
-// Numero di prodotti che usano questo disegno (campo reale Conteggio / conteggio)
+// Numero di prodotti che usano questo disegno.
 function conteggioOf(d: Disegno): number {
-  return d.Conteggio ?? d.conteggio ?? 0;
+  return d.Conteggio ?? 0;
 }
 
 const CHAR_COLORS: Record<string, string> = {
@@ -54,13 +43,10 @@ function DisegnoSkeleton() {
 }
 
 export default function DisegniPage() {
-  // L'ordine di default (conteggio d'uso desc) non è un campo Firestore
-  // affidabile su cui fare cursor-pagination (doc legacy con "conteggio" vs
-  // "Conteggio" — vedi conteggioOf). Il fetch pagina su "Nome" (sempre
-  // presente) e drena l'INTERA collezione in background subito dopo il primo
-  // batch: il rendering diventa immediato (primi ~100 disegni), il resto
-  // arriva progressivamente senza bloccare — a differenza di prima non c'è
-  // più uno spinner unico per tutti i 3500+ documenti.
+  // Stesso pattern di prima: pagina su Nome, drena l'intera collezione in
+  // background subito dopo il primo batch (rendering immediato dei primi
+  // ~100 disegni, il resto arriva senza bloccare) — ora via /api/modelli
+  // invece di Firestore, ma stesso comportamento client-side.
   const {
     items: disegni,
     loading,
@@ -69,11 +55,9 @@ export default function DisegniPage() {
     loadAll,
     reload: reloadDisegni,
     mutate: mutateDisegni,
-  } = useFirestoreInfiniteList<Disegno>({
-    collectionPath: "Modello",
-    orderByField: "Nome",
+  } = useModelliInfiniteList<Disegno>({
     pageSize: 100,
-    mapDoc: useCallback((id, data) => ({ id, ...data }) as Disegno, []),
+    mapItem: useCallback((m: ModelloApi) => m, []),
   });
   useEffect(() => {
     if (!loading && hasMore) loadAll();
@@ -122,37 +106,26 @@ export default function DisegniPage() {
     if (!nome) { toast.error("Inserisci il nome del disegno"); return; }
     setSaving(true);
     try {
-      // Upload immagine se presente
-      let immagineUrl: string | undefined = editDisegno?.Immagine;
-      if (immagineFile) {
-        const ext = immagineFile.name.split(".").pop() ?? "png";
-        const sRef = storageRef(storage, `disegni/${Date.now()}_${nome}.${ext}`);
-        await uploadBytes(sRef, immagineFile, { contentType: immagineFile.type });
-        immagineUrl = await getDownloadURL(sRef);
-      } else if (!immaginePreview) {
-        immagineUrl = undefined; // rimossa
-      }
+      const form = new FormData();
+      form.set("nome", nome);
+      if (immagineFile) form.set("file", immagineFile);
+      // Immagine rimossa esplicitamente (preview azzerata, nessun nuovo file).
+      if (!immagineFile && !immaginePreview) form.set("removeImage", "true");
 
       if (editDisegno) {
         const oldNome = editDisegno.Nome;
-        const modelloRef = doc(db, "Modello", editDisegno.id);
-
-        const updatePayload: Record<string, unknown> = {
-          Nome: nome,
-          Sinonimo: arrayUnion(oldNome),
-        };
-        if (immagineUrl !== undefined) updatePayload.Immagine = immagineUrl;
-
-        await updateDoc(modelloRef, updatePayload);
+        const res = await fetch(`/api/modelli/${editDisegno.id}`, { method: "PATCH", body: form });
+        if (!res.ok) throw new Error("save fallito");
+        const { modello } = (await res.json()) as { modello: Disegno };
 
         if (nome !== oldNome) {
-          const res = await fetch("/api/admin/disegni/rinomina-prodotti", {
+          const resRename = await fetch("/api/admin/disegni/rinomina-prodotti", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ oldNome, nome }),
           });
-          if (res.ok) {
-            const { count } = await res.json();
+          if (resRename.ok) {
+            const { count } = await resRename.json();
             toast.success(`Disegno aggiornato · ${count} prodotti aggiornati`);
           } else {
             toast.error("Disegno rinominato, ma l'aggiornamento dei prodotti collegati è fallito — riprova o segnala l'errore");
@@ -161,13 +134,10 @@ export default function DisegniPage() {
           toast.success("Disegno aggiornato");
         }
 
-        mutateDisegni((prev) => prev.map((d) =>
-          d.id === editDisegno.id ? { ...d, Nome: nome, Immagine: immagineUrl } : d
-        ));
+        mutateDisegni((prev) => prev.map((d) => (d.id === editDisegno.id ? modello : d)));
       } else {
-        const payload: Record<string, unknown> = { Nome: nome, Conteggio: 0, Sinonimo: [] };
-        if (immagineUrl) payload.Immagine = immagineUrl;
-        await addDoc(collection(db, "Modello"), payload);
+        const res = await fetch("/api/modelli", { method: "POST", body: form });
+        if (!res.ok) throw new Error("create fallita");
         toast.success("Disegno aggiunto");
         reloadDisegni();
       }
@@ -192,7 +162,6 @@ export default function DisegniPage() {
       .sort((a, b) => conteggioOf(b) - conteggioOf(a));
   }, [disegni, search, soloSenzaFoto]);
 
-  // Reset pagina al cambio filtro, fuori dal render (anti-pattern setState in useMemo).
   useEffect(() => { setPage(0); }, [search, soloSenzaFoto]);
 
   const paginated = useMemo(

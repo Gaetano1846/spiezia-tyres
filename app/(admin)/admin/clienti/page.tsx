@@ -16,6 +16,8 @@ import {
   Mail,
   MapPin,
   Briefcase,
+  LogIn,
+  KeyRound,
 } from "lucide-react";
 import Card from "@/components/ui/Card";
 import StatCard from "@/components/ui/StatCard";
@@ -48,6 +50,18 @@ type UserDoc = {
 
 function formatEuro(n: number) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+}
+
+// Solo per anteprima lato admin prima dell'invio — se il campo resta vuoto,
+// il server genera comunque una password casuale crittograficamente sicura
+// (node:crypto randomBytes, vedi app/api/utenti/[id]/password/route.ts);
+// questa versione (Math.random) serve solo a far vedere all'admin cosa sta
+// per essere inviato, non è la fonte di sicurezza.
+function generatePasswordPreview(length = 12): string {
+  const charset = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let out = "";
+  for (let i = 0; i < length; i++) out += charset[Math.floor(Math.random() * charset.length)];
+  return out;
 }
 
 function toMillis(ts: string | undefined | null): number | null {
@@ -306,6 +320,14 @@ export default function ClientiPage() {
   const [detailCliente, setDetailCliente] = useState<ClienteDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Impersonazione ("Accedi come") — id dell'utente per cui la richiesta è in volo
+  const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
+
+  // Password (nel modal Scheda completa) — form "Imposta nuova password"
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [sendingPassword, setSendingPassword] = useState(false);
+
   // Dettagli cliente espandibili (solo mobile) — set dei docId aperti
   const [expandedClienti, setExpandedClienti] = useState<Set<string>>(new Set());
   function toggleClienteDetails(id: string) {
@@ -407,6 +429,79 @@ export default function ClientiPage() {
       mutateUsers((prev) => prev.map((x) => (x.docId === id ? { ...x, Blocco: nuovoStato } : x)));
     } catch {
       toast.error("Errore nell'aggiornamento");
+    }
+  }
+
+  // Ruoli staff — stesso elenco del guard server-side (app/api/admin/impersonate),
+  // qui solo per nascondere/disabilitare il tasto: la sicurezza vera è lì.
+  const NON_IMPERSONABILI = new Set(["admin", "magazziniere", "impiegato"]);
+  function isImpersonabile(u: UserDoc): boolean {
+    return !NON_IMPERSONABILI.has((u.Ruolo ?? "").toLowerCase());
+  }
+
+  async function handleImpersonate(u: UserDoc) {
+    const id = u.docId ?? u.uid;
+    if (!id) return;
+    const nome = getNome(u);
+    if (!window.confirm(`Accedi come ${nome}? Potrai tornare admin in qualsiasi momento dal banner in alto alla pagina.`)) return;
+    setImpersonatingId(id);
+    try {
+      const res = await fetch("/api/admin/impersonate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetUserId: id }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(data.error ?? "Impossibile accedere come questo utente");
+        setImpersonatingId(null);
+        return;
+      }
+      window.location.href = "/";
+    } catch {
+      toast.error("Impossibile accedere come questo utente");
+      setImpersonatingId(null);
+    }
+  }
+
+  async function sendPasswordLink(u: UserDoc) {
+    const id = u.docId ?? u.uid;
+    if (!id) return;
+    setSendingPassword(true);
+    try {
+      const res = await fetch(`/api/utenti/${id}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "link" }),
+      });
+      if (!res.ok) throw new Error("send failed");
+      toast.success(`Link di reset inviato a ${u.email ?? u.Email ?? "—"}`);
+    } catch {
+      toast.error("Errore nell'invio del link");
+    } finally {
+      setSendingPassword(false);
+    }
+  }
+
+  async function setNewPassword(u: UserDoc) {
+    const id = u.docId ?? u.uid;
+    if (!id) return;
+    setSendingPassword(true);
+    try {
+      const res = await fetch(`/api/utenti/${id}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "set", password: newPasswordInput.trim() || undefined }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "send failed");
+      toast.success(`Nuova password inviata a ${u.email ?? u.Email ?? "—"}`);
+      setNewPasswordInput("");
+      setShowPasswordForm(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Errore nell'invio della password");
+    } finally {
+      setSendingPassword(false);
     }
   }
 
@@ -556,6 +651,8 @@ export default function ClientiPage() {
   function openDetail(u: UserDoc) {
     setDetailUser(u);
     setDetailCliente(null);
+    setShowPasswordForm(false);
+    setNewPasswordInput("");
     const ref = u.Cliente_Ref;
     if (ref) {
       setDetailLoading(true);
@@ -978,6 +1075,21 @@ export default function ClientiPage() {
                             >
                               <Pencil size={15} />
                             </button>
+                            {isImpersonabile(u) && (
+                              <button
+                                onClick={() => handleImpersonate(u)}
+                                disabled={impersonatingId === (u.docId ?? u.uid)}
+                                title="Accedi come questo utente"
+                                aria-label="Accedi come questo utente"
+                                className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-[#FFC803] hover:text-[#111] disabled:opacity-50"
+                                style={{
+                                  border: "1px solid var(--border)",
+                                  color: "var(--text-secondary)",
+                                }}
+                              >
+                                <LogIn size={15} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1120,6 +1232,17 @@ export default function ClientiPage() {
                           <Pencil size={12} />
                           Modifica
                         </button>
+                        {isImpersonabile(u) && (
+                          <button
+                            onClick={() => handleImpersonate(u)}
+                            disabled={impersonatingId === (u.docId ?? u.uid)}
+                            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all active:scale-[.98] disabled:opacity-50"
+                            style={{ border: "1px solid var(--border)", color: "var(--text-secondary)", fontFamily: "var(--font-montserrat)" }}
+                          >
+                            <LogIn size={12} />
+                            Accedi come
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1741,6 +1864,57 @@ export default function ClientiPage() {
                 <DetailRow label="Fido" value={formatEuro(fidoForUser(detailUser))} />
               </div>
             )}
+
+            {/* Sezione Password */}
+            <div className="rounded-xl p-4" style={{ border: "1px solid var(--border)" }}>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
+                <KeyRound size={13} /> Password
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => sendPasswordLink(detailUser)}
+                  disabled={sendingPassword}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 hover:bg-gray-50"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                >
+                  Invia link reset
+                </button>
+                <button
+                  onClick={() => setShowPasswordForm((v) => !v)}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors hover:bg-gray-50"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                >
+                  Imposta nuova password
+                </button>
+              </div>
+              {showPasswordForm && (
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <input
+                    type="text"
+                    value={newPasswordInput}
+                    onChange={(e) => setNewPasswordInput(e.target.value)}
+                    placeholder="Vuoto = genera casuale"
+                    className="flex-1 min-w-[160px] px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ border: "1.5px solid #FFC803" }}
+                  />
+                  <button
+                    onClick={() => setNewPasswordInput(generatePasswordPreview())}
+                    className="px-3 py-2 rounded-lg text-xs font-semibold transition-colors hover:bg-gray-50"
+                    style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                  >
+                    Genera casuale
+                  </button>
+                  <button
+                    onClick={() => setNewPassword(detailUser)}
+                    disabled={sendingPassword}
+                    className="px-3 py-2 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                    style={{ background: "#FFC803", color: "#111" }}
+                  >
+                    Salva e invia
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Azioni */}
             <div className="flex gap-2 pt-1">

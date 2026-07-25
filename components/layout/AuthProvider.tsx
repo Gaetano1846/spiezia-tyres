@@ -26,6 +26,7 @@ function toAppUser(p: UtenteProfile): AppUser {
     Fido: p.Fido ?? undefined,
     Fido_Residuo: p.Fido_Residuo ?? undefined,
     utentiAvvisati: p.UtentiAvvisati,
+    Impersonating: p.Impersonating,
   };
 }
 

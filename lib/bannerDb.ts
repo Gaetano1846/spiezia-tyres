@@ -9,8 +9,7 @@
 // admin ("è impostato come copertina" = copertina IS NOT NULL).
 
 import { getDb, newId } from "@/lib/db";
-import { writeFile, mkdir } from "node:fs/promises";
-import path from "node:path";
+import { saveImageToPublic } from "@/lib/storage";
 
 export interface BannerApi {
   id: string;
@@ -80,16 +79,7 @@ export async function deleteBanner(id: string): Promise<void> {
   await db.query(`DELETE FROM b2b.banners WHERE id = $1`, [id]);
 }
 
-const STORAGE_ROOT = "/app/storage";
-
-/** Salva l'immagine caricata su disco locale VPS (public/, servito diretto da nginx). Ritorna la URL pubblica. */
+/** Salva l'immagine caricata su disco locale VPS (public/banners/, servito diretto da nginx). Ritorna la URL pubblica. */
 export async function saveBannerImage(file: File): Promise<string> {
-  const ext = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-  const filename = `${newId()}.${ext}`;
-  const destDir = path.join(STORAGE_ROOT, "public", "banners");
-  await mkdir(destDir, { recursive: true });
-  const bytes = Buffer.from(await file.arrayBuffer());
-  await writeFile(path.join(destDir, filename), bytes);
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://b2b2.spieziatyres.it";
-  return `${baseUrl}/files/public/banners/${filename}`;
+  return saveImageToPublic(file, "banners");
 }

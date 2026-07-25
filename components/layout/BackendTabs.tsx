@@ -17,6 +17,7 @@ const TABS = [
   { label: "Catalogo",   href: "/admin/catalogo" },
   { label: "Banner",     href: "/admin/banner" },
   { label: "Pop-Up",    href: "/admin/popup" },
+  { label: "Prezzi T24", href: "/admin/tyre24-prezzi" },
 ];
 
 export default function BackendTabs() {

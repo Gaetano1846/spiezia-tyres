@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import type { Ordine } from "@/lib/types";
+import type { Ordine, Pagamento } from "@/lib/types";
 import type { OrdineApi } from "@/lib/ordiniDb";
 
 // Sola lettura — riusa /api/ordini/[id] (già autorizza proprietario O
@@ -25,6 +25,7 @@ function apiToLocalOrdine(o: OrdineApi): Ordine {
     })),
     IndirizzoFatturazione: o.IndirizzoFatturazione ?? undefined,
     IndirizzoSpedizione: o.IndirizzoSpedizione ?? undefined,
+    Pagamento: o.Pagamento ?? undefined,
     Note: o.Note ?? undefined,
     DataCreazione: o.Data as unknown as Ordine["DataCreazione"],
   } as unknown as Ordine;
@@ -57,8 +58,18 @@ export default function StampaOrdinePage() {
       const data = (await res.json().catch(() => ({}))) as { ordine?: OrdineApi };
       if (!res.ok || !data.ordine) { setLoading(false); return; }
       setOrdine(apiToLocalOrdine(data.ordine));
-      // ClienteNome/UtenteNome arrivano già risolti via JOIN (lib/ordiniDb.ts).
-      setClienteNome(data.ordine.ClienteNome || data.ordine.UtenteNome || "—");
+      // ClienteNome/UtenteNome arrivano già risolti via JOIN (lib/ordiniDb.ts) —
+      // ma un ordine può non avere né cliente né utente collegato (solo
+      // indirizzo di spedizione/fatturazione, es. ordini marketplace/Prezzo-
+      // Gomme/Tyre24 senza account): in quel caso il nome va preso da lì.
+      // Lo shape dell'indirizzo NON è uniforme tra i canali: Nome/Cognome
+      // separati (B2B/CRM) oppure un unico campo Destinatario (Prezzo-Gomme,
+      // verificato su un ordine reale — indirizzo_spedizione.Destinatario).
+      const nomeCompleto = (ind?: { Nome?: string; Cognome?: string; Destinatario?: string } | null) =>
+        [ind?.Nome, ind?.Cognome].filter(Boolean).join(" ").trim() || ind?.Destinatario || null;
+      const nomeSpedizione = nomeCompleto(data.ordine.IndirizzoSpedizione);
+      const nomeFatturazione = nomeCompleto(data.ordine.IndirizzoFatturazione);
+      setClienteNome(data.ordine.ClienteNome || data.ordine.UtenteNome || nomeSpedizione || nomeFatturazione || "—");
       setLoading(false);
     })().catch(() => setLoading(false));
   }, [id]);
@@ -100,6 +111,9 @@ export default function StampaOrdinePage() {
 
   const inFat = ordine.IndirizzoFatturazione as Record<string, string> | undefined;
   const inSpe = ordine.IndirizzoSpedizione   as Record<string, string> | undefined;
+
+  const pagamento = ordine.Pagamento as Pagamento | undefined;
+  const metodoPagamento = pagamento?.Nome || pagamento?.Metodo || "";
 
   return (
     <>
@@ -187,13 +201,26 @@ export default function StampaOrdinePage() {
             <div>
               <div style={{ fontWeight: 700, fontSize: 9, textTransform: "uppercase", letterSpacing: 1.5, color: "#999", marginBottom: 6 }}>Spedizione</div>
               <div style={{ fontSize: 11, color: "#444", lineHeight: 1.7 }}>
-                {inSpe.Nome && <div style={{ fontWeight: 600 }}>{inSpe.Nome}</div>}
+                {(() => {
+                  const nomeSpe = [inSpe.Nome, inSpe.Cognome].filter(Boolean).join(" ").trim() || inSpe.Destinatario;
+                  return nomeSpe ? <div style={{ fontWeight: 600 }}>{nomeSpe}</div> : null;
+                })()}
                 {inSpe.Via && <div>{inSpe.Via}</div>}
                 {(inSpe.CAP || inSpe.Citta) && <div>{[inSpe.CAP, inSpe.Citta, inSpe.Provincia].filter(Boolean).join(" ")}</div>}
               </div>
             </div>
           )}
         </div>
+
+        {/* Pagamento */}
+        {metodoPagamento && (
+          <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 20, fontSize: 11 }}>
+            <span style={{ fontWeight: 700, fontSize: 9, textTransform: "uppercase", letterSpacing: 1.5, color: "#999" }}>
+              Metodo di pagamento
+            </span>
+            <span style={{ color: "#444" }}>{metodoPagamento}</span>
+          </div>
+        )}
 
         {/* Tabella articoli */}
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 24 }}>

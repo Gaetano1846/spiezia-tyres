@@ -1,14 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Plus, Pencil, Trash2, Check, Loader2, Tag, Settings, Layers } from "lucide-react";
 import Card from "@/components/ui/Card";
 import toast from "react-hot-toast";
-import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
+import { useModelliInfiniteList } from "@/hooks/useModelliInfiniteList";
+import type { ModelloApi } from "@/lib/modelliDb";
 
 type SimpleDoc = { id: string; Nome: string };
 type SimpleForm = { nome: string };
@@ -138,10 +135,10 @@ export default function CatalogoPage() {
   const [categorie,  setCategorie]  = useState<SimpleDoc[]>([]);
   const [loading,    setLoading]    = useState(true);
 
-  // Modelli: stessa collezione Firestore "Modello" usata da /admin/disegni.
-  // Nessun ordinamento speciale qui (solo Nome) — cursor-pagination con drain
-  // automatico in background, stesso pattern usato altrove per evitare di
-  // bloccare il render su migliaia di documenti caricati in un colpo solo.
+  // Modelli: stesso dominio Postgres (b2b.modelli) usato da /admin/disegni —
+  // CRUD leggero qui (solo Nome, nessuna gestione immagine/sinonimi).
+  // Drain automatico in background, stesso pattern usato altrove per evitare
+  // di bloccare il render su migliaia di righe caricate in un colpo solo.
   const {
     items: modelli,
     loading: modelliLoading,
@@ -149,11 +146,9 @@ export default function CatalogoPage() {
     loadAll: drainModelli,
     reload: reloadModelli,
     mutate: mutateModelli,
-  } = useFirestoreInfiniteList<SimpleDoc>({
-    collectionPath: "Modello",
-    orderByField: "Nome",
+  } = useModelliInfiniteList<SimpleDoc>({
     pageSize: 100,
-    mapDoc: useCallback((id, data) => ({ id, ...data }) as SimpleDoc, []),
+    mapItem: useCallback((m: ModelloApi) => ({ id: m.id, Nome: m.Nome }), []),
   });
   useEffect(() => {
     if (!modelliLoading && modelliHasMore) drainModelli();
@@ -213,17 +208,24 @@ export default function CatalogoPage() {
   // ── MODELLI ──────────────────────────────────────────────────────────────────
 
   async function addModello(f: SimpleForm) {
-    await addDoc(collection(db, "Modello"), { Nome: f.nome.trim() });
+    const body = new FormData();
+    body.set("nome", f.nome.trim());
+    const res = await fetch("/api/modelli", { method: "POST", body });
+    if (!res.ok) throw new Error("Errore nel salvataggio");
     toast.success("Modello aggiunto"); reloadModelli();
   }
   async function editModello(id: string, f: SimpleForm) {
-    await updateDoc(doc(db, "Modello", id), { Nome: f.nome.trim() });
+    const body = new FormData();
+    body.set("nome", f.nome.trim());
+    const res = await fetch(`/api/modelli/${id}`, { method: "PATCH", body });
+    if (!res.ok) throw new Error("Errore nel salvataggio");
     toast.success("Modello aggiornato");
     mutateModelli((prev) => prev.map((m) => (m.id === id ? { ...m, Nome: f.nome.trim() } : m)));
   }
-  async function deleteModello(id: string, nome: string) {
+  async function deleteModelloItem(id: string, nome: string) {
     if (!confirm(`Eliminare il modello "${nome}"?`)) return;
-    await deleteDoc(doc(db, "Modello", id));
+    const res = await fetch(`/api/modelli/${id}`, { method: "DELETE" });
+    if (!res.ok) { toast.error("Errore nell'eliminazione"); return; }
     toast.success("Modello eliminato");
     mutateModelli((p) => p.filter((m) => m.id !== id));
   }
@@ -271,7 +273,7 @@ export default function CatalogoPage() {
           loading={modelliLoading}
           onAdd={addModello}
           onEdit={editModello}
-          onDelete={deleteModello}
+          onDelete={deleteModelloItem}
         />
         <CrudSection
           title="Categorie"

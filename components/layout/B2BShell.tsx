@@ -6,6 +6,7 @@ import B2BDrawer from "@/components/layout/B2BDrawer";
 import CartDrawer from "@/components/layout/CartDrawer";
 import B2BPopUp from "@/components/layout/B2BPopUp";
 import PromoCarousel from "@/components/layout/PromoCarousel";
+import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 
 export default function B2BShell({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -18,6 +19,7 @@ export default function B2BShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ background: "#f9fafb" }}>
+      <ImpersonationBanner />
       <B2BHeader
         onMenuClick={() => setDrawerOpen(true)}
         onCartClick={() => setCartOpen(true)}

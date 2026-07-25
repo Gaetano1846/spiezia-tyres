@@ -1,24 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import {
-  collection, addDoc, updateDoc, deleteDoc, doc,
-} from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
 import { Search, Pencil, Trash2, Plus, X, Check, Loader2, Upload, ImageIcon } from "lucide-react";
 import Card from "@/components/ui/Card";
 import InfiniteScrollSentinel from "@/components/ui/InfiniteScrollSentinel";
 import toast from "react-hot-toast";
-import { useFirestoreInfiniteList } from "@/hooks/useFirestoreInfiniteList";
+import { useMarcheInfiniteList } from "@/hooks/useMarcheInfiniteList";
+import type { MarcaApi } from "@/lib/marcheDb";
 
-interface Brand {
-  id: string;
-  Nome: string;
-  Colore?: string;
-  Logo?: string;
-  conteggio?: number;
-}
+type Brand = MarcaApi;
 
 const CHAR_COLORS: Record<string, string> = {
   A: "#E31E24", B: "#003087", C: "#F7A600", D: "#009FE3", E: "#E30613",
@@ -29,8 +19,7 @@ const CHAR_COLORS: Record<string, string> = {
   Z: "#0033A0",
 };
 
-function accentFor(nome: string, colore?: string): string {
-  if (colore) return colore;
+function accentFor(nome: string): string {
   const key = nome[0]?.toUpperCase();
   return CHAR_COLORS[key] ?? "#FFC803";
 }
@@ -50,23 +39,20 @@ type FormState = { nome: string; logoFile: File | null; logoPreview: string | nu
 const FORM_DEFAULT: FormState = { nome: "", logoFile: null, logoPreview: null };
 
 export default function BrandPage() {
+  const [search, setSearch] = useState("");
   const {
     items: brands,
     loading,
     loadingMore,
     hasMore,
     loadMore,
-    loadAll,
     reload: reloadBrands,
     mutate: mutateBrands,
-    epoch: brandsEpoch,
-  } = useFirestoreInfiniteList<Brand>({
-    collectionPath: "Marca_Prodotto",
-    orderByField: "Nome",
+  } = useMarcheInfiniteList<Brand>({
     pageSize: 100,
-    mapDoc: useCallback((id, data) => ({ id, ...data }) as Brand, []),
+    search: search.trim() || undefined,
+    mapItem: useCallback((m: MarcaApi) => m, []),
   });
-  const [search, setSearch] = useState("");
 
   const [showModal, setShowModal] = useState(false);
   const [editBrand, setEditBrand] = useState<Brand | null>(null);
@@ -74,11 +60,6 @@ export default function BrandPage() {
   const [saving, setSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Ricerca attiva → serve l'intera collezione, non solo la pagina già caricata.
-  useEffect(() => {
-    if (search.trim()) loadAll();
-  }, [search, loadAll, brandsEpoch]);
 
   function openModal(brand?: Brand) {
     setEditBrand(brand ?? null);
@@ -109,24 +90,20 @@ export default function BrandPage() {
     if (!form.nome.trim()) { toast.error("Inserisci il nome del brand"); return; }
     setSaving(true);
     try {
-      let logoUrl: string | undefined = editBrand?.Logo;
-
-      if (form.logoFile) {
-        const ext = form.logoFile.name.split(".").pop() ?? "png";
-        const storageRef = ref(storage, `brand_logos/${Date.now()}_${form.nome.trim()}.${ext}`);
-        await uploadBytes(storageRef, form.logoFile, { contentType: form.logoFile.type });
-        logoUrl = await getDownloadURL(storageRef);
-      }
-
-      const payload: Record<string, unknown> = { Nome: form.nome.trim() };
-      if (logoUrl) payload.Logo = logoUrl;
+      const body = new FormData();
+      body.set("nome", form.nome.trim());
+      if (form.logoFile) body.set("file", form.logoFile);
+      if (!form.logoFile && !form.logoPreview) body.set("removeImage", "true");
 
       if (editBrand) {
-        await updateDoc(doc(db, "Marca_Prodotto", editBrand.id), payload);
-        mutateBrands((prev) => prev.map((b) => (b.id === editBrand.id ? { ...b, ...payload } as Brand : b)));
+        const res = await fetch(`/api/marche/${editBrand.id}`, { method: "PATCH", body });
+        if (!res.ok) throw new Error("save fallito");
+        const { marca } = (await res.json()) as { marca: Brand };
+        mutateBrands((prev) => prev.map((b) => (b.id === editBrand.id ? marca : b)));
         toast.success("Brand aggiornato");
       } else {
-        await addDoc(collection(db, "Marca_Prodotto"), { ...payload, conteggio: 0 });
+        const res = await fetch("/api/marche", { method: "POST", body });
+        if (!res.ok) throw new Error("create fallita");
         toast.success("Brand aggiunto");
         reloadBrands();
       }
@@ -143,7 +120,8 @@ export default function BrandPage() {
   async function handleDelete(brand: Brand) {
     if (!confirm(`Eliminare il brand "${brand.Nome}"?`)) return;
     try {
-      await deleteDoc(doc(db, "Marca_Prodotto", brand.id));
+      const res = await fetch(`/api/marche/${brand.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("delete fallito");
       mutateBrands((prev) => prev.filter((b) => b.id !== brand.id));
       closeModal();
       toast.success("Brand eliminato");
@@ -151,10 +129,6 @@ export default function BrandPage() {
       toast.error("Errore nell'eliminazione del brand");
     }
   }
-
-  const filtered = brands.filter((b) =>
-    b.Nome?.toLowerCase().includes(search.toLowerCase())
-  );
 
   return (
     <div className="space-y-4">
@@ -192,8 +166,8 @@ export default function BrandPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
           {loading
             ? Array.from({ length: 10 }).map((_, i) => <BrandSkeleton key={i} />)
-            : filtered.map((b) => {
-                const accent = accentFor(b.Nome, b.Colore);
+            : brands.map((b) => {
+                const accent = accentFor(b.Nome);
                 return (
                   <div key={b.id}
                     className="rounded-2xl p-4 flex flex-col items-center gap-2.5"
@@ -225,10 +199,10 @@ export default function BrandPage() {
               })}
         </div>
 
-        {!loading && filtered.length === 0 && (
+        {!loading && brands.length === 0 && (
           <p className="text-center py-10 text-sm"
             style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
-            Nessun brand trovato per &ldquo;{search}&rdquo;
+            Nessun brand trovato{search ? ` per "${search}"` : ""}.
           </p>
         )}
 

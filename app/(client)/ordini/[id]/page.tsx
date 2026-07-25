@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { Timestamp } from "firebase/firestore";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { ShoppingBag, MapPin, CreditCard, Package, Truck, ChevronRight, CheckCircle2, Circle } from "lucide-react";
 import Link from "next/link";
@@ -16,7 +15,7 @@ import type { OrdineApi } from "@/lib/ordiniDb";
 type CronologiaEntry = {
   id: string;
   Evento: string;
-  Data: Timestamp | number | string | null;
+  Data: string | null;
   Operatore?: string;
 };
 
@@ -45,7 +44,7 @@ function apiToLocalOrdine(o: OrdineApi): Ordine {
     IndirizzoFatturazione: o.IndirizzoFatturazione ?? undefined,
     IndirizzoSpedizione: o.IndirizzoSpedizione ?? undefined,
     Note: o.Note ?? undefined,
-    DataCreazione: o.Data as unknown as Timestamp,
+    DataCreazione: o.Data as unknown as Ordine["DataCreazione"],
     GLS_TrackingNumber: o.GlsTrackingNumber ?? undefined,
   } as unknown as Ordine;
 }
@@ -61,20 +60,19 @@ function formatEuro(n: number | undefined | null) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-function tsToDate(ts: Timestamp | number | string | null | undefined): Date | null {
+function tsToDate(ts: string | number | null | undefined): Date | null {
   if (!ts) return null;
   if (typeof ts === "string") { const d = new Date(ts); return Number.isNaN(d.getTime()) ? null : d; }
-  if (typeof ts === "number") return new Date(ts);
-  return ts instanceof Timestamp ? ts.toDate() : new Date((ts as { seconds: number }).seconds * 1000);
+  return new Date(ts);
 }
 
-function formatData(ts: Timestamp | number | string | null | undefined): string {
+function formatData(ts: string | number | null | undefined): string {
   const d = tsToDate(ts);
   if (!d) return "—";
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function formatDataOra(ts: Timestamp | number | string | null | undefined): string {
+function formatDataOra(ts: string | number | null | undefined): string {
   const d = tsToDate(ts);
   if (!d) return "—";
   return d.toLocaleString("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -255,7 +253,7 @@ export default function OrdinePage() {
           <span className="text-sm" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
             {/* DataCreazione = Next.js; DataOra = Flutter legacy */}
             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-            {formatData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp)}
+            {formatData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as string)}
           </span>
         </div>
       </div>

@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "@/lib/firebase";
 import type { FoglioApi } from "@/lib/fogliDb";
 import { Loader2, Download, Printer } from "lucide-react";
 import toast from "react-hot-toast";
@@ -65,23 +63,19 @@ export default function StampaFoglioPage() {
         y += pageHeight;
       }
 
-      const pdfBytes = pdf.output("arraybuffer");
-      const fileName = `foglio_lavoro_${Date.now()}.pdf`;
-      const storageRef = ref(storage, `foglidilavoro/${fileName}`);
-      await uploadBytes(storageRef, new Uint8Array(pdfBytes), { contentType: "application/pdf" });
-      const url = await getDownloadURL(storageRef);
+      const pdfBytes = pdf.output("blob") as Blob;
+      const form = new FormData();
+      form.append("file", pdfBytes, `foglio_${id}.pdf`);
 
-      // Salva l'URL su Postgres — il bridge lo propaga a Firestore (campo URL)
-      // per il CRM FlutterFlow legacy.
-      const patchRes = await fetch(`/api/fogli-di-lavoro/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdfUrl: url }),
+      const uploadRes = await fetch(`/api/fogli-di-lavoro/${id}/pdf`, {
+        method: "POST",
+        body: form,
       });
-      if (!patchRes.ok) throw new Error(String(patchRes.status));
+      if (!uploadRes.ok) throw new Error(String(uploadRes.status));
+      const { foglio: updated } = (await uploadRes.json()) as { foglio: FoglioApi };
 
-      setPdfUrl(url);
-      window.open(url, "_blank");
+      setPdfUrl(updated.PdfUrl);
+      if (updated.PdfUrl) window.open(updated.PdfUrl, "_blank");
       toast.success("PDF generato e salvato");
     } catch (err) {
       console.error(err);

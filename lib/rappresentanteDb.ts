@@ -44,3 +44,21 @@ export async function getClientiAssegnati(repEmail: string): Promise<ClienteAsse
     clienteRefId: (r.cliente_ref_id as string) ?? null,
   }));
 }
+
+/**
+ * Email del rappresentante assegnato a un login core.utenti — sempre letta
+ * da core.utenti.fs_extra, MAI da core.clienti (verificato: 0 righe su
+ * 10485 hanno fs_extra->>'Rappresentante' popolato lì, il campo vive solo
+ * lato utenti). Serve al checkout self-service per il messaggio di blocco
+ * fido anche quando il fido stesso viene controllato su core.clienti
+ * (cliente con anagrafica collegata) invece che su core.utenti.
+ */
+export async function getRappresentanteForUtente(utenteId: string): Promise<string | null> {
+  const db = getDb();
+  if (!db) return null;
+  const { rows } = await db.query(
+    `SELECT fs_extra->>'Rappresentante' AS rappresentante FROM core.utenti WHERE id = $1`,
+    [utenteId]
+  );
+  return (rows[0]?.rappresentante as string) || null;
+}

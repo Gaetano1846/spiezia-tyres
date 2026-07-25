@@ -5,6 +5,12 @@ import { generateAiReply } from "@/lib/emailAdmin/aiReply";
 // Sostituto interno della Cloud Function `generate_ai_reply` (Fase 9-quater
 // C). Chiamata dal bottone "Genera AI" in admin/email — azione umana da
 // sessione, non machine-to-machine.
+//
+// Tenuta deliberatamente SPENTA (decisione utente, decommissioning finale
+// Firebase 2026-07-19): il layer Postgres è pronto e verificato, ma la
+// generazione risposte AI non deve essere attiva al momento. Flag server-only
+// (non NEXT_PUBLIC — letto a runtime, nessun rebuild per riattivarla):
+// impostare EMAIL_AI_REPLY_ENABLED=true nell'env del container per accenderla.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +20,13 @@ export async function POST(req: Request) {
   const session = await getSession();
   if (!session || !isAdmin(session)) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
+  }
+
+  if (process.env.EMAIL_AI_REPLY_ENABLED !== "true") {
+    return NextResponse.json(
+      { success: false, error: "Generazione risposta AI temporaneamente disattivata" },
+      { status: 503 }
+    );
   }
 
   const body = await req.json().catch(() => null);

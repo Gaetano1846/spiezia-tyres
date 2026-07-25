@@ -4,13 +4,16 @@ import { listPreventivi, createPreventivo } from "@/lib/preventiviDb";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session || !isCRM(session)) {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 403 });
   }
   try {
-    const preventivi = await listPreventivi(200);
+    const clienteId = req.nextUrl.searchParams.get("clienteId") ?? undefined;
+    const limitParam = req.nextUrl.searchParams.get("limit");
+    const limit = limitParam ? Number(limitParam) : undefined;
+    const preventivi = await listPreventivi({ clienteId, limit });
     return NextResponse.json({ preventivi });
   } catch (err) {
     console.error("[api/preventivi GET]", err);

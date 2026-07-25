@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
 import { createOrdine, resolveSedeId, resolvePersonaId } from "@/lib/ordiniDb";
-import { checkAndDecrementFido, refundFido } from "@/lib/clientiDb";
+import { checkAndDecrementFido, refundFido, listIndirizziCliente, createIndirizzoCliente, getClienteIdForUtente } from "@/lib/clientiDb";
 import { newId } from "@/lib/db";
 import { nextCounterServer } from "@/lib/countersDb";
 import { listIndirizziUtente, createIndirizzoUtente, type IndirizzoTipo } from "@/lib/utentiIndirizziDb";
+import { sendOrdineEmail } from "@/lib/email/ordineEmail";
+import { getRappresentanteForUtente } from "@/lib/rappresentanteDb";
 
 // Creazione ordine — SERVER-SIDE (bypassa le Firestore Security Rules, che
 // richiedono `request.auth != null`; con l'auth VPS-native un cliente con
@@ -32,7 +33,7 @@ interface AddressPayload {
   nome: string; via: string; cap: string; citta: string; provincia: string; partitaIva: string;
 }
 interface ArticoloPayload {
-  id: string; marca: string; modello: string; quantita: number;
+  id: string; marca: string; modello: string; misura?: string; quantita: number;
   prezzoScontato: number; pfu: number; sconto?: number;
 }
 interface CreateOrdineBody {
@@ -74,26 +75,25 @@ function normalizeAddr(a: { Via?: unknown; CAP?: unknown; Citta?: unknown }): st
   return [a.Via, a.CAP, a.Citta].map((v) => String(v ?? "").trim().toLowerCase()).join("|");
 }
 
-// Salva l'indirizzo inserito nella rubrica del cliente, in modalità "ordina
-// per conto di" (ramo forClient sotto), se non è già presente — così il
-// prossimo ordine può riusarlo dal menu "Usa un indirizzo salvato".
-// SERVER-SIDE per lo stesso motivo del resto della route (nessun token
-// Firebase Auth lato client garantito). Best-effort: un fallimento qui non
-// deve far fallire l'ordine, già creato con successo a questo punto. Resta
-// su Firestore (Clienti/{id}/Indirizzo_FatturazioneC è bridgeata verso il
-// CRM — fuori scope, lato CRM è corretto così).
-async function saveAddressIfNew(
-  colRef: FirebaseFirestore.CollectionReference,
-  doc: Record<string, unknown>
+// Salva l'indirizzo inserito nella rubrica del cliente (core.clienti_indirizzi,
+// decommissioning finale Firebase — sostituisce
+// Clienti/{id}/Indirizzo_FatturazioneC, già bridgeata bidirezionalmente), in
+// modalità "ordina per conto di" (ramo forClient sotto), se non è già
+// presente — così il prossimo ordine può riusarlo dal menu "Usa un indirizzo
+// salvato". Best-effort: un fallimento qui non deve far fallire l'ordine, già
+// creato con successo a questo punto.
+async function saveAddressIfNewCliente(
+  clienteId: string,
+  doc: { Azienda: string; Via: string; CAP: string; Citta: string; Provincia: string; Partita_Iva: string | null }
 ): Promise<void> {
   try {
-    const existing = await colRef.get();
+    const existing = await listIndirizziCliente(clienteId, "fatturazione");
     const key = normalizeAddr(doc);
-    const alreadySaved = existing.docs.some((d) => normalizeAddr(d.data()) === key);
+    const alreadySaved = existing.some((a) => normalizeAddr(a) === key);
     if (alreadySaved) return;
-    await colRef.add(doc);
+    await createIndirizzoCliente(clienteId, "fatturazione", doc);
   } catch (err) {
-    console.error("[api/checkout/ordine] salvataggio indirizzo fallito (non bloccante):", err);
+    console.error("[api/checkout/ordine] salvataggio indirizzo cliente fallito (non bloccante):", err);
   }
 }
 
@@ -169,19 +169,32 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Non autorizzato a ordinare per conto di un cliente" }, { status: 403 });
   }
 
-  const db = adminDb();
   const sedeId = body.sedeId || "main";
   const forClient = canOrderForClient && !!body.clienteId;
-  const fidoTable = forClient ? "clienti" : "utenti";
-  const fidoId = forClient ? (body.clienteId as string) : session.uid;
+
+  // Self-service (cliente che ordina per sé, non "per conto di"): se ha
+  // un'anagrafica core.clienti collegata, il fido autoritativo vive lì
+  // (vedi commento in lib/clientiDb.ts::getClienteIdForUtente) — prima si
+  // controllava sempre core.utenti, che per questi account resta null per
+  // sempre, quindi NESSUN blocco fido veniva mai applicato a un cliente con
+  // anagrafica propria che ordinava da sé.
+  const linkedClienteId = forClient ? null : await getClienteIdForUtente(session.uid);
+  const fidoTable = forClient || linkedClienteId ? "clienti" : "utenti";
+  const fidoId = forClient ? (body.clienteId as string) : (linkedClienteId ?? session.uid);
 
   // Check+scalo atomico del fido (chiude la finestra TOCTOU del vecchio
   // check-poi-decrementa in due passaggi separati). Va PRIMA della creazione
   // ordine: se l'ordine fallisce dopo, il fido va riaccreditato (vedi catch).
   const fidoResult = await checkAndDecrementFido(fidoTable, fidoId, body.totale);
   if (!fidoResult.ok) {
+    // Rappresentante per il messaggio di blocco: core.clienti non lo
+    // popola mai (verificato: 0 righe su 10485) — resta sempre core.utenti,
+    // anche quando il fido stesso è stato controllato su core.clienti.
+    const rappresentante = linkedClienteId
+      ? await getRappresentanteForUtente(session.uid)
+      : fidoResult.rappresentante;
     return NextResponse.json(
-      { error: fidoBlockedError(forClient, fidoResult.rappresentante), code: "ORDER_BLOCKED" },
+      { error: fidoBlockedError(forClient, rappresentante), code: "ORDER_BLOCKED" },
       { status: 403 }
     );
   }
@@ -234,7 +247,17 @@ export async function POST(req: Request) {
         ...(forClient && !pgClienteId ? { ClienteUid: body.clienteId } : {}),
       },
       articoli: body.articoli.map((i) => ({
-        titolo: `${i.marca} ${i.modello}`,
+        // SOLO modello (+misura) — MAI prefissato con la marca: sia la pagina
+        // admin ordini (app/(admin)/admin/ordini/[id]/page.tsx) sia l'email
+        // ordine (lib/email/ordineEmail.ts) prependono già `Marca` da sola,
+        // come fa anche il report "prodotti più venduti" (lib/ordiniDb.ts) —
+        // un titolo che include la marca la duplicherebbe ovunque ("Compasal
+        // Compasal Blazer HP"). La misura (mai passata prima d'ora — persa
+        // dal carrello, che la cattura già in `i.misura`, fino a qui) è
+        // l'unico dato pneumatico-identificativo mancante dalla card ordine
+        // admin: senza, la riga sembra "scollegata dal prodotto" (bug
+        // segnalato dall'utente).
+        titolo: [i.modello, i.misura].filter(Boolean).join(" ").trim(),
         marca: i.marca,
         quantita: i.quantita,
         prezzoUnitario: i.prezzoScontato,
@@ -249,23 +272,28 @@ export async function POST(req: Request) {
     // Salva l'indirizzo di fatturazione (e quello di spedizione, se diverso)
     // nella rubrica per il riuso futuro — del cliente selezionato in modalità
     // "ordina per conto di", altrimenti dell'utente che ha ordinato.
-    if (forClient) {
-      const col = db.collection(`Clienti/${body.clienteId}/Indirizzo_FatturazioneC`);
+    if (forClient && pgClienteId) {
       const clienteAddr = (a: AddressPayload) => ({
-        Ragione_Sociale: a.nome, Via: a.via, CAP: a.cap, Citta: a.citta,
-        Provincia: a.provincia, PartitaIVA: a.partitaIva || null,
+        Azienda: a.nome, Via: a.via, CAP: a.cap, Citta: a.citta,
+        Provincia: a.provincia, Partita_Iva: a.partitaIva || null,
       });
-      await saveAddressIfNew(col, clienteAddr(body.fatturazione));
+      await saveAddressIfNewCliente(pgClienteId, clienteAddr(body.fatturazione));
       if (body.spedizione && normalizeAddr(clienteAddr(body.spedizione)) !== normalizeAddr(clienteAddr(body.fatturazione))) {
-        await saveAddressIfNew(col, clienteAddr(body.spedizione));
+        await saveAddressIfNewCliente(pgClienteId, clienteAddr(body.spedizione));
       }
-    } else {
+    } else if (!forClient) {
       await saveAddressIfNewPg(session.uid, "fatturazione", body.fatturazione);
       if (body.spedizione && normalizeAddr({ Via: body.spedizione.via, CAP: body.spedizione.cap, Citta: body.spedizione.citta })
           !== normalizeAddr({ Via: body.fatturazione.via, CAP: body.fatturazione.cap, Citta: body.fatturazione.citta })) {
         await saveAddressIfNewPg(session.uid, "spedizione", body.spedizione);
       }
     }
+
+    // Fire-and-forget: un'email fallita non deve mai invalidare un ordine già
+    // creato con successo (vedi commento in testa a lib/email/ordineEmail.ts).
+    sendOrdineEmail(id).catch((err) => {
+      console.error("[api/checkout/ordine] invio email ordine fallito (non bloccante):", err);
+    });
 
     return NextResponse.json({ id, numero: numeroDisplay });
   } catch (err) {

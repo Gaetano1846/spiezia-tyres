@@ -397,7 +397,7 @@ export default function CheckoutPage() {
           cap: a.CAP ?? "",
           citta: a.Citta ?? "",
           provincia: a.Provincia ?? "",
-          partitaIva: a.PartitaIVA ?? a.Partita_IVA ?? "",
+          partitaIva: a.PartitaIVA ?? a.Partita_IVA ?? a.Partita_Iva ?? "",
         }));
         setClienteAddresses(addrs);
         // Pre-popola il form fatturazione con il primo indirizzo del cliente
@@ -518,7 +518,7 @@ export default function CheckoutPage() {
         body: JSON.stringify({
           sedeId,
           articoli: itemsConSconto.map((i) => ({
-            id: i.id, marca: i.marca, modello: i.modello, quantita: i.quantita,
+            id: i.id, marca: i.marca, modello: i.modello, misura: i.misura, quantita: i.quantita,
             prezzoScontato: i.prezzoScontato, pfu: i.pfu, sconto: i.sconto,
           })),
           totale: totalsConSconto.totale,

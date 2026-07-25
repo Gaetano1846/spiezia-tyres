@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession } from "@/lib/auth";
-import { adminDb } from "@/lib/firebase-admin";
+import { listIndirizziCliente } from "@/lib/clientiDb";
 import { getClientiAssegnati } from "@/lib/rappresentanteDb";
 
 export const runtime = "nodejs";
@@ -8,14 +8,10 @@ export const runtime = "nodejs";
 // GET /api/checkout/cliente/{id}/indirizzi → { indirizzi }
 //
 // Indirizzi di fatturazione salvati del cliente selezionato in "ordina per
-// conto di" (checkout). Le Firestore Security Rules su
-// Clienti/{id}/Indirizzo_FatturazioneC richiedono isAdmin() || isCRM() — un
-// Rappresentante puro (senza il flag CRM) non soddisfa nessuna delle due,
-// quindi la lettura diretta dal client falliva sempre con permission-denied
-// (silenziosamente, il checkout continuava a funzionare ma senza mai
-// mostrare il dropdown "Usa un indirizzo salvato del cliente"). SERVER-SIDE
-// via Admin SDK, con autorizzazione: un Admin può leggere qualunque cliente,
-// un Rappresentante solo i propri assegnati.
+// conto di" (checkout) — core.clienti_indirizzi (decommissioning finale
+// Firebase, sostituisce Clienti/{id}/Indirizzo_FatturazioneC, già bridgeata
+// bidirezionalmente). SERVER-SIDE con autorizzazione: un Admin può leggere
+// qualunque cliente, un Rappresentante solo i propri assegnati.
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -27,8 +23,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
 
   try {
-    const db = adminDb();
-
     if (session.Ruolo !== "Admin") {
       const assegnati = await getClientiAssegnati(session.email);
       const autorizzato = assegnati.some((c) => c.clienteRefId === id);
@@ -37,9 +31,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       }
     }
 
-    const snap = await db.collection(`Clienti/${id}/Indirizzo_FatturazioneC`).get();
-    const indirizzi = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
+    const indirizzi = await listIndirizziCliente(id, "fatturazione");
     return NextResponse.json({ indirizzi });
   } catch (err) {
     console.error("[api/checkout/cliente/indirizzi]", err);

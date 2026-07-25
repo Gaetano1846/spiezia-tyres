@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, isImpersonating } from "@/lib/auth";
 import { getUtenteProfile, updatePrinterMac, updateDisplayName, markUtentiAvvisati } from "@/lib/utentiDb";
 
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ export async function GET() {
   const profile = await getUtenteProfile(session.uid);
   if (!profile) return NextResponse.json({ error: "Utente non trovato" }, { status: 404 });
 
-  return NextResponse.json(profile);
+  return NextResponse.json({ ...profile, Impersonating: await isImpersonating() });
 }
 
 // PATCH /api/auth/profile — self-service update di singoli campi del

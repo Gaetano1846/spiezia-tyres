@@ -27,9 +27,17 @@ ARG NEXT_PUBLIC_PRODOTTI_BACKEND
 # Backend numero ordine: "postgres" (route /api/counters/next) o vuoto (Firestore).
 # Migrazione F4 — resta vuoto finché Flutter crea ancora ordini B2B/Vetrina.
 ARG NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND
+# Backend numero Preventivo/FoglioDiLavoro: "postgres" o vuoto (Firestore).
+# Decommissioning finale Firebase 2026-07-19, stesso pattern del flag Ordine.
+ARG NEXT_PUBLIC_COUNTERS_EXTRA_BACKEND
+# Dominio pubblico dell'app — usato per generare gli URL dei file su storage
+# locale (lib/storage.ts). Cutover 2026-07-19: b2b2 → b2b.spieziatyres.it.
+ARG NEXT_PUBLIC_APP_URL
 
 ENV NEXT_PUBLIC_PRODOTTI_BACKEND=$NEXT_PUBLIC_PRODOTTI_BACKEND \
     NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND=$NEXT_PUBLIC_COUNTERS_ORDINE_BACKEND \
+    NEXT_PUBLIC_COUNTERS_EXTRA_BACKEND=$NEXT_PUBLIC_COUNTERS_EXTRA_BACKEND \
+    NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
     NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY \
     NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN \
     NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID \

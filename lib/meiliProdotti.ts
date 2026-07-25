@@ -37,6 +37,23 @@ function quote(v: string | number): string {
   return `"${String(v).replace(/"/g, '\\"')}"`;
 }
 
+// Riconosce una query "tutta numerica" (es. "10/16-5", "205 55 16") — un
+// tentativo di digitare una misura in un formato che parseMisura() (client)
+// non ha riconosciuto come WWW/HH RDD né come compatto, quindi arriva qui
+// come testo libero. Su queste query il matchingStrategy di default di Meili
+// ("last") rilassa progressivamente i termini per garantire risultati,
+// mischiando misure completamente diverse che condividono solo alcune cifre
+// (es. "10/16-5" → anche "260/70-16.5", "10.0/80-12"...). Per una query fatta
+// solo di cifre e separatori non ha senso rilassare nulla: l'utente si
+// aspetta che OGNI cifra digitata conti (bug segnalato dall'utente).
+const MISURA_LIKE_QUERY_RE = /^[\d\s/\-.xX]+$/;
+
+function looksLikeMisuraQuery(q: string): boolean {
+  const trimmed = q.trim();
+  if (!MISURA_LIKE_QUERY_RE.test(trimmed)) return false;
+  return trimmed.replace(/[^\d]/g, "").length >= 4;
+}
+
 type MeiliDoc = Record<string, unknown>;
 const num = (v: unknown): number => Number(v) || 0;
 const str = (v: unknown): string | undefined => (v == null ? undefined : String(v));
@@ -148,6 +165,7 @@ export async function searchProdottiMeili(
     hitsPerPage,
     sort: sort && sort.length > 0 ? sort : undefined,
     facets: withFacets ? ["marca", "stagione"] : undefined,
+    matchingStrategy: looksLikeMisuraQuery(query) ? "all" : undefined,
   });
 
   // Meili con page+hitsPerPage ritorna totalHits/totalPages/page

@@ -3,11 +3,6 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import {
-  doc, getDoc, Timestamp,
-  type DocumentReference,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import {
   ChevronRight, ArrowLeft, Printer, Mail, XCircle, ExternalLink,
   Plus, Send, CheckCircle2, Package, Truck, Clock, RotateCcw,
   Pencil, X, Tag,
@@ -50,8 +45,8 @@ function apiToLocalNote(entries: OrdineApi["NoteInterne"]): NotaInterna[] {
 // core.ordini è già alimentato in tempo reale dal bridge (bidirezionale con
 // Firestore) — qui adattiamo la forma Postgres alla forma Ordine già attesa
 // da tutto il resto di questa pagina (invariata), per limitare il diff a
-// SOLO il fetch iniziale. Prodotti/stock restano su Firestore (fuori scope
-// di questa migrazione): RefPath ricostruisce il riferimento per il lookup.
+// SOLO il fetch iniziale. Lo stock per RefPath arriva già risolto dalla
+// route (stockByRef, vedi fetchAll) — qui serve solo il path come chiave.
 function apiToLocalOrdine(o: OrdineApi): Ordine {
   const fsExtra = o.FsExtra ?? {};
   const speseExtra = Array.isArray(fsExtra.SpeseExtra_array) ? (fsExtra.SpeseExtra_array as SpeseExtra[]) : [];
@@ -65,9 +60,7 @@ function apiToLocalOrdine(o: OrdineApi): Ordine {
     Contributo_Logistico: a.ContributoLogistico ?? 0,
     SKU: a.Sku ?? "",
     Immagine: (a.FsExtra?.Immagine as string) ?? "",
-    // Vero DocumentReference (non un oggetto {path} fittizio): il lookup
-    // stock più sotto chiama getDoc(r) su Prodotti, che resta su Firestore.
-    Ref: a.RefPath ? doc(db, a.RefPath) : undefined,
+    Ref: a.RefPath ? { path: a.RefPath } : undefined,
   }));
   return {
     id: o.id,
@@ -86,7 +79,7 @@ function apiToLocalOrdine(o: OrdineApi): Ordine {
     Note: o.Note ?? undefined,
     Colli: o.Colli ?? undefined,
     Peso: o.Peso ?? undefined,
-    DataCreazione: o.Data as unknown as Timestamp,
+    DataCreazione: o.Data as unknown as Ordine["DataCreazione"],
     GLS_TrackingNumber: o.GlsTrackingNumber ?? undefined,
     GLS_PdfUrl: o.GlsPdfUrl ?? undefined,
     Motivo_Annullamento: o.MotivoAnnullamento ?? undefined,
@@ -155,24 +148,19 @@ function euro(n: number | undefined) {
   return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
 }
 
-// Accetta sia Timestamp Firestore (Cronologia/Note_Interne, ancora scritte
-// via client SDK) sia stringa ISO (Ordine, ora letto da Postgres via API).
-function toDate(v: Timestamp | string | null | undefined): Date | null {
+function toDate(v: string | null | undefined): Date | null {
   if (!v) return null;
-  if (typeof v === "string") {
-    const d = new Date(v);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  return v.toDate ? v.toDate() : null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function fmtDt(v: Timestamp | string | null | undefined): string {
+function fmtDt(v: string | null | undefined): string {
   const d = toDate(v);
   if (!d) return "—";
   return d.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function fmtData(v: Timestamp | string | null | undefined): string {
+function fmtData(v: string | null | undefined): string {
   const d = toDate(v);
   if (!d) return "—";
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
@@ -205,8 +193,8 @@ function normalizeArticolo(a: Record<string, unknown>) {
     logistica: Number(a.Contributo_Logistico ?? 0),
     sku:       String(a.SKU ?? ""),
     immagine:  String(a.Immagine ?? ""),
-    // Ref al doc Prodotti (DocumentReference) — usato per lo stock per magazzino
-    refPath:   ref && typeof ref === "object" && "path" in (ref as object) ? (ref as DocumentReference).path : "",
+    // Ref al prodotto (chiave stockByRef, risolto server-side) — usato per lo stock per magazzino
+    refPath:   ref && typeof ref === "object" && "path" in (ref as object) ? (ref as { path: string }).path : "",
   };
 }
 
@@ -341,7 +329,7 @@ export default function OrdineAdminDetailPage() {
         // scritture (Fase 4) — zero ritardo di propagazione bridge tra
         // scrittura e rilettura.
         const res = await fetch(`/api/admin/ordini/${id}`);
-        const data = await res.json().catch(() => null) as { ordine?: OrdineApi; error?: string } | null;
+        const data = await res.json().catch(() => null) as { ordine?: OrdineApi; stockByRef?: Record<string, StockView>; error?: string } | null;
         if (!res.ok || !data?.ordine) {
           toast.error(data?.error ?? "Ordine non trovato");
           return;
@@ -351,46 +339,13 @@ export default function OrdineAdminDetailPage() {
         setTracking(o.GLS_TrackingNumber ?? "");
         setCronologia(apiToLocalCronologia(data.ordine.Cronologia));
         setNote(apiToLocalNote(data.ordine.NoteInterne));
+        setStockByRef(data.stockByRef ?? {});
 
         // Colli / Peso: valori salvati sull'ordine oppure default (somma quantità · ×5)
         const arts0 = (o.Articoli ?? []) as Record<string, unknown>[];
         const totQty = arts0.reduce((s, a) => s + Number(a.Quantita ?? 0), 0);
         setColli(String(o.Colli ?? totQty));
         setPeso(String(o.Peso ?? totQty * 5));
-
-        // Stock per magazzino: risolvi i doc Prodotti referenziati dagli articoli
-        const refs = new Map<string, DocumentReference>();
-        for (const a of arts0) {
-          const r = a.Ref;
-          if (r && typeof r === "object" && "path" in (r as object)) refs.set((r as DocumentReference).path, r as DocumentReference);
-        }
-        if (refs.size > 0) {
-          Promise.all(
-            [...refs.values()].map(async (r) => {
-              try {
-                const ps = await getDoc(r);
-                if (!ps.exists()) return null;
-                const p = ps.data();
-                const sv: StockView = {
-                  nola:  Number(p.Stock_Nola ?? 0),
-                  nola2: Number(p.Stock_Nola_2 ?? 0),
-                  roma:  Number(p.Stock_Roma ?? 0),
-                  volla: Number(p.Stock_Volla ?? 0),
-                  ocp:   Number(p.Stock_OCP ?? 0),
-                  t24:   Number(p.Stock_T24 ?? 0),
-                  isT24: Boolean(p.T24 ?? false),
-                };
-                return { path: r.path, sv };
-              } catch { return null; }
-            })
-          ).then((results) => {
-            setStockByRef((prev) => {
-              const next = { ...prev };
-              for (const res of results) if (res) next[res.path] = res.sv;
-              return next;
-            });
-          });
-        }
 
         // Cliente/Utente: già risolti server-side nella STESSA query Postgres
         // di getOrdine() (JOIN core.clienti/core.utenti, vedi ClienteInfo in
@@ -645,7 +600,7 @@ export default function OrdineAdminDetailPage() {
             // FF invia order_total come stringa interpolata — manteniamo lo stesso shape
             order_total:   total.toFixed(2),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            order_date:    fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp),
+            order_date:    fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as string),
             fatturazione:  rawIndirizzo(ordine, "fatturazione") ?? {},
             spedizione:    rawIndirizzo(ordine, "spedizione") ?? {},
             products,
@@ -848,7 +803,7 @@ export default function OrdineAdminDetailPage() {
 
         <p className="text-xs mt-1.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
           {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-          Creato il {fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as Timestamp)}
+          Creato il {fmtData(((ordine as any).DataCreazione ?? (ordine as any).DataOra) as string)}
           {ordine.eBay_OrderID && ` · eBay ID: ${ordine.eBay_OrderID}`}
           {ordine.Amazon_MarketplaceID && ` · Amazon: ${ordine.Amazon_MarketplaceID}`}
           {ordine.WC_OrderNumber && ` · WC: #${ordine.WC_OrderNumber}`}
