@@ -60,8 +60,27 @@ const MISURA_RE = /(\d{3})\s*\/\s*(\d{2,3})\s*[Rr]\s*(\d{2}(?:\.\d+)?)/;
 // fix precedente ma per un caso non ancora coperto).
 const MISURA_COMPATTA_RE = /^(\d{3})(\d{2})(\d{2,3})$/;
 
+// Formato "senza altezza" (autocarro/agricoltura: es. "13 R22.5", "11 R22.5",
+// "9.00 R20") — niente rapporto d'aspetto, solo larghezza e diametro (spesso
+// mezza misura decimale). Confermato sui dati reali di public.prodotti: per
+// questi prodotti Altezza è salvata come stringa VUOTA (mai "0", mai NULL) —
+// quindi qui torna sempre "" e nessun filtro Altezza va applicato in ricerca.
+// Due varianti digitate senza spazi/slash/R nella barra di ricerca (bug
+// segnalato dall'utente: entrambe cadevano a ricerca testuale libera,
+// mescolando misure diverse tipo "12R10" — nessuna regex sopra le
+// riconosceva, MISURA_COMPATTA_RE richiede sempre 3 cifre di larghezza):
+//  - "1322.5" → punto decimale esplicito (larghezza=13, diametro=22.5)
+//  - "13225"  → stesso valore compatto, diametro a 3 cifre = mezza misura
+//    implicita (stessa convenzione del formato compatto sopra: "225" → 22.5)
+const MISURA_CAMION_DECIMALE_RE = /^(\d{1,2})(\d{2}\.\d+)$/;
+const MISURA_CAMION_COMPATTA_RE = /^(\d{1,2})(\d{2,3})$/;
+
 function misuraPlausibile(largezza: number, altezza: number, diametro: number): boolean {
   return largezza >= 100 && largezza <= 400 && altezza >= 20 && altezza <= 100 && diametro >= 8 && diametro <= 30;
+}
+
+function misuraCamionPlausibile(largezza: number, diametro: number): boolean {
+  return largezza >= 3 && largezza <= 50 && diametro >= 8 && diametro <= 30;
 }
 
 function parseMisura(text: string): { largezza: string; altezza: string; diametro: string; rest: string } | null {
@@ -75,6 +94,23 @@ function parseMisura(text: string): { largezza: string; altezza: string; diametr
     const diametro = diametroRaw.length === 3 ? Number(diametroRaw) / 10 : Number(diametroRaw);
     if (misuraPlausibile(largezza, altezza, diametro)) {
       return { largezza: compact[1], altezza: compact[2], diametro: String(diametro), rest: "" };
+    }
+  }
+  const camionDecimale = trimmed.match(MISURA_CAMION_DECIMALE_RE);
+  if (camionDecimale) {
+    const largezza = Number(camionDecimale[1]);
+    const diametro = Number(camionDecimale[2]);
+    if (misuraCamionPlausibile(largezza, diametro)) {
+      return { largezza: camionDecimale[1], altezza: "", diametro: camionDecimale[2], rest: "" };
+    }
+  }
+  const camionCompatta = trimmed.match(MISURA_CAMION_COMPATTA_RE);
+  if (camionCompatta) {
+    const largezza = Number(camionCompatta[1]);
+    const diametroRaw = camionCompatta[2];
+    const diametro = diametroRaw.length === 3 ? Number(diametroRaw) / 10 : Number(diametroRaw);
+    if (misuraCamionPlausibile(largezza, diametro)) {
+      return { largezza: camionCompatta[1], altezza: "", diametro: String(diametro), rest: "" };
     }
   }
   const m = text.match(MISURA_RE);
@@ -270,7 +306,10 @@ export default function ProdottiPage() {
       setLargezza(misura.largezza);
       setAltezza(misura.altezza);
       setDiametro(misura.diametro);
-      setMisuraRapida(`${misura.largezza}/${misura.altezza} R${misura.diametro}`);
+      // Formato autocarro (senza altezza): niente "/" con il rapporto d'aspetto vuoto.
+      setMisuraRapida(
+        misura.altezza ? `${misura.largezza}/${misura.altezza} R${misura.diametro}` : `${misura.largezza} R${misura.diametro}`
+      );
     } else {
       setLargezza(""); setAltezza(""); setDiametro(""); setMisuraRapida("");
     }
@@ -393,10 +432,11 @@ export default function ProdottiPage() {
   function handleMisuraRapida(v: string) {
     misuraSourceRef.current = "manual";
     setMisuraRapida(v);
-    // Diametro con \.\d+ opzionale — stesso motivo di MISURA_RE (mezze misure
-    // autocarro, es. "225/75 R17.5").
-    const m = v.trim().match(/^(\d{3})\s*\/\s*(\d{2,3})\s*[Rr]\s*(\d{2}(?:\.\d+)?)$/);
-    if (m) { setLargezza(m[1]); setAltezza(m[2]); setDiametro(m[3]); }
+    // Riusa parseMisura invece di una regex propria: copre anche il formato
+    // autocarro senza altezza (es. "13 R22.5") e resta allineato in automatico
+    // a qualunque formato futuro aggiunto lì, invece di doverlo duplicare qui.
+    const misura = parseMisura(v);
+    if (misura) { setLargezza(misura.largezza); setAltezza(misura.altezza); setDiametro(misura.diametro); }
     else { setLargezza(""); setAltezza(""); setDiametro(""); }
   }
 
