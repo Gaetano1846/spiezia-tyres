@@ -782,6 +782,7 @@ export default function ProdottiPage() {
               const esaurito = stock === 0;
               const senzaPrezzo = prezzo === 0;
               const detailsOpen = expandedDetails.has(hit.objectID);
+              const misura = formatMisura(hit);
 
               return (
                 <div
@@ -832,13 +833,13 @@ export default function ProdottiPage() {
                       </p>
                     )}
                     <p className="text-sm font-semibold line-clamp-2 xl:block xl:truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
-                      {hit.Modello}
+                      {misura ? `${misura} ` : ""}{hit.Modello}
                     </p>
-                    <p className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-                      {formatMisura(hit)}
-                      {hit.Indice_Carico && hit.Indice_Velocita
-                        ? ` ${hit.Indice_Carico}${hit.Indice_Velocita}` : ""}
-                    </p>
+                    {hit.Indice_Carico && hit.Indice_Velocita && (
+                      <p className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
+                        {hit.Indice_Carico}{hit.Indice_Velocita}
+                      </p>
+                    )}
                     {/* Prezzo netto + PFU visibile solo su mobile (colonne nascoste su xl) */}
                     {senzaPrezzo ? (
                       <p className="text-xs font-semibold xl:hidden mt-0.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
