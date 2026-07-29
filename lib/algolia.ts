@@ -158,7 +158,9 @@ export function stockTotale(hit: ProdottoHit): number {
 }
 
 export function formatMisura(hit: ProdottoHit): string {
-  return `${hit.Larghezza}/${hit.Altezza} R${hit.Diametro}`;
+  // Misure autocarro/agricole senza rapporto d'aspetto (es. "13 R22.5"):
+  // Altezza arriva 0 da Meili (stringa vuota → Number("")||0), niente "/0".
+  return hit.Altezza ? `${hit.Larghezza}/${hit.Altezza} R${hit.Diametro}` : `${hit.Larghezza} R${hit.Diametro}`;
 }
 
 // PFU (Pneumatico Fuori Uso) — contributo ambientale obbligatorio per raggio

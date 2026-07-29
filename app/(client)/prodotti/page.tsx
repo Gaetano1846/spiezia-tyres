@@ -834,12 +834,9 @@ export default function ProdottiPage() {
                     )}
                     <p className="text-sm font-semibold line-clamp-2 xl:block xl:truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
                       {misura ? `${misura} ` : ""}{hit.Modello}
+                      {hit.Indice_Carico && hit.Indice_Velocita
+                        ? ` ${hit.Indice_Carico}${hit.Indice_Velocita}` : ""}
                     </p>
-                    {hit.Indice_Carico && hit.Indice_Velocita && (
-                      <p className="text-xs" style={{ color: "#6b7280", fontFamily: "var(--font-montserrat)" }}>
-                        {hit.Indice_Carico}{hit.Indice_Velocita}
-                      </p>
-                    )}
                     {/* Prezzo netto + PFU visibile solo su mobile (colonne nascoste su xl) */}
                     {senzaPrezzo ? (
                       <p className="text-xs font-semibold xl:hidden mt-0.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>
