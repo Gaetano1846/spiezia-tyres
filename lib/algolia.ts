@@ -179,8 +179,26 @@ export function pfuDaDiametro(diametro: number): number {
   return 7.50;
 }
 
-// Restituisce il PFU da usare: quello del documento se > 0, altrimenti calcolato
-export function pfuEffettivo(hit: Pick<ProdottoHit, "PFU" | "Diametro">): number {
+// Categorie non soggette a PFU: camere d'aria e cerchi non sono pneumatici,
+// pur avendo un Diametro valorizzato che farebbe scattare il fallback sotto.
+function categoriaEsenteDaPfu(categoria: string | undefined): boolean {
+  if (!categoria) return false;
+  return categoria.includes("Cerchi") || categoria.includes("Camere");
+}
+
+// Marche di gomme ricoperte — esenti dal contributo PFU (già assolto sul
+// pneumatico originale prima della ricostruzione, fonte EcoTyre/Retyre).
+const MARCHE_RICOPERTE = new Set(["vipal", "malatesta", "corgom"]);
+
+function marcaEsenteDaPfu(marca: string | undefined): boolean {
+  return !!marca && MARCHE_RICOPERTE.has(marca.trim().toLowerCase());
+}
+
+// Restituisce il PFU da usare: 0 per categorie esenti (Cerchi, Camere D'Aria)
+// e per marche di gomme ricoperte; altrimenti quello del documento se > 0,
+// o calcolato dal diametro.
+export function pfuEffettivo(hit: Pick<ProdottoHit, "PFU" | "Diametro" | "Categoria" | "Marca">): number {
+  if (categoriaEsenteDaPfu(hit.Categoria) || marcaEsenteDaPfu(hit.Marca)) return 0;
   const stored = Number(hit.PFU);
   return stored > 0 ? stored : pfuDaDiametro(Number(hit.Diametro));
 }
