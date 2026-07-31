@@ -174,9 +174,9 @@ function BreakdownRow({ label, value, bold = false }: { label: string; value: st
   );
 }
 
-function PrezzoBreakdown({ hit, ruolo }: { hit: ProdottoHit; ruolo?: Ruolo }) {
+function PrezzoBreakdown({ hit, ruolo, pfuExempt }: { hit: ProdottoHit; ruolo?: Ruolo; pfuExempt?: boolean }) {
   const prezzo = prezzoPerRuolo(hit, ruolo);
-  const pfu    = pfuEffettivo(hit);
+  const pfu    = pfuExempt ? 0 : pfuEffettivo(hit);
   const base   = prezzo + CONTRIBUTO_LOGISTICO_UNIT + pfu;        // prezzo + contributo + pfu
   const ivaSingola    = base * 0.22;                             // getIVA(prezzo+0.95, pfu) — non arrotondata
   const totaleSingolo = parseFloat((base * 1.22).toFixed(2));     // prezzoFinito(prezzo+0.95, pfu)
@@ -450,7 +450,7 @@ export default function ProdottiPage() {
 
   function handleAdd(hit: ProdottoHit) {
     const prezzo = prezzoPerRuolo(hit, user?.Ruolo);
-    const pfu = pfuEffettivo(hit);
+    const pfu = pfuExempt ? 0 : pfuEffettivo(hit);
     const stock = stockTotale(hit);
     const qty = getQty(hit.objectID, stock);
     add({ id: hit.objectID, marca: hit.Marca, modello: hit.Modello,
@@ -488,6 +488,15 @@ export default function ProdottiPage() {
   const isPneumatici = categoria === "";
   const isCerchi     = categoria.includes("Cerchi");
   const isCamere     = categoria.includes("Camere");
+
+  // Cerchi e camere d'aria non sono pneumatici nuovi: niente PFU. Non ci si
+  // può fidare del campo Categoria dell'hit per riconoscerli (in Meili vale
+  // "Auto"/"Furgone" — categoria veicolo, non tipo prodotto — il segnale
+  // reale è categoria_ref, filterable ma non restituito nei risultati). Il
+  // tab attivo è però una garanzia sufficiente: la query server-side filtra
+  // sempre per quella categoria, quindi ogni hit in questi tab è per
+  // costruzione un cerchio/una camera d'aria.
+  const pfuExempt = isCerchi || isCamere;
 
   // Solo stato esplicito del pannello Filtri — MAI la misura dedotta dal
   // testo di ricerca (effLargezza/effAltezza/effDiametro, usata solo per
@@ -771,7 +780,7 @@ export default function ProdottiPage() {
             {/* Righe prodotto */}
             {sortedHits.map((hit, idx) => {
               const prezzo = prezzoPerRuolo(hit, user?.Ruolo);
-              const pfu = pfuEffettivo(hit);
+              const pfu = pfuExempt ? 0 : pfuEffettivo(hit);
               const prezzoFinito = parseFloat(((prezzo + CONTRIBUTO_LOGISTICO_UNIT + pfu) * 1.22).toFixed(2));
               const stockNola   = (hit.Stock_Nola ?? 0) + (hit.Stock_Nola_2 ?? 0);
               const stockNapoli = (hit.Stock_Volla ?? 0) + (hit.Stock_Portici ?? 0) + (hit.Stock_OCP ?? 0);
@@ -1105,7 +1114,7 @@ export default function ProdottiPage() {
           align="right"
           desktopMinWidth={1280}
         >
-          <PrezzoBreakdown hit={prezzoPopupHit} ruolo={user?.Ruolo} />
+          <PrezzoBreakdown hit={prezzoPopupHit} ruolo={user?.Ruolo} pfuExempt={pfuExempt} />
         </AnchoredPopover>
       )}
 
