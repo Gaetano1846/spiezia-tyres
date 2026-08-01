@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Search } from "lucide-react";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
+import { StagioneIcon, STAGIONE_COLORS, type Stagione } from "@/components/ui/StagioneIcon";
 
 const MARCHE = [
   "Michelin","Pirelli","Continental","Bridgestone","Goodyear",
@@ -15,11 +16,7 @@ const MARCHE = [
 const INDICI_VELOCITA = ["P","Q","R","S","T","H","V","W","Y","Z"];
 const INDICI_CARICO   = Array.from({ length: 50 }, (_, i) => String(60 + i));
 
-const STAGIONI = [
-  { key: "Estive",     icon: "🔥", label: "Estive" },
-  { key: "4 Stagioni", icon: "⚙️", label: "4 Stagioni" },
-  { key: "Invernali",  icon: "❄️", label: "Invernali" },
-] as const;
+const STAGIONI: Stagione[] = ["Estive", "4 Stagioni", "Invernali"];
 
 type PromoImg = { id: string; Url?: string };
 
@@ -128,20 +125,20 @@ export default function HomePage() {
               />
               <div className="flex gap-1.5 flex-shrink-0">
                 {STAGIONI.map((s) => {
-                  const active = stagioni.includes(s.key);
+                  const active = stagioni.includes(s);
                   return (
                     <button
-                      key={s.key}
-                      onClick={() => toggleStagione(s.key)}
-                      title={s.label}
-                      className="w-10 h-10 rounded-full text-lg flex items-center justify-center transition-all hover:brightness-95 active:scale-95"
+                      key={s}
+                      onClick={() => toggleStagione(s)}
+                      title={s}
+                      className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:brightness-95 active:scale-95"
                       style={{
-                        border: `2px solid ${active ? "#FFC803" : "#e5e7eb"}`,
+                        border: `2px solid ${active ? STAGIONE_COLORS[s].active : "#e5e7eb"}`,
                         background: active ? "#FFF8DC" : "#fff",
                         boxShadow: active ? "0 2px 8px rgba(255,200,3,.40)" : "none",
                       }}
                     >
-                      {s.icon}
+                      <StagioneIcon stagione={s} size={18} />
                     </button>
                   );
                 })}

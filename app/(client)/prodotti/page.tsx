@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, Snowflake, Sun, Wind, ZoomIn, Info } from "lucide-react";
+import { Search, X, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, Minus, Plus, ShoppingCart, ZoomIn, Info } from "lucide-react";
 import { useCart } from "@/components/layout/CartProvider";
 import { useAuth } from "@/components/layout/AuthProvider";
 import toast from "react-hot-toast";
@@ -16,23 +16,13 @@ import {
 } from "@/lib/algolia";
 import { CONTRIBUTO_LOGISTICO_UNIT } from "@/lib/cart";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
+import SearchableSelect from "@/components/ui/SearchableSelect";
+import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
+import { StagioneIcon, STAGIONE_COLORS, type Stagione } from "@/components/ui/StagioneIcon";
 import type { Ruolo } from "@/lib/types";
 
-type Stagione = "Estive" | "Invernali" | "4 Stagioni";
-
-const STAGIONE_BTN: Record<Stagione, { active: string; text: string }> = {
-  Estive:       { active: "#FFC803", text: "#111" },
-  Invernali:    { active: "#2563EB", text: "#fff" },
-  "4 Stagioni": { active: "#16A34A", text: "#fff" },
-};
-
-function StagioneIcon({ stagione }: { stagione: string }) {
-  if (stagione === "Invernali")
-    return <Snowflake size={16} style={{ color: "#2563EB" }} />;
-  if (stagione === "4 Stagioni")
-    return <Wind size={16} style={{ color: "#16A34A" }} />;
-  return <Sun size={16} style={{ color: "#EAB308" }} />;
-}
+const INDICI_VELOCITA = ["J","K","L","M","N","P","Q","R","S","T","H","V","W","Y"];
+const INDICI_CARICO   = Array.from({ length: 50 }, (_, i) => String(60 + i));
 
 // Stesso pattern di handleMisuraRapida, ma non ancorato a inizio/fine stringa
 // — riconosce la misura anche dentro un testo libero tipo "205/55 R16" digitato
@@ -220,7 +210,8 @@ export default function ProdottiPage() {
   const [largezza, setLargezza] = useState("");
   const [altezza, setAltezza] = useState("");
   const [diametro, setDiametro] = useState("");
-  const [indiceVel, setIndiceVel] = useState("");
+  const [indiceVel, setIndiceVel] = useState(() => searchParams.get("iv") ?? "");
+  const [indiceCarico, setIndiceCarico] = useState(() => searchParams.get("ic") ?? "");
   const [stagioni, setStagioni] = useState<Stagione[]>(() => {
     const s = searchParams.get("stagione");
     return s ? (s.split(",") as Stagione[]) : [];
@@ -232,7 +223,6 @@ export default function ProdottiPage() {
   const [categoria, setCategoria] = useState(searchParams.get("categoria") ?? "");
   const [showFiltri, setShowFiltri] = useState(false);
   const [marcheList, setMarcheList] = useState<string[]>([]);
-  const [marcaSearch, setMarcaSearch] = useState("");
 
   // Risultati
   const [hits, setHits] = useState<ProdottoHit[]>([]);
@@ -281,6 +271,8 @@ export default function ProdottiPage() {
     setMarche(m ? m.split(",").filter(Boolean) : []);
     const s = searchParams.get("stagione");
     setStagioni(s ? (s.split(",") as Stagione[]) : []);
+    setIndiceVel(searchParams.get("iv") ?? "");
+    setIndiceCarico(searchParams.get("ic") ?? "");
     setCategoria(searchParams.get("categoria") ?? "");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -373,6 +365,7 @@ export default function ProdottiPage() {
         stagioni,
         marche,
         indiceVelocita: indiceVel.trim() || undefined,
+        indiceCarico: indiceCarico.trim() || undefined,
         categoria: categoria || undefined,
         soloDisponibili: true,
         page: pg,
@@ -420,14 +413,14 @@ export default function ProdottiPage() {
     } finally {
       setLoading(false);
     }
-  }, [effQuery, effLargezza, effAltezza, effDiametro, stagioni, marche, indiceVel, categoria, sortBy]);
+  }, [effQuery, effLargezza, effAltezza, effDiametro, stagioni, marche, indiceVel, indiceCarico, categoria, sortBy]);
 
   useEffect(() => {
     if (debRef.current) clearTimeout(debRef.current);
     debRef.current = setTimeout(() => doSearch(0), 300);
     return () => { if (debRef.current) clearTimeout(debRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effQuery, effLargezza, effAltezza, effDiametro, stagioni, marche, indiceVel, categoria, sortBy]);
+  }, [effQuery, effLargezza, effAltezza, effDiametro, stagioni, marche, indiceVel, indiceCarico, categoria, sortBy]);
 
   function handleMisuraRapida(v: string) {
     misuraSourceRef.current = "manual";
@@ -463,7 +456,7 @@ export default function ProdottiPage() {
   function azzera() {
     misuraSourceRef.current = "auto";
     setSearch(""); setMisuraRapida(""); setLargezza(""); setAltezza("");
-    setDiametro(""); setIndiceVel(""); setStagioni([]); setMarche([]); setMarcaSearch(""); setCategoria("");
+    setDiametro(""); setIndiceVel(""); setIndiceCarico(""); setStagioni([]); setMarche([]); setCategoria("");
   }
 
   // Ordinamento per prezzo: fatto lato server (Meili) su TUTTE le pagine, quindi
@@ -507,6 +500,8 @@ export default function ProdottiPage() {
     ...(isPneumatici && altezza   ? [`A:${altezza}`]   : []),
     ...((isPneumatici || isCerchi || isCamere) && diametro ? [`R${diametro}`] : []),
     ...(isPneumatici ? stagioni : []),
+    ...(isPneumatici && indiceVel ? [`Vel:${indiceVel}`] : []),
+    ...(isPneumatici && indiceCarico ? [`Carico:${indiceCarico}`] : []),
     ...marche,
     ...(categoria ? [CATEGORIE.find((c) => c.value === categoria)?.label ?? categoria] : []),
   ];
@@ -516,6 +511,7 @@ export default function ProdottiPage() {
     if (value !== "") {
       // Reset pneumatici-only filters when switching to Cerchi / Camere
       setMisuraRapida(""); setLargezza(""); setAltezza(""); setStagioni([]);
+      setIndiceVel(""); setIndiceCarico("");
     }
     // Diametro is shared between all categories — never reset it on category switch
     setPage(0);
@@ -598,10 +594,59 @@ export default function ProdottiPage() {
           </span>
         </div>
 
+        {/* ── Filtri primari: sempre visibili, non nascosti dentro "Filtri" ── */}
+        <div className="flex items-center gap-2 px-4 pb-3 flex-wrap border-t" style={{ borderColor: "#f3f4f6", paddingTop: 12 }}>
+          {marcheList.length > 0 && (
+            <div style={{ width: 170 }}>
+              <MultiSearchableSelect values={marche} onChange={setMarche} options={marcheList} placeholder="Marca" />
+            </div>
+          )}
+          {isPneumatici && (
+            <>
+              <div style={{ width: 160 }}>
+                <SearchableSelect value={indiceVel} onChange={setIndiceVel} options={INDICI_VELOCITA} placeholder="Indice di Velocità" />
+              </div>
+              <div style={{ width: 160 }}>
+                <SearchableSelect value={indiceCarico} onChange={setIndiceCarico} options={INDICI_CARICO} placeholder="Indice di Carico" />
+              </div>
+              <div className="flex gap-1.5 flex-shrink-0">
+                {(["Estive","Invernali","4 Stagioni"] as Stagione[]).map((s) => {
+                  const active = stagioni.includes(s);
+                  return (
+                    <button key={s} type="button" title={s}
+                      onClick={() => setStagioni((p) => p.includes(s) ? p.filter((x) => x !== s) : [...p, s])}
+                      className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:brightness-95 active:scale-95"
+                      style={{
+                        border: `2px solid ${active ? STAGIONE_COLORS[s].active : "#e5e7eb"}`,
+                        background: active ? "#FFF8DC" : "#fff",
+                        boxShadow: active ? "0 2px 8px rgba(255,200,3,.35)" : "none",
+                      }}>
+                      <StagioneIcon stagione={s} size={18} />
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        {activeFilters.length > 0 && (
+          <div className="px-4 pb-3 flex items-center gap-2 flex-wrap">
+            {activeFilters.map((f) => (
+              <span key={f} className="px-2.5 py-1 rounded-full text-xs font-semibold"
+                style={{ background: "#FFF8DC", color: "#111", border: "1px solid #FFC803", fontFamily: "var(--font-montserrat)" }}>{f}</span>
+            ))}
+            <button onClick={azzera} className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold"
+              style={{ background: "#fee2e2", color: "#ef4444", fontFamily: "var(--font-montserrat)" }}>
+              <X size={11} /> Azzera
+            </button>
+          </div>
+        )}
+
         {showFiltri && (
           <div className="px-4 pb-4 pt-1 border-t" style={{ borderColor: "#f3f4f6" }}>
 
-            {/* ── Pneumatici: layout completo ── */}
+            {/* ── Pneumatici: misura ── */}
             {isPneumatici && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="md:col-span-2">
@@ -631,54 +676,10 @@ export default function ProdottiPage() {
                     {[13,14,15,16,17,18,19,20,21,22].map((d) => <option key={d} value={d}>R{d}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Cod. velocità</label>
-                  <select value={indiceVel} onChange={(e) => setIndiceVel(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-sm outline-none"
-                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }}>
-                    <option value="">Tutti</option>
-                    {["J","K","L","M","N","P","Q","R","S","T","H","V","W","Y"].map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Stagione</label>
-                  <div className="flex flex-col gap-1">
-                    {(["Estive","Invernali","4 Stagioni"] as Stagione[]).map((s) => {
-                      const active = stagioni.includes(s);
-                      return (
-                        <button key={s} onClick={() => setStagioni((p) => p.includes(s) ? p.filter((x) => x !== s) : [...p, s])}
-                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors text-left"
-                          style={{ background: active ? STAGIONE_BTN[s].active : "#f9fafb", color: active ? STAGIONE_BTN[s].text : "#374151", border: `1px solid ${active ? STAGIONE_BTN[s].active : "#e5e7eb"}`, fontFamily: "var(--font-montserrat)" }}>
-                          {s}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                {marcheList.length > 0 && (
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Marca</label>
-                    <input value={marcaSearch} onChange={(e) => setMarcaSearch(e.target.value)}
-                      placeholder="Cerca marca..." className="w-full mb-2 px-3 py-1.5 rounded-xl text-xs outline-none"
-                      style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
-                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-                      {marcheList.filter((m) => m.toLowerCase().includes(marcaSearch.toLowerCase())).map((m) => {
-                        const active = marche.includes(m);
-                        return (
-                          <button key={m} onClick={() => setMarche((p) => p.includes(m) ? p.filter((x) => x !== m) : [...p, m])}
-                            className="px-3 py-1 rounded-full text-xs font-semibold transition-colors"
-                            style={{ background: active ? "#FFC803" : "#f9fafb", color: active ? "#111" : "#374151", border: `1px solid ${active ? "#FFC803" : "#e5e7eb"}`, fontFamily: "var(--font-montserrat)" }}>
-                            {m}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* ── Cerchi / Camere D'Aria: solo Diametro + Marca ── */}
+            {/* ── Cerchi / Camere D'Aria: solo Diametro ── */}
             {(isCerchi || isCamere) && (
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
@@ -690,39 +691,6 @@ export default function ProdottiPage() {
                     {[13,14,15,16,17,18,19,20,21,22].map((d) => <option key={d} value={d}>R{d}</option>)}
                   </select>
                 </div>
-                {marcheList.length > 0 && (
-                  <div className="md:col-span-3">
-                    <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "#9ca3af", fontFamily: "var(--font-montserrat)" }}>Marca</label>
-                    <input value={marcaSearch} onChange={(e) => setMarcaSearch(e.target.value)}
-                      placeholder="Cerca marca..." className="w-full mb-2 px-3 py-1.5 rounded-xl text-xs outline-none"
-                      style={{ background: "#f9fafb", border: "1px solid #e5e7eb", fontFamily: "var(--font-montserrat)", color: "#111" }} />
-                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-                      {marcheList.filter((m) => m.toLowerCase().includes(marcaSearch.toLowerCase())).map((m) => {
-                        const active = marche.includes(m);
-                        return (
-                          <button key={m} onClick={() => setMarche((p) => p.includes(m) ? p.filter((x) => x !== m) : [...p, m])}
-                            className="px-3 py-1 rounded-full text-xs font-semibold transition-colors"
-                            style={{ background: active ? "#FFC803" : "#f9fafb", color: active ? "#111" : "#374151", border: `1px solid ${active ? "#FFC803" : "#e5e7eb"}`, fontFamily: "var(--font-montserrat)" }}>
-                            {m}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeFilters.length > 0 && (
-              <div className="mt-3 flex items-center gap-2 flex-wrap">
-                {activeFilters.map((f) => (
-                  <span key={f} className="px-2.5 py-1 rounded-full text-xs font-semibold"
-                    style={{ background: "#FFF8DC", color: "#111", border: "1px solid #FFC803", fontFamily: "var(--font-montserrat)" }}>{f}</span>
-                ))}
-                <button onClick={azzera} className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold"
-                  style={{ background: "#fee2e2", color: "#ef4444", fontFamily: "var(--font-montserrat)" }}>
-                  <X size={11} /> Azzera
-                </button>
               </div>
             )}
           </div>

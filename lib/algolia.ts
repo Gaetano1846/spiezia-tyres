@@ -215,6 +215,7 @@ export type SearchProdottiParams = {
   stagioni?: string[];
   marche?: string[];
   indiceVelocita?: string;
+  indiceCarico?: string;
   categoria?: string;
   soloDisponibili?: boolean;
   page?: number;

@@ -111,6 +111,7 @@ export async function searchProdottiMeili(
     stagioni = [],
     marche = [],
     indiceVelocita,
+    indiceCarico,
     categoria,
     soloDisponibili = true,
     page = 0,
@@ -163,6 +164,7 @@ export async function searchProdottiMeili(
     filters.push(`(${marche.map((m) => `marca = ${quote(m)}`).join(" OR ")})`);
   }
   if (indiceVelocita) filters.push(`indice_velocita = ${quote(indiceVelocita)}`);
+  if (indiceCarico) filters.push(`indice_carico = ${quote(indiceCarico)}`);
 
   const res = await getMeili().index(INDEX).search(query, {
     filter: filters.join(" AND "),
