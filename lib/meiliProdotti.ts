@@ -98,8 +98,10 @@ function mapHit(d: MeiliDoc): ProdottoHit {
 
 export async function searchProdottiMeili(
   params: SearchProdottiParams = {},
-  sort?: string[]
+  sort?: string[],
+  opts: { bypassDisponibilita?: boolean } = {}
 ): Promise<SearchProdottiResult> {
+  const { bypassDisponibilita = false } = opts;
   const {
     query = "",
     ean,
@@ -130,7 +132,10 @@ export async function searchProdottiMeili(
     return { hits: r.hits.map(mapHit), nbHits: r.hits.length, nbPages: 1, page: 0 };
   }
 
-  if (soloDisponibili) filters.push("has_stock = true");
+  // Magazziniere: deve trovare anche prodotti a stock zero / senza prezzo
+  // per poterli censire (stessa ragione del bypass EAN sopra) — niente
+  // floor di disponibilità/prezzo per questo ruolo.
+  if (soloDisponibili && !bypassDisponibilita) filters.push("has_stock = true");
 
   // Tab Cerchi / Camere d'aria: stessa logica del Flutter B2B, filtro per la
   // categoria Firestore (`Categoria_Prodotti/…` → campo `categoria_ref`).
@@ -143,7 +148,7 @@ export async function searchProdottiMeili(
   } else {
     // Tab Pneumatici: esclude servizi/accessori (olio, trasporto…) come su
     // prezzo-gomme (prezzo >= 20) ed esclude cerchi/camere (hanno categoria_ref).
-    filters.push("prezzo_effettivo >= 20");
+    if (!bypassDisponibilita) filters.push("prezzo_effettivo >= 20");
     filters.push("categoria_ref NOT EXISTS");
     if (categoria) filters.push(`categoria = ${quote(categoria)}`);
   }

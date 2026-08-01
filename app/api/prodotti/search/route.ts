@@ -54,7 +54,11 @@ export async function POST(req: NextRequest) {
       "ord_gommista"; // Gommista + staff/admin + default
     const sort = [`${field}:${dir}`];
 
-    const result = await searchProdottiMeili(params, sort);
+    // Magazziniere: ricerca prodotti per censirli in gabbia, non per venderli
+    // — deve poter trovare anche stock zero / prezzo zero (vedi bypass EAN
+    // già esistente per lo scan barcode in searchProdottiMeili).
+    const bypassDisponibilita = session.Ruolo === "Magazziniere";
+    const result = await searchProdottiMeili(params, sort, { bypassDisponibilita });
     const hits = result.hits.map((h) => stripPrices(h, session.Ruolo, session.CRM));
     return NextResponse.json({ ...result, hits });
   } catch (err) {
