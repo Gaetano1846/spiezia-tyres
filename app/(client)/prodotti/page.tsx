@@ -842,9 +842,10 @@ export default function ProdottiPage() {
                       </p>
                     )}
                     <p className="text-sm font-semibold line-clamp-2 xl:block xl:truncate" style={{ color: "#111", fontFamily: "var(--font-poppins)" }}>
-                      {misura ? `${misura} ` : ""}{hit.Modello}
+                      {misura ? `${misura} ` : ""}
                       {hit.Indice_Carico && hit.Indice_Velocita
-                        ? ` ${hit.Indice_Carico}${hit.Indice_Velocita}` : ""}
+                        ? `${hit.Indice_Carico}${hit.Indice_Velocita} ` : ""}
+                      {hit.Modello}
                     </p>
                     {/* Prezzo netto + PFU visibile solo su mobile (colonne nascoste su xl) */}
                     {senzaPrezzo ? (
