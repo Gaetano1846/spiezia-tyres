@@ -74,6 +74,16 @@ export function stripProductPrices(p: ProdottoFullApi, ruolo: Ruolo | undefined,
   };
 }
 
+// public.prodotti conserva "4-Stagioni" (trattino, stesso formato dell'indice
+// Meili sorgente) mentre tutto il resto dell'app usa "4 Stagioni" (spazio —
+// vedi Stagione in lib/types.ts). Senza questa normalizzazione, l'enrichment
+// da Postgres in /prodotti sovrascrive il valore già corretto letto da Meili
+// con quello grezzo, e StagioneIcon non lo riconosce (fallback a Estive).
+function normalizeStagione(s: string | null | undefined): string | null {
+  if (s == null) return null;
+  return s === "4-Stagioni" ? "4 Stagioni" : s;
+}
+
 function rowToProdotto(r: Record<string, unknown>): ProdottoFullApi {
   return {
     id: r.id as string,
@@ -92,7 +102,7 @@ function rowToProdotto(r: Record<string, unknown>): ProdottoFullApi {
     CAI: (r.cai as string) ?? null,
     EAN: (r.ean as string) ?? null,
     SKU: (r.sku as string) ?? null,
-    Stagione: (r.stagione as string) ?? null,
+    Stagione: normalizeStagione(r.stagione as string | null),
     Categoria: (r.categoria as string) ?? null,
     Immagine: (r.immagine as string) ?? null,
     Foto: (r.foto as string) ?? null,
