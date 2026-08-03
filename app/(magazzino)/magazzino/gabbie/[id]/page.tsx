@@ -68,7 +68,7 @@ export default function GabbiaPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Algolia/Meili search con debounce (catalogo prodotti, già su Postgres — Fase 2)
+  // Ricerca Meili con debounce (catalogo prodotti, già su Postgres — Fase 2)
   useEffect(() => {
     if (!showModal) return;
     if (debRef.current) clearTimeout(debRef.current);

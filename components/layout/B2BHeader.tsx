@@ -76,7 +76,7 @@ export default function B2BHeader({ onMenuClick, onCartClick }: Props) {
   // Modal pneumatici / cerchi / camere
   const [modal, setModal] = useState<ModalState>(MODAL_EMPTY);
 
-  // Marche disponibili (caricate da Algolia, fallback sulla lista statica)
+  // Marche disponibili (caricate da Meili, fallback sulla lista statica)
   const [marcheAll, setMarcheAll] = useState<string[]>(MARCHE);
   useEffect(() => {
     searchProdotti({ withFacets: true, hitsPerPage: 1, soloDisponibili: false })

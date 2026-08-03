@@ -50,7 +50,7 @@ export type Indirizzo = {
   CodiceSDI?: string;
 };
 
-// ─── Prodotto (from Algolia / Firestore Prodotti) ─────────────────────────────
+// ─── Prodotto (from MeiliSearch / public.prodotti) ─────────────────────────────
 
 export type Stagione = "Estive" | "Invernali" | "4 Stagioni";
 export type Categoria = "Auto" | "SUV" | "Moto" | "Furgone";

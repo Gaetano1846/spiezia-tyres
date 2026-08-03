@@ -458,7 +458,7 @@ export default function ScannerPage() {
               </button>
             </div>
 
-            {/* Risultati Algolia */}
+            {/* Risultati ricerca */}
             {prodottiEan.length > 0 && (
               <div className="mt-3 space-y-1.5">
                 <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>

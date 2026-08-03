@@ -310,7 +310,7 @@ export default function ProdottiPage() {
   }, [search]);
 
   useEffect(() => {
-    // Carica lista marche da Algolia facets; se non configurate come facets nel dashboard,
+    // Carica lista marche dai facet Meili; se il facet non è configurato sull'indice,
     // cade silenziosamente e la lista viene popolata dai risultati di ricerca.
     searchProdotti({ withFacets: true, hitsPerPage: 1, soloDisponibili: false })
       .then((r) => {

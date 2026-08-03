@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/layout/AuthProvider";
 import { nextCounter } from "@/lib/counters";
-import { algoliaClient, INDEX_NAME, formatMisura } from "@/lib/algolia";
+import { searchProdotti, formatMisura } from "@/lib/algolia";
 import type { ProdottoHit } from "@/lib/algolia";
 import { isRunFlat, extraOeCodes } from "@/lib/titoloExtra";
 import type { ArticoloPreventivo } from "@/lib/preventiviDb";
@@ -29,10 +29,6 @@ type RigaPneumatico = {
   PrezzoUnitario: string; // string per editing, poi parseFloat al salvataggio
 };
 
-type AlgoliaRaw = {
-  hits: unknown[];
-};
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function euro(n: number): string {
@@ -54,9 +50,9 @@ function rigaVuota(): RigaPneumatico {
   return { id: genId(), Marca: "", Modello: "", Misura: "", Quantita: 1, PrezzoUnitario: "" };
 }
 
-// ─── Algolia Search Modal ──────────────────────────────────────────────────────
+// ─── Prodotto Search Modal ─────────────────────────────────────────────────────
 
-function AlgoliaSearchModal({
+function ProdottoSearchModal({
   onSelect,
   onClose,
 }: {
@@ -80,11 +76,8 @@ function AlgoliaSearchModal({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const raw = (await algoliaClient.searchSingleIndex({
-          indexName: INDEX_NAME,
-          searchParams: { query: q, hitsPerPage: 20 },
-        })) as unknown as AlgoliaRaw;
-        setHits((raw.hits ?? []) as ProdottoHit[]);
+        const r = await searchProdotti({ query: q, hitsPerPage: 20, soloDisponibili: false });
+        setHits(r.hits);
       } catch {
         setHits([]);
       } finally {
@@ -222,7 +215,7 @@ export default function NuovoPreventivoPage() {
   // ── Step 2: Pneumatici ──────────────────────────────────────────────────────
 
   const [righe, setRighe] = useState<RigaPneumatico[]>([rigaVuota()]);
-  const [algoliaModalFor, setAlgoliaModalFor] = useState<string | null>(null);
+  const [prodottoModalFor, setProdottoModalFor] = useState<string | null>(null);
 
   // ── Step 3: Note ────────────────────────────────────────────────────────────
 
@@ -312,11 +305,11 @@ export default function NuovoPreventivoPage() {
     setRighe((prev) => [...prev, rigaVuota()]);
   }
 
-  function handleAlgoliaSelect(hit: ProdottoHit) {
-    if (!algoliaModalFor) return;
+  function handleProdottoSelect(hit: ProdottoHit) {
+    if (!prodottoModalFor) return;
     setRighe((prev) =>
       prev.map((r) =>
-        r.id === algoliaModalFor
+        r.id === prodottoModalFor
           ? {
               ...r,
               Marca: hit.Marca,
@@ -327,7 +320,7 @@ export default function NuovoPreventivoPage() {
           : r
       )
     );
-    setAlgoliaModalFor(null);
+    setProdottoModalFor(null);
   }
 
   // ── Totale ──────────────────────────────────────────────────────────────────
@@ -699,7 +692,7 @@ export default function NuovoPreventivoPage() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setAlgoliaModalFor(riga.id)}
+                    onClick={() => setProdottoModalFor(riga.id)}
                     className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg"
                     style={{
                       border: "1px solid var(--border)",
@@ -929,11 +922,11 @@ export default function NuovoPreventivoPage() {
         </button>
       </div>
 
-      {/* ── Algolia search modal ── */}
-      {algoliaModalFor && (
-        <AlgoliaSearchModal
-          onSelect={handleAlgoliaSelect}
-          onClose={() => setAlgoliaModalFor(null)}
+      {/* ── Modal ricerca prodotto (Meili) ── */}
+      {prodottoModalFor && (
+        <ProdottoSearchModal
+          onSelect={handleProdottoSelect}
+          onClose={() => setProdottoModalFor(null)}
         />
       )}
     </div>
