@@ -34,3 +34,14 @@ export function parenthesizedCodes(titolo: string | null | undefined): string[] 
   if (!titolo) return [];
   return [...titolo.matchAll(PAREN_RE)].map((m) => m[1].trim()).filter(Boolean);
 }
+
+/**
+ * Codici tra parentesi da mostrare accanto al Modello — esclude quelli già
+ * presenti nel Modello stesso (alcuni modelli, es. "P-ZERO (PZ5)", incorporano
+ * già il proprio codice generazione: senza questo filtro comparirebbe due volte).
+ */
+export function extraOeCodes(titolo: string | null | undefined, modello: string | null | undefined): string[] {
+  const codes = parenthesizedCodes(titolo);
+  if (!modello) return codes;
+  return codes.filter((c) => !modello.includes(c));
+}

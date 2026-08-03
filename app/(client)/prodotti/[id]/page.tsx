@@ -9,7 +9,7 @@ import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import { speedConstructionPrefix, isRunFlat, parenthesizedCodes } from "@/lib/titoloExtra";
+import { speedConstructionPrefix, isRunFlat, extraOeCodes } from "@/lib/titoloExtra";
 
 type RawProdotto = {
   Nome?: string;
@@ -208,7 +208,7 @@ export default function ProdottoDetailPage() {
   const totalStock  = STOCK_DEPOSITI.reduce((s, d) => s + ((prodotto as Record<string, unknown>)[d.key] as number ?? 0), 0);
   const imgSrc      = prodotto.Immagine ?? prodotto.Foto ?? "";
   const runFlat     = isRunFlat(prodotto.Nome);
-  const oeCodes     = parenthesizedCodes(prodotto.Nome);
+  const oeCodes     = extraOeCodes(prodotto.Nome, prodotto.Modello);
 
   return (
     <div className="space-y-5 max-w-4xl mx-auto">

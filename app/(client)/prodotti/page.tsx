@@ -20,7 +20,7 @@ import SearchableSelect from "@/components/ui/SearchableSelect";
 import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
 import Badge from "@/components/ui/Badge";
 import { StagioneIcon, STAGIONE_COLORS, type Stagione } from "@/components/ui/StagioneIcon";
-import { isRunFlat, parenthesizedCodes } from "@/lib/titoloExtra";
+import { isRunFlat, extraOeCodes } from "@/lib/titoloExtra";
 import type { Ruolo } from "@/lib/types";
 
 const INDICI_VELOCITA = ["J","K","L","M","N","P","Q","R","S","T","H","V","W","Y"];
@@ -759,7 +759,7 @@ export default function ProdottiPage() {
               const detailsOpen = expandedDetails.has(hit.objectID);
               const misura = formatMisura(hit);
               const runFlat = isRunFlat(hit.Titolo);
-              const oeCodes = parenthesizedCodes(hit.Titolo);
+              const oeCodes = extraOeCodes(hit.Titolo, hit.Modello);
 
               return (
                 <div
