@@ -9,7 +9,7 @@ import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
-import { speedConstructionPrefix, isRunFlat, extraOeCodes } from "@/lib/titoloExtra";
+import { speedConstructionPrefix, isRunFlat, extraOeCodes, extractDot } from "@/lib/titoloExtra";
 
 type RawProdotto = {
   Nome?: string;
@@ -209,6 +209,7 @@ export default function ProdottoDetailPage() {
   const imgSrc      = prodotto.Immagine ?? prodotto.Foto ?? "";
   const runFlat     = isRunFlat(prodotto.Nome);
   const oeCodes     = extraOeCodes(prodotto.Nome, prodotto.Modello);
+  const dot         = extractDot(prodotto.Nome);
 
   return (
     <div className="space-y-5 max-w-4xl mx-auto">
@@ -357,6 +358,7 @@ export default function ProdottoDetailPage() {
             { label: "Categoria",   value: prodotto.Categoria ?? "—" },
             { label: "Ind. carico", value: prodotto.Indice_carico ?? "—" },
             { label: "Ind. velocità", value: prodotto.Codice_velocita ?? "—" },
+            ...(dot ? [{ label: "DOT", value: dot }] : []),
             { label: "EAN",         value: prodotto.EAN ?? "—" },
           ].map(({ label, value }) => (
             <div key={label} className="px-3 py-2.5 rounded-xl" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>

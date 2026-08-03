@@ -45,3 +45,18 @@ export function extraOeCodes(titolo: string | null | undefined, modello: string 
   if (!modello) return codes;
   return codes.filter((c) => !modello.includes(c));
 }
+
+// Codice DOT (data di produzione, formato settimana+anno) scritto a mano nel
+// titolo da alcuni fornitori — nessun separatore standard tra "DOT" e le
+// cifre (spazio, due punti, trattino o niente), maiuscole incoerenti. Niente
+// \b iniziale: copre anche i casi con un carattere incollato davanti
+// ("dDOT2011"). Richiede almeno 2 cifre per non agganciare "DOT 4" del
+// liquido freni (OLIO FRENIDOT 4) o il "dot" dentro "prodotti".
+const DOT_RE = /DOT\s*[:\-]?\s*(\d{2,5})\b/i;
+
+/** "DOT 2019" se il titolo contiene un codice DOT riconoscibile, altrimenti null. */
+export function extractDot(titolo: string | null | undefined): string | null {
+  if (!titolo) return null;
+  const m = titolo.match(DOT_RE);
+  return m ? `DOT ${m[1]}` : null;
+}

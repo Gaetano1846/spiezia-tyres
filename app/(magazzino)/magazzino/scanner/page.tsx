@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { searchProdotti, stockTotale, formatMisura, type ProdottoHit } from "@/lib/algolia";
-import { isRunFlat } from "@/lib/titoloExtra";
+import { isRunFlat, extractDot } from "@/lib/titoloExtra";
 import { QrCode, Camera, Search, Car, Package, Loader2, AlertCircle, CameraOff } from "lucide-react";
 
 // BarcodeDetector is available in Chromium (Chrome 83+, Edge 83+, Android WebView)
@@ -477,6 +477,7 @@ export default function ScannerPage() {
                       </span>
                       <span className="ml-2 text-xs font-mono" style={{ color: "var(--text-muted)" }}>
                         {formatMisura(p)}
+                        {extractDot(p.Titolo) ? ` ${extractDot(p.Titolo)}` : ""}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">

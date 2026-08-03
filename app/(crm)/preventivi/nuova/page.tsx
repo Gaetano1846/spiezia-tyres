@@ -6,7 +6,7 @@ import { useAuth } from "@/components/layout/AuthProvider";
 import { nextCounter } from "@/lib/counters";
 import { searchProdotti, formatMisura } from "@/lib/algolia";
 import type { ProdottoHit } from "@/lib/algolia";
-import { isRunFlat, extraOeCodes } from "@/lib/titoloExtra";
+import { isRunFlat, extraOeCodes, extractDot } from "@/lib/titoloExtra";
 import type { ArticoloPreventivo } from "@/lib/preventiviDb";
 import {
   ArrowLeft, Plus, X, Search, Check, Loader2, Car, User, FileText,
@@ -177,7 +177,8 @@ function ProdottoSearchModal({
                     fontFamily: "var(--font-montserrat)",
                   }}
                 >
-                  {formatMisura(hit)} · {hit.Stagione}
+                  {formatMisura(hit)}
+                  {extractDot(hit.Titolo) && ` ${extractDot(hit.Titolo)}`} · {hit.Stagione}
                   {isRunFlat(hit.Titolo) && " · R/F"}
                 </p>
               </div>

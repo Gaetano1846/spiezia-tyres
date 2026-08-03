@@ -20,7 +20,7 @@ import SearchableSelect from "@/components/ui/SearchableSelect";
 import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
 import Badge from "@/components/ui/Badge";
 import { StagioneIcon, STAGIONE_COLORS, type Stagione } from "@/components/ui/StagioneIcon";
-import { isRunFlat, extraOeCodes } from "@/lib/titoloExtra";
+import { isRunFlat, extraOeCodes, extractDot } from "@/lib/titoloExtra";
 import type { Ruolo } from "@/lib/types";
 
 const INDICI_VELOCITA = ["J","K","L","M","N","P","Q","R","S","T","H","V","W","Y"];
@@ -760,6 +760,7 @@ export default function ProdottiPage() {
               const misura = formatMisura(hit);
               const runFlat = isRunFlat(hit.Titolo);
               const oeCodes = extraOeCodes(hit.Titolo, hit.Modello);
+              const dot = extractDot(hit.Titolo);
 
               return (
                 <div
@@ -813,6 +814,7 @@ export default function ProdottiPage() {
                       {misura ? `${misura} ` : ""}
                       {hit.Indice_Carico && hit.Indice_Velocita
                         ? `${hit.Indice_Carico}${hit.Indice_Velocita} ` : ""}
+                      {dot ? `${dot} ` : ""}
                       {hit.Modello}
                       {oeCodes.length > 0 && (
                         <span className="ml-1 font-normal" style={{ color: "#9ca3af" }}>
