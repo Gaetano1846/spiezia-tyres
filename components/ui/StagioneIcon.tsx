@@ -17,7 +17,16 @@ export const STAGIONE_COLORS: Record<Stagione, { active: string; text: string; i
 export function StagioneIcon({ stagione, size = 16 }: { stagione: string; size?: number }) {
   if (stagione === "Invernali")
     return <Snowflake size={size} style={{ color: STAGIONE_COLORS.Invernali.icon }} />;
-  if (stagione === "4 Stagioni")
-    return <SunSnow size={size} style={{ color: STAGIONE_COLORS["4 Stagioni"].icon }} />;
+  if (stagione === "4 Stagioni") {
+    // I tratti di SunSnow sono già disegnati metà-sole (sinistra) / metà-fiocco
+    // (destra): due copie clippate al 50% colorate diversamente danno il
+    // sole giallo + neve blu richiesto, senza dover ridisegnare l'icona.
+    return (
+      <span style={{ position: "relative", display: "inline-block", width: size, height: size }}>
+        <SunSnow size={size} style={{ position: "absolute", inset: 0, color: STAGIONE_COLORS.Estive.icon, clipPath: "inset(0 50% 0 0)" }} />
+        <SunSnow size={size} style={{ position: "absolute", inset: 0, color: STAGIONE_COLORS.Invernali.icon, clipPath: "inset(0 0 0 50%)" }} />
+      </span>
+    );
+  }
   return <Sun size={size} style={{ color: STAGIONE_COLORS.Estive.icon }} />;
 }
