@@ -1,5 +1,6 @@
 import { algoliasearch } from "algoliasearch";
 import type { Ruolo } from "./types";
+import { speedConstructionPrefix } from "./titoloExtra";
 
 let _algoliaClient: ReturnType<typeof algoliasearch> | null = null;
 
@@ -160,7 +161,9 @@ export function stockTotale(hit: ProdottoHit): number {
 export function formatMisura(hit: ProdottoHit): string {
   // Misure autocarro/agricole senza rapporto d'aspetto (es. "13 R22.5"):
   // Altezza arriva 0 da Meili (stringa vuota → Number("")||0), niente "/0".
-  return hit.Altezza ? `${hit.Larghezza}/${hit.Altezza} R${hit.Diametro}` : `${hit.Larghezza} R${hit.Diametro}`;
+  // Il prefisso R/ZR va letto dal Titolo: nessuna colonna dedicata lo distingue.
+  const r = speedConstructionPrefix(hit.Titolo, hit.Diametro);
+  return hit.Altezza ? `${hit.Larghezza}/${hit.Altezza} ${r}${hit.Diametro}` : `${hit.Larghezza} ${r}${hit.Diametro}`;
 }
 
 // PFU (Pneumatico Fuori Uso) — contributo ambientale obbligatorio per raggio

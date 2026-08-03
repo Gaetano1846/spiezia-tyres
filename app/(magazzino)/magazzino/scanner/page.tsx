@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { searchProdotti, stockTotale, formatMisura, type ProdottoHit } from "@/lib/algolia";
+import { isRunFlat } from "@/lib/titoloExtra";
 import { QrCode, Camera, Search, Car, Package, Loader2, AlertCircle, CameraOff } from "lucide-react";
 
 // BarcodeDetector is available in Chromium (Chrome 83+, Edge 83+, Android WebView)
@@ -479,6 +480,7 @@ export default function ScannerPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      {isRunFlat(p.Titolo) && <Badge variant="error">R/F</Badge>}
                       <Badge variant={stagioneBadge[p.Stagione] ?? "neutral"}>{p.Stagione}</Badge>
                       <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                         {stockTotale(p)} pz

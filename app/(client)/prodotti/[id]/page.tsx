@@ -9,6 +9,7 @@ import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import toast from "react-hot-toast";
+import { speedConstructionPrefix, isRunFlat, parenthesizedCodes } from "@/lib/titoloExtra";
 
 type RawProdotto = {
   Nome?: string;
@@ -151,7 +152,8 @@ export default function ProdottoDetailPage() {
     if (!prodotto) return;
     const prezzo = getPrezzo(prodotto, ruolo);
     const pfu    = prodotto.PFU ?? 0;
-    const misura = [prodotto.Larghezza, prodotto.Altezza, `R${prodotto.Diametro}`].filter(Boolean).join("/");
+    const rPrefix = speedConstructionPrefix(prodotto.Nome, prodotto.Diametro);
+    const misura = [prodotto.Larghezza, prodotto.Altezza, `${rPrefix}${prodotto.Diametro}`].filter(Boolean).join("/");
     const titolo = prodotto.Nome ?? `${prodotto.Marca ?? ""} ${prodotto.Modello ?? ""}`.trim();
     const totalStock = STOCK_DEPOSITI.reduce((s, d) => s + ((prodotto as Record<string, unknown>)[d.key] as number ?? 0), 0);
 
@@ -164,7 +166,7 @@ export default function ProdottoDetailPage() {
       id,
       marca:    prodotto.Marca ?? "",
       modello:  prodotto.Modello ?? prodotto.Nome ?? "",
-      misura:   [prodotto.Larghezza, prodotto.Altezza, `R${prodotto.Diametro}`].filter(Boolean).join("/"),
+      misura:   [prodotto.Larghezza, prodotto.Altezza, `${rPrefix}${prodotto.Diametro}`].filter(Boolean).join("/"),
       stagione: prodotto.Stagione ?? "",
       prezzo,
       pfu,
@@ -200,10 +202,13 @@ export default function ProdottoDetailPage() {
   const prezzo      = getPrezzo(prodotto, ruolo);
   const pfu         = prodotto.PFU ?? 0;
   const prezzoLordo = (prezzo + pfu) * 1.22;
-  const misura      = [prodotto.Larghezza, prodotto.Altezza, `R${prodotto.Diametro}`].filter(Boolean).join("/");
+  const rPrefix     = speedConstructionPrefix(prodotto.Nome, prodotto.Diametro);
+  const misura      = [prodotto.Larghezza, prodotto.Altezza, `${rPrefix}${prodotto.Diametro}`].filter(Boolean).join("/");
   const titolo      = prodotto.Nome ?? `${prodotto.Marca ?? ""} ${prodotto.Modello ?? ""}`.trim();
   const totalStock  = STOCK_DEPOSITI.reduce((s, d) => s + ((prodotto as Record<string, unknown>)[d.key] as number ?? 0), 0);
   const imgSrc      = prodotto.Immagine ?? prodotto.Foto ?? "";
+  const runFlat     = isRunFlat(prodotto.Nome);
+  const oeCodes     = parenthesizedCodes(prodotto.Nome);
 
   return (
     <div className="space-y-5 max-w-4xl mx-auto">
@@ -253,6 +258,12 @@ export default function ProdottoDetailPage() {
                 )}
                 {prodotto.Categoria && (
                   <Badge variant="neutral">{prodotto.Categoria}</Badge>
+                )}
+                {runFlat && <Badge variant="error">Run-Flat</Badge>}
+                {oeCodes.length > 0 && (
+                  <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-montserrat)" }}>
+                    {oeCodes.map((c) => `(${c})`).join(" ")}
+                  </span>
                 )}
               </div>
 
@@ -341,7 +352,7 @@ export default function ProdottoDetailPage() {
           {[
             { label: "Larghezza",   value: prodotto.Larghezza ? `${prodotto.Larghezza} mm` : "—" },
             { label: "Altezza",     value: prodotto.Altezza ? `${prodotto.Altezza}%` : "—" },
-            { label: "Diametro",    value: prodotto.Diametro ? `R${prodotto.Diametro}"` : "—" },
+            { label: "Diametro",    value: prodotto.Diametro ? `${rPrefix}${prodotto.Diametro}"` : "—" },
             { label: "Stagione",    value: prodotto.Stagione ?? "—" },
             { label: "Categoria",   value: prodotto.Categoria ?? "—" },
             { label: "Ind. carico", value: prodotto.Indice_carico ?? "—" },

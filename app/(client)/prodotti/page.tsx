@@ -18,7 +18,9 @@ import { CONTRIBUTO_LOGISTICO_UNIT } from "@/lib/cart";
 import AnchoredPopover from "@/components/ui/AnchoredPopover";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
+import Badge from "@/components/ui/Badge";
 import { StagioneIcon, STAGIONE_COLORS, type Stagione } from "@/components/ui/StagioneIcon";
+import { isRunFlat, parenthesizedCodes } from "@/lib/titoloExtra";
 import type { Ruolo } from "@/lib/types";
 
 const INDICI_VELOCITA = ["J","K","L","M","N","P","Q","R","S","T","H","V","W","Y"];
@@ -756,6 +758,8 @@ export default function ProdottiPage() {
               const senzaPrezzo = prezzo === 0;
               const detailsOpen = expandedDetails.has(hit.objectID);
               const misura = formatMisura(hit);
+              const runFlat = isRunFlat(hit.Titolo);
+              const oeCodes = parenthesizedCodes(hit.Titolo);
 
               return (
                 <div
@@ -810,6 +814,14 @@ export default function ProdottiPage() {
                       {hit.Indice_Carico && hit.Indice_Velocita
                         ? `${hit.Indice_Carico}${hit.Indice_Velocita} ` : ""}
                       {hit.Modello}
+                      {oeCodes.length > 0 && (
+                        <span className="ml-1 font-normal" style={{ color: "#9ca3af" }}>
+                          {oeCodes.map((c) => `(${c})`).join(" ")}
+                        </span>
+                      )}
+                      {runFlat && (
+                        <Badge variant="error" className="ml-1.5 !px-1.5 !py-0 text-[10px] align-middle">R/F</Badge>
+                      )}
                     </p>
                     {/* Prezzo netto + PFU visibile solo su mobile (colonne nascoste su xl) */}
                     {senzaPrezzo ? (

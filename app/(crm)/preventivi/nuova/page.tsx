@@ -6,6 +6,7 @@ import { useAuth } from "@/components/layout/AuthProvider";
 import { nextCounter } from "@/lib/counters";
 import { algoliaClient, INDEX_NAME, formatMisura } from "@/lib/algolia";
 import type { ProdottoHit } from "@/lib/algolia";
+import { isRunFlat, parenthesizedCodes } from "@/lib/titoloExtra";
 import type { ArticoloPreventivo } from "@/lib/preventiviDb";
 import {
   ArrowLeft, Plus, X, Search, Check, Loader2, Car, User, FileText,
@@ -170,6 +171,11 @@ function AlgoliaSearchModal({
                   }}
                 >
                   {hit.Marca} {hit.Modello}
+                  {parenthesizedCodes(hit.Titolo).length > 0 && (
+                    <span className="ml-1 font-normal" style={{ color: "var(--text-muted)" }}>
+                      {parenthesizedCodes(hit.Titolo).map((c) => `(${c})`).join(" ")}
+                    </span>
+                  )}
                 </p>
                 <p
                   className="text-xs mt-0.5"
@@ -179,6 +185,7 @@ function AlgoliaSearchModal({
                   }}
                 >
                   {formatMisura(hit)} · {hit.Stagione}
+                  {isRunFlat(hit.Titolo) && " · R/F"}
                 </p>
               </div>
               <span
