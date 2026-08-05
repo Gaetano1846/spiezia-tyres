@@ -749,9 +749,9 @@ export default function ProdottiPage() {
               const pfu = pfuExempt ? 0 : pfuEffettivo(hit);
               const prezzoFinito = parseFloat(((prezzo + CONTRIBUTO_LOGISTICO_UNIT + pfu) * 1.22).toFixed(2));
               const stockNola   = (hit.Stock_Nola ?? 0) + (hit.Stock_Nola_2 ?? 0);
-              const stockNapoli = (hit.Stock_Volla ?? 0) + (hit.Stock_Portici ?? 0) + (hit.Stock_OCP ?? 0);
+              const stockNapoli = (hit.Stock_Volla ?? 0) + (hit.Stock_Portici ?? 0);
               const stockRoma   = hit.Stock_Roma ?? 0;
-              const stockT24    = hit.Stock_T24 ?? 0;
+              const stockT24    = (hit.Stock_T24 ?? 0) + (hit.Stock_OCP ?? 0);
               const stock = stockTotale(hit);
               const qty = getQty(hit.objectID, stock);
               const esaurito = stock === 0;
@@ -937,7 +937,7 @@ export default function ProdottiPage() {
                     <StockPill value={stockNola} color="rgba(238,139,96,0.85)" />
                   </div>
 
-                  {/* Stock Napoli (Volla + Portici + OCP) */}
+                  {/* Stock Napoli (Volla + Portici) */}
                   <div className="hidden xl:flex justify-center">
                     <StockPill value={stockNapoli} color="rgba(238,139,96,0.85)" />
                   </div>
@@ -947,7 +947,7 @@ export default function ProdottiPage() {
                     <StockPill value={stockRoma} color="rgba(255,200,3,0.75)" />
                   </div>
 
-                  {/* Stock T24 dropship 48/72h */}
+                  {/* Stock T24 dropship 48/72h + OCP (distributori terzi Pirelli/Bridgestone, non magazzino fisico) */}
                   <div className="hidden xl:flex justify-center">
                     <StockPill value={stockT24} color="rgba(99,179,237,0.75)" />
                   </div>
