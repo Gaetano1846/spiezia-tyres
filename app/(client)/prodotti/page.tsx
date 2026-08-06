@@ -372,8 +372,10 @@ export default function ProdottiPage() {
         soloDisponibili: true,
         page: pg,
         hitsPerPage: 50,
-        // ordinamento per prezzo lato server (default crescente su tutte le pagine)
+        // ordinamento lato server (Meili) su TUTTE le pagine — prezzo di default,
+        // misura se selezionata (sortMisura ha precedenza lato route)
         sortPrezzo: sortBy === "prezzo_desc" ? "desc" : "asc",
+        sortMisura: sortBy === "misura_asc",
       });
 
       setNbHits(r.nbHits);
@@ -461,16 +463,11 @@ export default function ProdottiPage() {
     setDiametro(""); setIndiceVel(""); setIndiceCarico(""); setStagioni([]); setMarche([]); setCategoria("");
   }
 
-  // Ordinamento per prezzo: fatto lato server (Meili) su TUTTE le pagine, quindi
-  // i hits arrivano già ordinati. Solo "misura_asc" resta client-side.
-  const sortedHits = useMemo(() => {
-    if (sortBy !== "misura_asc") return hits;
-    return [...hits].sort((a, b) => {
-      const ma = `${a.Larghezza}/${a.Altezza}R${a.Diametro}`;
-      const mb = `${b.Larghezza}/${b.Altezza}R${b.Diametro}`;
-      return ma.localeCompare(mb);
-    });
-  }, [hits, sortBy]);
+  // Ordinamento (prezzo o misura): fatto lato server (Meili) su TUTTE le
+  // pagine — i hits arrivano già ordinati, nessun sort client-side residuo
+  // (prima "misura_asc" riordinava solo la pagina caricata, bug segnalato
+  // dall'utente 2026-08-06).
+  const sortedHits = hits;
 
   const prezzoPopupHit = prezzoPopupId ? sortedHits.find((h) => h.objectID === prezzoPopupId) ?? null : null;
 

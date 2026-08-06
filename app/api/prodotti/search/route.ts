@@ -43,16 +43,22 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Default: ordina per prezzo crescente lato server (su tutte le pagine).
-    // ord_<ruolo> = prezzo effettivo per ruolo (replica il fallback di
-    // prezzoPerRuolo) con i prodotti senza prezzo spinti in fondo.
-    const dir = params.sortPrezzo ?? "asc";
-    const field =
-      session.Ruolo === "Grossista" ? "ord_grossista" :
-      session.Ruolo === "Privato"   ? "ord_privato" :
-      session.Ruolo === "T24"       ? "ord_t24" :
-      "ord_gommista"; // Gommista + staff/admin + default
-    const sort = [`${field}:${dir}`];
+    // Ordinamento lato server, su TUTTE le pagine (mai solo quella corrente).
+    // "Misura A-Z" ha precedenza se richiesto, altrimenti prezzo crescente/
+    // decrescente. ord_<ruolo> = prezzo effettivo per ruolo (replica il
+    // fallback di prezzoPerRuolo) con i prodotti senza prezzo spinti in fondo.
+    let sort: string[];
+    if (params.sortMisura) {
+      sort = ["larghezza:asc", "altezza:asc", "diametro:asc"];
+    } else {
+      const dir = params.sortPrezzo ?? "asc";
+      const field =
+        session.Ruolo === "Grossista" ? "ord_grossista" :
+        session.Ruolo === "Privato"   ? "ord_privato" :
+        session.Ruolo === "T24"       ? "ord_t24" :
+        "ord_gommista"; // Gommista + staff/admin + default
+      sort = [`${field}:${dir}`];
+    }
 
     // Magazziniere: ricerca prodotti per censirli in gabbia, non per venderli
     // — deve poter trovare anche stock zero / prezzo zero (vedi bypass EAN

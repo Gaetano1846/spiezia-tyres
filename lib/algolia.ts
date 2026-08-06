@@ -140,6 +140,11 @@ export type SearchProdottiParams = {
   // Ordinamento per prezzo lato server (solo backend Meili). Default = "asc":
   // i prodotti sono ordinati per prezzo crescente su TUTTE le pagine.
   sortPrezzo?: "asc" | "desc";
+  // Ordinamento per misura (larghezza/altezza/diametro) lato server — quando
+  // true ha precedenza su sortPrezzo. Anche questo su TUTTE le pagine, non
+  // solo quella corrente (prima era un sort client-side sulla sola pagina
+  // caricata — bug segnalato dall'utente, 2026-08-06).
+  sortMisura?: boolean;
 };
 
 export type SearchProdottiResult = {
