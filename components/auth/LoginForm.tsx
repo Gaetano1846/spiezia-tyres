@@ -1,12 +1,11 @@
 "use client";
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 
 export default function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -43,7 +42,16 @@ export default function LoginForm() {
         Ruolo === "Admin" ? "/admin/ordini" :
         Ruolo === "Magazziniere" ? "/magazzino" :
         CRM ? "/dashboard" : "/";
-      router.replace(safeRedirect ?? rolePath);
+      // Hard reload (non router.replace): AuthProvider rilegge /api/auth/profile
+      // solo al mount (useEffect deps: []), mai su navigazione client-side. Senza
+      // reload pieno, `user` resta bloccato a null per tutta la sessione SPA dopo
+      // un login fresco — bug reale: handleConfirm() in checkout/page.tsx fa
+      // `if (!user?.uid) return`, quindi "Conferma ordine" non faceva letteralmente
+      // nulla per chi effettuava il checkout subito dopo il login senza refresh
+      // (riprodotto 2026-08-07 dai log nginx: zero richieste a /api/auth/profile
+      // e zero POST /api/checkout/ordine per quella sessione). Stesso vincolo già
+      // documentato nel piano di impersonazione ("Accedi come").
+      window.location.href = safeRedirect ?? rolePath;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Email o password errati";
       toast.error(msg);
