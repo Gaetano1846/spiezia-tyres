@@ -16,10 +16,10 @@ import MultiSearchableSelect from "@/components/ui/MultiSearchableSelect";
 
 // Stessi valori/colori di admin/ordini/page.tsx — un ordine ha SEMPRE una di
 // queste fonti sul campo Source (Tyre24, non T24 — vedi commento lì).
-const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "Tyre24", "Prezzo-Gomme", "AdTyres", "Anonimo", "Vetrina", "API"];
+const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "Tyre24", "Prezzo-Gomme", "AdTyres", "07ZR", "Anonimo", "Vetrina", "API"];
 const FONTE_COLORS: Record<string, string> = {
   B2B: "#FFC803", eBay: "#92C821", Amazon: "#2196F3", WooCommerce: "#7F54B3",
-  Tyre24: "#EC7522", "Prezzo-Gomme": "#1565C0", AdTyres: "#94A3B8", Anonimo: "#94A3B8",
+  Tyre24: "#EC7522", "Prezzo-Gomme": "#1565C0", AdTyres: "#94A3B8", "07ZR": "#4F46E5", Anonimo: "#94A3B8",
   Vetrina: "#0F766E", API: "#475569", Altro: "#9CA3AF",
 };
 

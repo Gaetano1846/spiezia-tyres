@@ -36,7 +36,7 @@ const STATI_FILTRO = [...STATI, ...STATI_EXTRA_FILTRO];
 
 // Valori reali del campo Ordini.Source su Firestore. NB: il canale Tyre24 è
 // salvato come "Tyre24" (NON "T24") — allineato alla pagina Spedizioni.
-const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "Tyre24", "Prezzo-Gomme", "AdTyres", "Anonimo", "Vetrina", "API"];
+const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "Tyre24", "Prezzo-Gomme", "AdTyres", "07ZR", "Anonimo", "Vetrina", "API"];
 
 const FONTE_COLORS: Record<string, { bg: string; text: string }> = {
   B2B:            { bg: "#FFC803", text: "#111" },
@@ -46,6 +46,7 @@ const FONTE_COLORS: Record<string, { bg: string; text: string }> = {
   Tyre24:         { bg: "#EC7522", text: "#fff" },
   "Prezzo-Gomme": { bg: "#1565C0", text: "#fff" },
   AdTyres:        { bg: "#E8E8E8", text: "#374151" },
+  "07ZR":         { bg: "#4F46E5", text: "#fff" },
   Anonimo:        { bg: "#E8E8E8", text: "#374151" },
   Vetrina:        { bg: "#0F766E", text: "#fff" },
   API:            { bg: "#475569", text: "#fff" },

@@ -24,6 +24,7 @@ const SOURCE_COLORS: Record<string, { bg: string; color: string }> = {
   T24:            { bg: "#EC7522", color: "#fff" },
   "Prezzo-Gomme": { bg: "#1565C0", color: "#fff" },
   AdTyres:        { bg: "#E8E8E8", color: "#374151" },
+  "07ZR":         { bg: "#4F46E5", color: "#fff" },
   Anonimo:        { bg: "#E8E8E8", color: "#374151" },
 };
 
