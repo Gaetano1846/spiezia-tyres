@@ -316,7 +316,7 @@ export default function Tyre24PrezziPage() {
                 <label className="text-[11px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Soglia livello 2 (%)</label>
                 <input type="number" step="0.5" value={sogliaDeltaPct} onChange={(e) => setSogliaDeltaPct(Number(e.target.value))}
                   className="w-full mt-1 px-3 py-2 rounded-xl text-sm outline-none" style={fieldStyle()} />
-                <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>Sopra questa soglia si chiama /distributorList (a pagamento)</p>
+                <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>Se siamo già i più economici e lo scarto con la stima gratuita è entro questa soglia, si chiama /distributorList (a pagamento) per vedere il 2° classificato</p>
               </div>
               <div>
                 <label className="text-[11px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Margine fisso (€)</label>

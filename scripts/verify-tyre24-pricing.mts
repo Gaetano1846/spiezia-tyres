@@ -30,19 +30,27 @@ assert(
   false
 );
 assert(
-  "già i più economici, scarto piccolo (<5%) -> niente livello2",
-  needsLevel2({ prezzoAttuale: 70, ekStimato: 73.16, sogliaPct: 0.05 }), // delta ~4.5%
-  false
+  // Bug segnalato in produzione il 2026-08-14: quando siamo già primi, /search
+  // trova NOI STESSI come "offerta più economica" -> ekStimato ~= prezzoAttuale
+  // -> delta ~0. Questo DEVE far scattare il livello 2 (altrimenti non si
+  // scopre mai il 2° classificato e non si sa se conviene alzare il prezzo).
+  "pareggio esatto (ek === prezzo, delta 0) -> livello2 (siamo noi stessi trovati da /search)",
+  needsLevel2({ prezzoAttuale: 75, ekStimato: 75, sogliaPct: 0.05 }),
+  true
 );
 assert(
-  "già i più economici, scarto grande (>5%) -> livello2",
-  needsLevel2({ prezzoAttuale: 70, ekStimato: 73.16, sogliaPct: 0.03 }), // delta ~4.5% > 3%
+  "già i più economici, scarto piccolo entro soglia (<=5%) -> livello2 (probabile pareggio con noi stessi)",
+  needsLevel2({ prezzoAttuale: 70, ekStimato: 73.16, sogliaPct: 0.05 }), // delta ~4.5% <= 5%
   true
+);
+assert(
+  "già i più economici, scarto grande oltre soglia (>3%) -> niente livello2 (scarto troppo anomalo per fidarsi, si resta prudenti)",
+  needsLevel2({ prezzoAttuale: 70, ekStimato: 73.16, sogliaPct: 0.03 }), // delta ~4.5% > 3%
+  false
 );
 assert("nessuna stima (ekStimato null) -> niente livello2", needsLevel2({ prezzoAttuale: 75, ekStimato: null, sogliaPct: 0.05 }), false);
 assert("nessun prezzo di riferimento (null) -> livello2 sempre", needsLevel2({ prezzoAttuale: null, ekStimato: 75, sogliaPct: 0.05 }), true);
 assert("prezzo di riferimento 0 -> livello2 sempre", needsLevel2({ prezzoAttuale: 0, ekStimato: 75, sogliaPct: 0.05 }), true);
-assert("pareggio (ek === prezzo) -> niente livello2 (delta 0 sotto soglia)", needsLevel2({ prezzoAttuale: 75, ekStimato: 75, sogliaPct: 0.05 }), false);
 
 // ─── buildRanking ───────────────────────────────────────────────────────────
 

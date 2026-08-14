@@ -50,18 +50,27 @@ export interface NeedsLevel2Input {
  *  della logica Python: se il competitor stimato costa MENO di noi, la
  *  stima gratuita di /search basta già per calcolare differenza e nuovo
  *  prezzo suggerito — non serve pagare (si perderebbe solo il nome del
- *  competitor e la posizione esatta, non necessari per il prezzo). La
- *  chiamata a pagamento si usa SOLO quando siamo già noi i più economici,
- *  per capire se possiamo alzare il prezzo restando sotto il 2° classificato
- *  (serve la lista completa perché /search non restituisce il 2° prezzo) —
- *  e solo se lo scarto è abbastanza grande da valerne la pena. Nessun
- *  prezzo di riferimento (null/0) o nessuna stima trovata: idem al Python. */
+ *  competitor e la posizione esatta, non necessari per il prezzo). Nessun
+ *  prezzo di riferimento (null/0) o nessuna stima trovata: idem al Python.
+ *
+ *  Quando NON siamo battuti, /search (livello 1, gratis) ha trovato come
+ *  "offerta più economica" quasi certamente NOI STESSI — quindi ekStimato
+ *  finisce vicino/uguale al nostro prezzoAttuale (delta piccolo). Questo
+ *  è esattamente il caso "siamo già i più economici" segnalato in
+ *  produzione il 2026-08-14: se lo scarto è piccolo (entro sogliaPct) NON
+ *  significa "va bene così", significa che /search non ci dice nulla sul
+ *  2° classificato — dobbiamo pagare /distributorList per scoprire se c'è
+ *  margine per alzare il prezzo. Se invece lo scarto è grande (ekStimato
+ *  notevolmente sopra il nostro prezzo — tipicamente segno che la nostra
+ *  offerta non è visibile su Tyre24, es. stock/minStock), non è un segnale
+ *  affidabile di "siamo primi": si resta prudenti e si evita la spesa,
+ *  usando la stima com'è (vedi suggestPriceFromEk). */
 export function needsLevel2({ prezzoAttuale, ekStimato, sogliaPct }: NeedsLevel2Input): boolean {
   if (ekStimato == null) return false;
   if (prezzoAttuale == null || prezzoAttuale === 0) return true;
   if (ekStimato < prezzoAttuale) return false;
   const delta = Math.abs(ekStimato - prezzoAttuale) / prezzoAttuale;
-  return delta > sogliaPct;
+  return delta <= sogliaPct;
 }
 
 export interface Tyre24Distributor {
