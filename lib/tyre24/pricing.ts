@@ -43,34 +43,39 @@ export interface NeedsLevel2Input {
    *  costo di acquisto — quello serve solo al PAV, vedi computePav). */
   prezzoAttuale: number | null;
   ekStimato: number | null;
-  sogliaPct: number; // es. 0.05 = 5%
+  /** Soglia in EURO assoluti (non percentuale), es. 0.50 = 50 centesimi. */
+  sogliaEur: number;
 }
 
 /** Decide se serve la chiamata costosa /distributorList. Porting esatto
- *  della logica Python: se il competitor stimato costa MENO di noi, la
- *  stima gratuita di /search basta già per calcolare differenza e nuovo
- *  prezzo suggerito — non serve pagare (si perderebbe solo il nome del
- *  competitor e la posizione esatta, non necessari per il prezzo). Nessun
- *  prezzo di riferimento (null/0) o nessuna stima trovata: idem al Python.
+ *  della logica Python (soglia in euro assoluti, non percentuale — corretto
+ *  in produzione il 2026-08-14): nessun prezzo di riferimento (null/0) o
+ *  nessuna stima trovata → idem al Python. Altrimenti lo scarto assoluto
+ *  fra ekStimato e prezzoAttuale viene valutato in modo SIMMETRICO, sia
+ *  quando siamo battuti che quando siamo (apparentemente) avanti:
  *
- *  Quando NON siamo battuti, /search (livello 1, gratis) ha trovato come
- *  "offerta più economica" quasi certamente NOI STESSI — quindi ekStimato
- *  finisce vicino/uguale al nostro prezzoAttuale (delta piccolo). Questo
- *  è esattamente il caso "siamo già i più economici" segnalato in
- *  produzione il 2026-08-14: se lo scarto è piccolo (entro sogliaPct) NON
- *  significa "va bene così", significa che /search non ci dice nulla sul
- *  2° classificato — dobbiamo pagare /distributorList per scoprire se c'è
- *  margine per alzare il prezzo. Se invece lo scarto è grande (ekStimato
- *  notevolmente sopra il nostro prezzo — tipicamente segno che la nostra
- *  offerta non è visibile su Tyre24, es. stock/minStock), non è un segnale
- *  affidabile di "siamo primi": si resta prudenti e si evita la spesa,
- *  usando la stima com'è (vedi suggestPriceFromEk). */
-export function needsLevel2({ prezzoAttuale, ekStimato, sogliaPct }: NeedsLevel2Input): boolean {
+ *  - scarto assoluto < sogliaEur → troppo vicino per fidarsi della sola
+ *    stima gratuita: probabile pareggio con NOI STESSI (/search ha quasi
+ *    certamente trovato la nostra stessa offerta, con un lieve
+ *    disallineamento fra il prezzo salvato e quello live su Tyre24) oppure
+ *    un competitor così vicino da valere comunque la pena di sapere chi è
+ *    davvero il 2° classificato — verifichiamo sempre con la distributor
+ *    list a pagamento.
+ *  - scarto assoluto >= sogliaEur ED ekStimato < prezzoAttuale →
+ *    chiaramente battuti da un vero competitor: la stima gratuita di
+ *    /search basta già per calcolare differenza e nuovo prezzo suggerito,
+ *    non serve pagare (si perderebbe solo nome/posizione esatta del
+ *    competitor, non necessari per il prezzo).
+ *  - scarto assoluto >= sogliaEur ED ekStimato > prezzoAttuale → segno che
+ *    la nostra offerta non è visibile su Tyre24 (es. stock/minStock,
+ *    anomalia dati): non è un segnale affidabile di "siamo primi", si
+ *    resta prudenti e si evita la spesa, usando la stima com'è (vedi
+ *    suggestPriceFromEk). */
+export function needsLevel2({ prezzoAttuale, ekStimato, sogliaEur }: NeedsLevel2Input): boolean {
   if (ekStimato == null) return false;
   if (prezzoAttuale == null || prezzoAttuale === 0) return true;
-  if (ekStimato < prezzoAttuale) return false;
-  const delta = Math.abs(ekStimato - prezzoAttuale) / prezzoAttuale;
-  return delta <= sogliaPct;
+  const deltaEur = Math.abs(ekStimato - prezzoAttuale);
+  return deltaEur < sogliaEur;
 }
 
 export interface Tyre24Distributor {

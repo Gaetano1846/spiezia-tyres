@@ -22,11 +22,17 @@ function assert(desc: string, actual: unknown, expected: unknown): void {
 // ─── needsLevel2 ────────────────────────────────────────────────────────────
 // Numeri reali di questa sessione: CAI 313048000, ek=75 a minStock=1 (in
 // realtà il NOSTRO prezzo), ek=73.16 a minStock=4 (il vero prezzo più basso,
-// confermato sul sito Tyre24: E-Tyre a 73,16€).
+// confermato sul sito Tyre24: E-Tyre a 73,16€) — scarto 1,84€, chiaramente
+// oltre soglia, un vero competitor. Soglia ora in EURO ASSOLUTI (non più
+// percentuale — corretto in produzione il 2026-08-14 dopo che scarti reali
+// sub-1% come 53,48 vs 53,45 restavano sempre "1 (stimato)" senza mai
+// verificare il 2° classificato, perché troppo piccoli per superare la
+// vecchia soglia percentuale ma trattati come "battuti" e quindi mai
+// verificati comunque).
 
 assert(
-  "battuti (ek < prezzo attuale) -> niente livello2, a prescindere dalla soglia",
-  needsLevel2({ prezzoAttuale: 75, ekStimato: 73.16, sogliaPct: 0.05 }),
+  "chiaramente battuti (scarto 1,84€ oltre soglia 0,50€) -> niente livello2",
+  needsLevel2({ prezzoAttuale: 75, ekStimato: 73.16, sogliaEur: 0.5 }),
   false
 );
 assert(
@@ -35,22 +41,37 @@ assert(
   // -> delta ~0. Questo DEVE far scattare il livello 2 (altrimenti non si
   // scopre mai il 2° classificato e non si sa se conviene alzare il prezzo).
   "pareggio esatto (ek === prezzo, delta 0) -> livello2 (siamo noi stessi trovati da /search)",
-  needsLevel2({ prezzoAttuale: 75, ekStimato: 75, sogliaPct: 0.05 }),
+  needsLevel2({ prezzoAttuale: 75, ekStimato: 75, sogliaEur: 0.5 }),
   true
 );
 assert(
-  "già i più economici, scarto piccolo entro soglia (<=5%) -> livello2 (probabile pareggio con noi stessi)",
-  needsLevel2({ prezzoAttuale: 70, ekStimato: 73.16, sogliaPct: 0.05 }), // delta ~4.5% <= 5%
+  // Bug segnalato in produzione il 2026-08-14 (seconda segnalazione): scarti
+  // minuscoli in valore assoluto (pochi centesimi) quando "battuti" sono
+  // quasi sempre NOI STESSI con un lieve disallineamento fra il listino e
+  // il prezzo live su Tyre24, non un vero competitor — vanno verificati
+  // anche se ekStimato è leggermente SOTTO il nostro prezzo.
+  "battuti di pochi centesimi (53,48 vs 53,45, scarto 0,03€ sotto soglia) -> livello2 (probabile noi stessi)",
+  needsLevel2({ prezzoAttuale: 53.48, ekStimato: 53.45, sogliaEur: 0.5 }),
   true
 );
 assert(
-  "già i più economici, scarto grande oltre soglia (>3%) -> niente livello2 (scarto troppo anomalo per fidarsi, si resta prudenti)",
-  needsLevel2({ prezzoAttuale: 70, ekStimato: 73.16, sogliaPct: 0.03 }), // delta ~4.5% > 3%
+  "già i più economici, scarto piccolo sotto soglia (0,20€) -> livello2 (probabile pareggio con noi stessi)",
+  needsLevel2({ prezzoAttuale: 75, ekStimato: 75.2, sogliaEur: 0.5 }),
+  true
+);
+assert(
+  "scarto esattamente alla soglia (0,50€, non < quindi niente livello2)",
+  needsLevel2({ prezzoAttuale: 75, ekStimato: 74.5, sogliaEur: 0.5 }),
   false
 );
-assert("nessuna stima (ekStimato null) -> niente livello2", needsLevel2({ prezzoAttuale: 75, ekStimato: null, sogliaPct: 0.05 }), false);
-assert("nessun prezzo di riferimento (null) -> livello2 sempre", needsLevel2({ prezzoAttuale: null, ekStimato: 75, sogliaPct: 0.05 }), true);
-assert("prezzo di riferimento 0 -> livello2 sempre", needsLevel2({ prezzoAttuale: 0, ekStimato: 75, sogliaPct: 0.05 }), true);
+assert(
+  "già i più economici, scarto grande oltre soglia (75 vs 90, anomalia dati) -> niente livello2 (si resta prudenti)",
+  needsLevel2({ prezzoAttuale: 75, ekStimato: 90, sogliaEur: 0.5 }),
+  false
+);
+assert("nessuna stima (ekStimato null) -> niente livello2", needsLevel2({ prezzoAttuale: 75, ekStimato: null, sogliaEur: 0.5 }), false);
+assert("nessun prezzo di riferimento (null) -> livello2 sempre", needsLevel2({ prezzoAttuale: null, ekStimato: 75, sogliaEur: 0.5 }), true);
+assert("prezzo di riferimento 0 -> livello2 sempre", needsLevel2({ prezzoAttuale: 0, ekStimato: 75, sogliaEur: 0.5 }), true);
 
 // ─── buildRanking ───────────────────────────────────────────────────────────
 

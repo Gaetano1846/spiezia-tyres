@@ -38,7 +38,7 @@ export async function POST(req: Request) {
     lingua: typeof body.lingua === "string" ? body.lingua : "it",
     marca,
     minStock: Number(body.minStock ?? 4),
-    sogliaDeltaPct: Number(body.sogliaDeltaPct ?? 0.05),
+    sogliaDeltaPct: Number(body.sogliaDeltaPct ?? 0.5),
     margineFisso: Number(body.margineFisso ?? 6),
     spedizione: Number(body.spedizione ?? 4),
     commissionePct: Number(body.commissionePct ?? 0.015),

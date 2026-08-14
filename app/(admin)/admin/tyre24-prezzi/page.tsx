@@ -59,7 +59,7 @@ export default function Tyre24PrezziPage() {
   const [marca, setMarca] = useState(""); // "" = tutte le marche
   const [marche, setMarche] = useState<string[]>([]);
   const [minStock, setMinStock] = useState(4);
-  const [sogliaDeltaPct, setSogliaDeltaPct] = useState(5); // %, convertito in frazione all'invio
+  const [sogliaDeltaPct, setSogliaDeltaPct] = useState(0.5); // € assoluti, inviato cosi' com'e'
   const [margineFisso, setMargineFisso] = useState(6);
   const [spedizione, setSpedizione] = useState(4);
   const [commissionePct, setCommissionePct] = useState(1.5); // %
@@ -138,7 +138,7 @@ export default function Tyre24PrezziPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           paese: m.paese, lingua: m.lingua, marca, minStock,
-          sogliaDeltaPct: sogliaDeltaPct / 100, margineFisso, spedizione,
+          sogliaDeltaPct, margineFisso, spedizione,
           commissionePct: commissionePct / 100, pricingAdvantage,
           limit: limitTest ? Number(limitTest) : undefined,
         }),
@@ -313,10 +313,10 @@ export default function Tyre24PrezziPage() {
                   className="w-full mt-1 px-3 py-2 rounded-xl text-sm outline-none" style={fieldStyle()} />
               </div>
               <div>
-                <label className="text-[11px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Soglia livello 2 (%)</label>
-                <input type="number" step="0.5" value={sogliaDeltaPct} onChange={(e) => setSogliaDeltaPct(Number(e.target.value))}
+                <label className="text-[11px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Soglia livello 2 (€)</label>
+                <input type="number" step="0.1" value={sogliaDeltaPct} onChange={(e) => setSogliaDeltaPct(Number(e.target.value))}
                   className="w-full mt-1 px-3 py-2 rounded-xl text-sm outline-none" style={fieldStyle()} />
-                <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>Se siamo già i più economici e lo scarto con la stima gratuita è entro questa soglia, si chiama /distributorList (a pagamento) per vedere il 2° classificato</p>
+                <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>Se lo scarto assoluto con la stima gratuita è sotto questa soglia (in entrambe le direzioni — probabile pareggio con noi stessi), si chiama /distributorList (a pagamento) per vedere il 2° classificato</p>
               </div>
               <div>
                 <label className="text-[11px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Margine fisso (€)</label>

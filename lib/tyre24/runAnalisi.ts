@@ -96,7 +96,7 @@ async function analizzaProdotto(p: ProdottoT24, jobId: string, params: RunParams
   }
 
   const deltaPct = p.prezzoAttualeMercato ? Math.abs(ekStimato - p.prezzoAttualeMercato) / p.prezzoAttualeMercato : null;
-  const livello2 = needsLevel2({ prezzoAttuale: p.prezzoAttualeMercato, ekStimato, sogliaPct: params.sogliaDeltaPct });
+  const livello2 = needsLevel2({ prezzoAttuale: p.prezzoAttualeMercato, ekStimato, sogliaEur: params.sogliaDeltaPct });
 
   let ekVerificato: number | null = null;
   let distributorNome: string | null = null;
