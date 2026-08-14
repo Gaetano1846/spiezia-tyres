@@ -121,6 +121,7 @@ const fonteColors: Record<string, { bg: string; text: string }> = {
   "Prezzo-Gomme": { bg: "#1565C0", text: "#fff" },
   AdTyres:        { bg: "#E8E8E8", text: "#374151" },
   "07ZR":         { bg: "#4F46E5", text: "#fff" },
+  TyreWorld:      { bg: "#BE185D", text: "#fff" },
   Anonimo:        { bg: "#E8E8E8", text: "#374151" },
 };
 

@@ -36,7 +36,7 @@ const STATI_FILTRO = [...STATI, ...STATI_EXTRA_FILTRO];
 
 // Valori reali del campo Ordini.Source su Firestore. NB: il canale Tyre24 è
 // salvato come "Tyre24" (NON "T24") — allineato alla pagina Spedizioni.
-const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "Tyre24", "Prezzo-Gomme", "AdTyres", "07ZR", "Anonimo", "Vetrina", "API"];
+const FONTI = ["B2B", "eBay", "Amazon", "WooCommerce", "Tyre24", "Prezzo-Gomme", "AdTyres", "07ZR", "TyreWorld", "Anonimo", "Vetrina", "API"];
 
 const FONTE_COLORS: Record<string, { bg: string; text: string }> = {
   B2B:            { bg: "#FFC803", text: "#111" },
@@ -47,6 +47,7 @@ const FONTE_COLORS: Record<string, { bg: string; text: string }> = {
   "Prezzo-Gomme": { bg: "#1565C0", text: "#fff" },
   AdTyres:        { bg: "#E8E8E8", text: "#374151" },
   "07ZR":         { bg: "#4F46E5", text: "#fff" },
+  TyreWorld:      { bg: "#BE185D", text: "#fff" },
   Anonimo:        { bg: "#E8E8E8", text: "#374151" },
   Vetrina:        { bg: "#0F766E", text: "#fff" },
   API:            { bg: "#475569", text: "#fff" },
@@ -81,10 +82,10 @@ function getTodayISO() {
 // core.ordini restituisce già ClienteNome/UtenteNome pre-risolti via JOIN
 // (lib/ordiniDb.ts) — niente più batchGetDocs/nomeDaOrdine lato client.
 //
-// AdTyres/Prezzo-Gomme: il ClienteId risolto è il rivenditore/reseller (dati
-// di fatturazione dell'importer), non il cliente finale — per queste fonti
+// AdTyres/Prezzo-Gomme/TyreWorld: il ClienteId risolto è il rivenditore/reseller
+// (dati di fatturazione dell'importer), non il cliente finale — per queste fonti
 // mostriamo il Destinatario dell'indirizzo di spedizione al suo posto.
-const FONTI_NOME_DA_SPEDIZIONE = new Set(["AdTyres", "Prezzo-Gomme"]);
+const FONTI_NOME_DA_SPEDIZIONE = new Set(["AdTyres", "Prezzo-Gomme", "TyreWorld"]);
 
 function entriesFromApi(rows: OrdineListItemApi[]): OrdineEntry[] {
   return rows.map((ordine) => {
