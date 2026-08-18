@@ -436,7 +436,7 @@ export default function OrdineAdminDetailPage() {
       // ── Side-effect marketplace automatico (mirror FF stato_ordine) ──
       const src = ordine.Source as string;
       const isT24like    = src === "Tyre24" || src === "Anonimo";
-      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres", "TyreWorld"].includes(src);
+      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres", "TyreWorld", "07ZR"].includes(src);
       if (nuovoStato === "In Preparazione" && isT24like) {
         notifyMarketplace(
           { action: "updateStatus", ordineId: id, statusIndex: 2, comment: "We’ve received your order and are now processing it." },
@@ -461,6 +461,25 @@ export default function OrdineAdminDetailPage() {
         );
       } else if (nuovoStato === "Spedito" && isMarketplace) {
         notifyMarketplace({ action: "pushTracking", ordineId: id, corriere: ordine.Corriere }, src);
+      }
+
+      // ── 07ZR (Distri2B): sync separato dello stato, indipendente dal
+      // push tracking sopra — tracking quando c'è un tracking (pushTracking,
+      // dispatcher già gestisce 07ZR via isMarketplace), stato quando cambia
+      // lo Stato, senza bundlarli (a differenza di Tyre24).
+      if (src === "07ZR") {
+        // "Annullato" non compare qui: passa sempre dal modale dedicato
+        // (return anticipato sopra), gestito in handleConfermaAnnulla.
+        const distri2bStatusByStato: Record<string, string> = {
+          "In Preparazione": "ORDER_VALIDATED",
+          "Spedito": "SENT",
+          "Out of Stock": "ORDER_CANCELALL",
+          "Cancellato Cliente": "ORDER_CANCELALL",
+        };
+        const mapped = distri2bStatusByStato[nuovoStato];
+        if (mapped) {
+          notifyMarketplace({ action: "distri2bStatus", ordineId: id, status: mapped }, src);
+        }
       }
     } catch {
       toast.error("Errore aggiornamento stato");
@@ -700,6 +719,11 @@ export default function OrdineAdminDetailPage() {
       if ((ordine.Source as string) === "TyreWorld") {
         notifyMarketplace(
           { action: "tyreworldStatus", ordineId: id, status: "storniert", grund: motivo },
+          ordine.Source as string,
+        );
+      } else if ((ordine.Source as string) === "07ZR") {
+        notifyMarketplace(
+          { action: "distri2bStatus", ordineId: id, status: "ORDER_CANCELALL", comment: motivo },
           ordine.Source as string,
         );
       }

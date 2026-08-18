@@ -140,6 +140,26 @@ async function runBulkShipmentJob(jobId: string, contractIndex: number, ordiniId
         marketplace.ko++;
       }
     }
+
+    // 07ZR (Distri2B): oltre al tracking sopra, comunica separatamente che
+    // l'ordine è ORDER_VALIDATED — qui è l'unico punto dove "In Preparazione"
+    // scatta in automatico (spedizione bulk), il resto passa dal dropdown
+    // manuale in admin/ordini/[id] che copre lo stesso caso per gli altri
+    // trigger. processMarketplaceAction fa già skip silenzioso per fonti
+    // diverse da 07ZR, quindi si può chiamare senza filtrare prima.
+    const distri2bSettled = await Promise.allSettled(
+      successIds.map((ordineId) => processMarketplaceAction({ action: "distri2bStatus", ordineId, status: "ORDER_VALIDATED" }))
+    );
+    for (const s of distri2bSettled) {
+      if (s.status === "fulfilled" && s.value.statusCode === 200) {
+        const d = (s.value.payload as { data?: { ok?: boolean; skipped?: boolean } })?.data;
+        if (d?.skipped) marketplace.skipped++;
+        else if (d?.ok) marketplace.ok++;
+        else marketplace.ko++;
+      } else {
+        marketplace.ko++;
+      }
+    }
   }
 
   await finishSpedizioneJob(jobId, {
