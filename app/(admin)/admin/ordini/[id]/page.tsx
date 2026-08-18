@@ -442,6 +442,11 @@ export default function OrdineAdminDetailPage() {
           { action: "updateStatus", ordineId: id, statusIndex: 2, comment: "We’ve received your order and are now processing it." },
           src,
         );
+      } else if (nuovoStato === "In Preparazione" && src === "TyreWorld") {
+        notifyMarketplace(
+          { action: "tyreworldStatus", ordineId: id, status: "in_bearbeitung" },
+          src,
+        );
       } else if (nuovoStato === "Out of Stock" && isT24like) {
         notifyMarketplace(
           { action: "updateStatus", ordineId: id, statusIndex: 5, comment: "We are sorry, but we have run out of stock and therefore had to cancel your order." },
