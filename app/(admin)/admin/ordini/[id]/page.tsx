@@ -436,7 +436,7 @@ export default function OrdineAdminDetailPage() {
       // ── Side-effect marketplace automatico (mirror FF stato_ordine) ──
       const src = ordine.Source as string;
       const isT24like    = src === "Tyre24" || src === "Anonimo";
-      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres"].includes(src);
+      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres", "TyreWorld"].includes(src);
       if (nuovoStato === "In Preparazione" && isT24like) {
         notifyMarketplace(
           { action: "updateStatus", ordineId: id, statusIndex: 2, comment: "We’ve received your order and are now processing it." },
@@ -449,6 +449,11 @@ export default function OrdineAdminDetailPage() {
         );
       } else if (nuovoStato === "Out of Stock" && src === "eBay") {
         notifyMarketplace({ action: "outOfStock", ordineId: id }, src);
+      } else if (nuovoStato === "Out of Stock" && src === "TyreWorld") {
+        notifyMarketplace(
+          { action: "tyreworldStatus", ordineId: id, status: "storniert", grund: "Artikel nicht mehr auf Lager" },
+          src,
+        );
       } else if (nuovoStato === "Spedito" && isMarketplace) {
         notifyMarketplace({ action: "pushTracking", ordineId: id, corriere: ordine.Corriere }, src);
       }
@@ -686,6 +691,13 @@ export default function OrdineAdminDetailPage() {
       setAnnullaOpen(false);
       setMotivoAnnulla("");
       toast.success("Ordine annullato");
+
+      if ((ordine.Source as string) === "TyreWorld") {
+        notifyMarketplace(
+          { action: "tyreworldStatus", ordineId: id, status: "storniert", grund: motivo },
+          ordine.Source as string,
+        );
+      }
     } catch {
       toast.error("Errore annullamento ordine");
     } finally {
