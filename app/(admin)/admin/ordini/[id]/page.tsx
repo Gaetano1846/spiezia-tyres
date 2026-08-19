@@ -470,9 +470,13 @@ export default function OrdineAdminDetailPage() {
       if (src === "07ZR") {
         // "Annullato" non compare qui: passa sempre dal modale dedicato
         // (return anticipato sopra), gestito in handleConfermaAnnulla.
+        // "Spedito" -> "SENT" rimosso 2026-08-19: Distri2B rifiuta la
+        // transizione ("This change of status is not allowed") su ogni
+        // ordine testato, indipendentemente dallo stato precedente —
+        // sembra che addTrackingOrder implichi già "sent" lato loro. Il
+        // tracking (pushTracking sopra) resta l'unica notifica per Spedito.
         const distri2bStatusByStato: Record<string, string> = {
           "In Preparazione": "ORDER_VALIDATED",
-          "Spedito": "SENT",
           "Out of Stock": "ORDER_CANCELALL",
           "Cancellato Cliente": "ORDER_CANCELALL",
         };

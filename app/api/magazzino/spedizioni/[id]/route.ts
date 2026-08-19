@@ -45,20 +45,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         // Questo endpoint (scan-out dalla gabbia, app Flutter magazzino) è
         // l'unico trigger reale di "Spedito" per gran parte degli ordini —
         // a differenza del dropdown admin e del job bulk GLS, non chiamava
-        // ancora la notifica marketplace (pushTracking/distri2bStatus SENT),
-        // lasciando TyreWorld/07ZR (e potenzialmente eBay/Amazon/Tyre24/
-        // AdTyres) senza tracking sul vero momento di spedizione. Solo GLS
-        // è supportato da questo flusso (SDA/Reshark dismesso, vedi
-        // lib/marketplace/sdk.js), quindi corriere è fisso. Solo alla PRIMA
-        // approvazione che porta a Spedito, non ad ogni articolo dello
-        // stesso ordine. Best-effort: un fallimento qui non deve bloccare
-        // lo scan fisico dell'operatore di magazzino, già confermato.
+        // ancora la notifica marketplace (pushTracking), lasciando
+        // TyreWorld/07ZR (e ogni altro Source: pushOrderTracking dispatcha
+        // per Source, non serve filtrare qui) senza tracking sul vero
+        // momento di spedizione. Solo GLS è supportato da questo flusso
+        // (SDA/Reshark dismesso, vedi lib/marketplace/sdk.js), quindi
+        // corriere è fisso. Solo alla PRIMA approvazione che porta a
+        // Spedito, non ad ogni articolo dello stesso ordine. Best-effort:
+        // un fallimento qui non deve bloccare lo scan fisico dell'operatore
+        // di magazzino, già confermato.
+        // Niente distri2bStatus("SENT") qui: rimosso 2026-08-19, Distri2B
+        // rifiuta sempre quella transizione (vedi nota nel dropdown admin) —
+        // pushTracking/addTrackingOrder resta l'unica notifica per Spedito.
         if (nuovoSpedito) {
           await processMarketplaceAction({ action: "pushTracking", ordineId: body.ordineId, corriere: "GLS" }).catch((err) => {
             console.error("[api/magazzino/spedizioni/[id]] pushTracking failed", err);
-          });
-          await processMarketplaceAction({ action: "distri2bStatus", ordineId: body.ordineId, status: "SENT" }).catch((err) => {
-            console.error("[api/magazzino/spedizioni/[id]] distri2bStatus SENT failed", err);
           });
         }
         break;
