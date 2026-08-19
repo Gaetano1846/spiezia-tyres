@@ -398,13 +398,24 @@ export interface ApprovaArticoloInput {
  *  dell'originale FlutterFlow: ogni approvazione articolo flippa l'intero
  *  ordine/spedizione a Spedito (non solo l'ultimo articolo), non è una
  *  scelta di questa migrazione; l'azione log è testualmente "Ha rimosso"
- *  nell'originale (mirror esatto, non un'etichetta scelta qui). */
-export async function approvaArticoloSpedizione(input: ApprovaArticoloInput): Promise<void> {
+ *  nell'originale (mirror esatto, non un'etichetta scelta qui).
+ *
+ *  Ritorna nuovoSpedito=true solo alla PRIMA approvazione che porta l'ordine
+ *  a Spedito (stato precedente diverso da 'Spedito', letto con FOR UPDATE
+ *  nella stessa transazione) — il chiamante lo usa per decidere se disparare
+ *  la notifica marketplace (pushOrderTracking/distri2bStatus) una volta sola
+ *  e non ad ogni articolo dello stesso ordine multi-riga. */
+export async function approvaArticoloSpedizione(input: ApprovaArticoloInput): Promise<{ nuovoSpedito: boolean }> {
   const pool = getDb();
   if (!pool) throw new Error("Postgres non configurato");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const { rows: statoRows } = await client.query(
+      `SELECT stato FROM core.ordini WHERE id = $1 FOR UPDATE`,
+      [input.ordineId]
+    );
+    const statoPrecedente = (statoRows[0]?.stato as string | undefined) ?? null;
     // Preferisci il match per SKU (client aggiornati); fallback su ref_path
     // per i client Flutter storici non ancora ripuntati.
     if (input.sku) {
@@ -439,6 +450,7 @@ export async function approvaArticoloSpedizione(input: ApprovaArticoloInput): Pr
       [newId(), input.utenteId, input.quantita, prodottoId, input.gabbiaId ?? null]
     );
     await client.query("COMMIT");
+    return { nuovoSpedito: statoPrecedente !== "Spedito" };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
