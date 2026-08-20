@@ -502,13 +502,23 @@ export default function OrdiniAdminPage() {
       toast.success(`Stato: ${nuovoStato}`);
 
       // ── Side-effect marketplace automatico (mirror FF stato_ordine, identico
-      // al ramo già in produzione nel dettaglio ordine) ──
+      // al ramo già in produzione nel dettaglio ordine) — TyreWorld/07ZR
+      // aggiunti 2026-08-20: questa lista aveva una copia di questa logica
+      // rimasta indietro rispetto al dettaglio ordine (mai aggiornata quando
+      // TyreWorld/07ZR sono stati collegati), quindi ordini cancellati/out-of
+      // -stock da qui non notificavano mai il marketplace — 2 ordini reali
+      // trovati senza XML mai inviato a TyreWorld, backfillati a parte.
       const src = ordine.Source as string;
       const isT24like     = src === "Tyre24" || src === "Anonimo";
-      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres"].includes(src);
+      const isMarketplace = ["Tyre24", "Anonimo", "eBay", "Amazon", "AdTyres", "TyreWorld", "07ZR"].includes(src);
       if (nuovoStato === "In Preparazione" && isT24like) {
         notifyMarketplace(
           { action: "updateStatus", ordineId: docId, statusIndex: 2, comment: "We’ve received your order and are now processing it." },
+          src,
+        );
+      } else if (nuovoStato === "In Preparazione" && src === "TyreWorld") {
+        notifyMarketplace(
+          { action: "tyreworldStatus", ordineId: docId, status: "in_bearbeitung" },
           src,
         );
       } else if (nuovoStato === "Out of Stock" && isT24like) {
@@ -518,8 +528,27 @@ export default function OrdiniAdminPage() {
         );
       } else if (nuovoStato === "Out of Stock" && src === "eBay") {
         notifyMarketplace({ action: "outOfStock", ordineId: docId }, src);
+      } else if (nuovoStato === "Out of Stock" && src === "TyreWorld") {
+        notifyMarketplace(
+          { action: "tyreworldStatus", ordineId: docId, status: "storniert", grund: "Artikel nicht mehr auf Lager" },
+          src,
+        );
       } else if (nuovoStato === "Spedito" && isMarketplace) {
         notifyMarketplace({ action: "pushTracking", ordineId: docId, corriere: ordine.Corriere }, src);
+      }
+
+      // 07ZR (Distri2B): sync separato dello stato — stesso schema del
+      // dettaglio ordine (SENT rimosso il 2026-08-19, Distri2B lo rifiuta
+      // sempre; il tracking sopra resta l'unica notifica per Spedito).
+      if (src === "07ZR") {
+        const distri2bStatusByStato: Record<string, string> = {
+          "In Preparazione": "ORDER_VALIDATED",
+          "Out of Stock": "ORDER_CANCELALL",
+        };
+        const mapped = distri2bStatusByStato[nuovoStato];
+        if (mapped) {
+          notifyMarketplace({ action: "distri2bStatus", ordineId: docId, status: mapped }, src);
+        }
       }
     } catch {
       toast.error("Errore aggiornamento stato");
@@ -543,6 +572,7 @@ export default function OrdiniAdminPage() {
         body: JSON.stringify({ action: "annulla", motivo }),
       });
       if (!res.ok) throw new Error(`Errore ${res.status}`);
+      const entry = entries.find((e) => e.docId === annullaModal.docId);
       setEntries((prev) =>
         prev.map((e) => e.docId === annullaModal.docId
           ? { ...e, ordine: { ...e.ordine, Stato: "Annullato", Motivo_Annullamento: motivo } }
@@ -551,6 +581,22 @@ export default function OrdiniAdminPage() {
       setAnnullaModal(null);
       setMotivoAnnulla("");
       toast.success("Ordine annullato");
+
+      // Stesso mirror del dettaglio ordine — mancava qui (bug trovato
+      // 2026-08-20: 2 ordini TyreWorld annullati da questo modale non hanno
+      // mai notificato il partner, backfillati a parte).
+      const src = entry?.ordine.Source as string | undefined;
+      if (src === "TyreWorld") {
+        notifyMarketplace(
+          { action: "tyreworldStatus", ordineId: annullaModal.docId, status: "storniert", grund: motivo },
+          src,
+        );
+      } else if (src === "07ZR") {
+        notifyMarketplace(
+          { action: "distri2bStatus", ordineId: annullaModal.docId, status: "ORDER_CANCELALL", comment: motivo },
+          src,
+        );
+      }
     } catch {
       toast.error("Errore annullamento ordine");
     } finally {
