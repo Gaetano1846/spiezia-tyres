@@ -160,6 +160,25 @@ async function runBulkShipmentJob(jobId: string, contractIndex: number, ordiniId
         marketplace.ko++;
       }
     }
+
+    // TyreWorld: equivalente di ORDER_VALIDATED sopra, stesso gap — mancava
+    // del tutto qui (trovato 2026-08-20, verificato: l'unico file
+    // in_bearbeitung mai arrivato a TyreWorld veniva da un'azione manuale nel
+    // dettaglio ordine, mai dalla spedizione bulk che gestisce la stragrande
+    // maggioranza degli ordini reali).
+    const tyreworldSettled = await Promise.allSettled(
+      successIds.map((ordineId) => processMarketplaceAction({ action: "tyreworldStatus", ordineId, status: "in_bearbeitung" }))
+    );
+    for (const s of tyreworldSettled) {
+      if (s.status === "fulfilled" && s.value.statusCode === 200) {
+        const d = (s.value.payload as { data?: { ok?: boolean; skipped?: boolean } })?.data;
+        if (d?.skipped) marketplace.skipped++;
+        else if (d?.ok) marketplace.ok++;
+        else marketplace.ko++;
+      } else {
+        marketplace.ko++;
+      }
+    }
   }
 
   await finishSpedizioneJob(jobId, {
